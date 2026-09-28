@@ -500,6 +500,42 @@ function initSchema() {
     PRIMARY KEY (user_id, message_key)
   );
 
+  -- Directed mailbox messages: real, authored correspondence between accounts
+  -- (as opposed to the read-time aggregation of task comments/audit events).
+  -- Recipients are stored by person so every account belonging to that person
+  -- sees the message; the resolved user id is kept for fast inbox queries.
+  CREATE TABLE IF NOT EXISTS message (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_user_id INTEGER REFERENCES user(id),
+    sender_person_id INTEGER REFERENCES person(id),
+    recipient_person_id INTEGER REFERENCES person(id),
+    recipient_user_id INTEGER REFERENCES user(id),
+    subject TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT 'GENERAL',
+    status TEXT NOT NULL DEFAULT 'SENT',
+    priority TEXT NOT NULL DEFAULT 'NORMAL',
+    entity_type TEXT,
+    entity_id INTEGER,
+    link TEXT,
+    thread_id INTEGER REFERENCES message(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    sent_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_message_recipient ON message(recipient_person_id, status);
+  CREATE INDEX IF NOT EXISTS idx_message_sender ON message(sender_user_id, status);
+  CREATE INDEX IF NOT EXISTS idx_message_thread ON message(thread_id);
+
+  -- Per-account mailbox state (read receipt, archive filing) for directed mail.
+  CREATE TABLE IF NOT EXISTS message_state (
+    user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    message_id INTEGER NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+    read_at TEXT,
+    archived_at TEXT,
+    PRIMARY KEY (user_id, message_id)
+  );
+
   CREATE TABLE IF NOT EXISTS org_unit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     unit_code TEXT NOT NULL UNIQUE,

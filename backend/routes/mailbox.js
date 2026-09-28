@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, get } = require('../util');
+const { db, get, insertRow, updateRow } = require('../util');
 const { isGlobal, isCrewUser, isOnCrew, hasPerm } = require('../auth');
 const { authorizedCrewIds, taskVisible } = require('../authority');
 
@@ -218,8 +218,248 @@ function messageKeyVisible(user, key) {
     const task = get('task', a.entity_id);
     return !!task && taskVisible(user, task);
   }
+  m = /^mail-(\d+)$/.exec(key);
+  if (m) return mailVisible(user, Number(m[1]));
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// Directed mail. Unlike the task/report stream (read-time aggregation), these
+// are real authored rows with a lifecycle: Draft -> (Outbox) -> Sent, filed per
+// account into Inbox / Sent / Drafts / Outbox / Archive.
+// ---------------------------------------------------------------------------
+const MAIL_CATEGORIES = new Set(['GENERAL', 'REPORT', 'EXECUTION', 'REQUEST', 'ALERT']);
+const MAIL_PRIORITIES = new Set(['LOW', 'NORMAL', 'HIGH', 'URGENT']);
+const MAIL_STATUSES = new Set(['DRAFT', 'QUEUED', 'SENT']);
+
+function personLabel(personId) {
+  const p = get('person', Number(personId));
+  if (!p) return 'Unknown';
+  return [p.first_name, p.last_name].filter(Boolean).join(' ') || `Person ${personId}`;
+}
+
+function primaryUserForPerson(personId) {
+  return db.prepare('SELECT id, username FROM user WHERE person_id = ? AND active = 1 ORDER BY id LIMIT 1').get(Number(personId)) || null;
+}
+
+function personRegionIds(personId) {
+  const ids = new Set();
+  const add = (rows) => rows.forEach((r) => { if (r.region_id != null) ids.add(r.region_id); });
+  add(db.prepare('SELECT DISTINCT region_id FROM user WHERE person_id = ?').all(Number(personId)));
+  add(db.prepare('SELECT DISTINCT region_id FROM region_personnel WHERE person_id = ?').all(Number(personId)));
+  add(db.prepare('SELECT DISTINCT c.region_id FROM crew c JOIN crew_member m ON m.crew_id = c.id WHERE m.person_id = ?').all(Number(personId)));
+  add(db.prepare('SELECT DISTINCT region_id FROM crew WHERE leader_person_id = ?').all(Number(personId)));
+  return ids;
+}
+
+// A recipient must share the sender's command scope: global users may address
+// anyone; a region-scoped user only people rooted in their own region.
+function recipientVisible(user, personId) {
+  const pid = Number(personId);
+  if (!pid) return false;
+  if (isGlobal(user)) return true;
+  if (pid === user.person_id) return true;
+  const regions = personRegionIds(pid);
+  return regions.size > 0 && regions.has(user.region_id);
+}
+
+function mailStateFor(userId, messageId) {
+  return db.prepare('SELECT read_at, archived_at FROM message_state WHERE user_id = ? AND message_id = ?').get(userId, messageId) || null;
+}
+
+function mailRow(user, m, state) {
+  const resolved = state || mailStateFor(user.id, m.id);
+  const incoming = Number(m.recipient_person_id) === user.person_id;
+  return {
+    key: `mail-${m.id}`,
+    id: m.id,
+    kind: 'MAIL',
+    entity_type: 'message',
+    entity_id: m.id,
+    subject: m.subject || '(no subject)',
+    body: m.body,
+    at: m.sent_at || m.updated_at || m.created_at,
+    created_at: m.created_at,
+    updated_at: m.updated_at,
+    sent_at: m.sent_at || null,
+    actor: personLabel(m.sender_person_id),
+    actor_key: `person-${m.sender_person_id}`,
+    sender_person_id: m.sender_person_id,
+    recipient: personLabel(m.recipient_person_id),
+    recipient_person_id: m.recipient_person_id,
+    category: m.category,
+    priority: m.priority,
+    status: m.status,
+    outgoing: !incoming,
+    link: m.link || null,
+    thread_id: m.thread_id || null,
+    tags: [m.category, m.priority !== 'NORMAL' ? m.priority : null].filter(Boolean),
+    unread: incoming && m.status === 'SENT' && !resolved?.read_at,
+    archived: !!resolved?.archived_at,
+  };
+}
+
+function mailFolders(user) {
+  const outgoing = db.prepare(
+    'SELECT * FROM message WHERE sender_user_id = ? ORDER BY COALESCE(sent_at, updated_at, created_at) DESC, id DESC'
+  ).all(user.id);
+  const incoming = user.person_id
+    ? db.prepare('SELECT * FROM message WHERE recipient_person_id = ? ORDER BY COALESCE(sent_at, created_at) DESC, id DESC').all(user.person_id)
+    : [];
+  const states = new Map(db.prepare('SELECT message_id, read_at, archived_at FROM message_state WHERE user_id = ?').all(user.id).map((s) => [s.message_id, s]));
+  const row = (m) => mailRow(user, m, states.get(m.id));
+  const archived = new Map();
+  for (const m of [...incoming, ...outgoing]) if (states.get(m.id)?.archived_at) archived.set(m.id, m);
+  return {
+    inbox: incoming.filter((m) => m.status === 'SENT' && !states.get(m.id)?.archived_at).map(row),
+    outbox: outgoing.filter((m) => m.status === 'QUEUED' && !states.get(m.id)?.archived_at).map(row),
+    sent: outgoing.filter((m) => m.status === 'SENT' && !states.get(m.id)?.archived_at).map(row),
+    drafts: outgoing.filter((m) => m.status === 'DRAFT' && !states.get(m.id)?.archived_at).map(row),
+    archive: [...archived.values()].sort((a, b) => String(b.sent_at || b.updated_at).localeCompare(String(a.sent_at || a.updated_at))).map(row),
+  };
+}
+
+function mailVisible(user, id) {
+  const m = db.prepare('SELECT sender_user_id, recipient_person_id FROM message WHERE id = ?').get(Number(id));
+  if (!m) return false;
+  return m.sender_user_id === user.id || (user.person_id && m.recipient_person_id === user.person_id);
+}
+
+function mailParticipant(user, id) {
+  const m = get('message', Number(id));
+  if (!m) return null;
+  if (m.sender_user_id !== user.id && !(user.person_id && m.recipient_person_id === user.person_id)) return null;
+  return m;
+}
+
+function loadMailVisible(req, res) {
+  const m = mailParticipant(req.user, req.params.id);
+  if (!m) { res.status(404).json({ error: 'Message not found' }); return null; }
+  return m;
+}
+
+router.get('/mailbox/recipients', (req, res) => {
+  const q = String(req.query.q || '').trim().toLowerCase();
+  const rows = db.prepare(
+    `SELECT u.username, u.role, p.id AS person_id, p.first_name, p.last_name, p.title
+       FROM user u JOIN person p ON p.id = u.person_id
+      WHERE u.active = 1 AND p.active = 1
+      ORDER BY p.first_name, p.last_name`
+  ).all();
+  const seen = new Map();
+  for (const r of rows) {
+    if (!recipientVisible(req.user, r.person_id)) continue;
+    const name = [r.first_name, r.last_name].filter(Boolean).join(' ');
+    if (q && !`${name} ${r.username} ${r.role} ${r.title || ''}`.toLowerCase().includes(q)) continue;
+    if (!seen.has(r.person_id)) seen.set(r.person_id, { person_id: r.person_id, name, role: r.role, title: r.title, username: r.username });
+  }
+  res.json([...seen.values()]);
+});
+
+router.post('/mailbox/messages', (req, res) => {
+  const body = req.body || {};
+  const rid = Number(body.recipient_person_id || body.recipient_id);
+  if (!rid) return res.status(400).json({ error: 'Recipient is required' });
+  if (!get('person', rid)) return res.status(404).json({ error: 'Recipient not found' });
+  if (!recipientVisible(req.user, rid)) return res.status(403).json({ error: 'Recipient is outside your command scope' });
+  const status = MAIL_STATUSES.has(String(body.status)) ? String(body.status) : 'SENT';
+  const subject = String(body.subject || '').trim().slice(0, 200);
+  const text = String(body.body || '').trim().slice(0, 20000);
+  if (!subject && !text) return res.status(400).json({ error: 'A subject or message body is required' });
+  if (status === 'SENT' && !subject) return res.status(400).json({ error: 'A subject is required to send a message' });
+  const now = new Date().toISOString();
+  const recipientUser = primaryUserForPerson(rid);
+  const id = insertRow('message', {
+    sender_user_id: req.user.id,
+    sender_person_id: req.user.person_id || null,
+    recipient_person_id: rid,
+    recipient_user_id: recipientUser ? recipientUser.id : null,
+    subject,
+    body: text,
+    category: MAIL_CATEGORIES.has(body.category) ? body.category : 'GENERAL',
+    priority: MAIL_PRIORITIES.has(body.priority) ? body.priority : 'NORMAL',
+    status,
+    entity_type: body.entity_type || null,
+    entity_id: body.entity_id ? Number(body.entity_id) : null,
+    link: body.link || null,
+    thread_id: body.thread_id ? Number(body.thread_id) : null,
+    created_at: now,
+    updated_at: now,
+    sent_at: status === 'SENT' ? now : null,
+  });
+  res.status(201).json(mailRow(req.user, get('message', id)));
+});
+
+router.put('/mailbox/messages/:id', (req, res) => {
+  const m = loadMailVisible(req, res);
+  if (!m) return;
+  if (m.sender_user_id !== req.user.id) return res.status(403).json({ error: 'Only the sender can edit this message' });
+  if (m.status === 'SENT') return res.status(409).json({ error: 'A sent message cannot be edited' });
+  const body = req.body || {};
+  const patch = {};
+  if (body.subject !== undefined) patch.subject = String(body.subject || '').trim().slice(0, 200);
+  if (body.body !== undefined) patch.body = String(body.body || '').trim().slice(0, 20000);
+  if (body.recipient_person_id !== undefined || body.recipient_id !== undefined) {
+    const rid = Number(body.recipient_person_id || body.recipient_id);
+    if (!rid || !get('person', rid)) return res.status(404).json({ error: 'Recipient not found' });
+    if (!recipientVisible(req.user, rid)) return res.status(403).json({ error: 'Recipient is outside your command scope' });
+    patch.recipient_person_id = rid;
+    const ru = primaryUserForPerson(rid);
+    patch.recipient_user_id = ru ? ru.id : null;
+  }
+  if (body.category !== undefined && MAIL_CATEGORIES.has(body.category)) patch.category = body.category;
+  if (body.priority !== undefined && MAIL_PRIORITIES.has(body.priority)) patch.priority = body.priority;
+  if (body.link !== undefined) patch.link = body.link || null;
+  if (body.status !== undefined && MAIL_STATUSES.has(body.status) && body.status !== 'SENT') patch.status = body.status;
+  patch.updated_at = new Date().toISOString();
+  updateRow('message', m.id, patch);
+  res.json(mailRow(req.user, get('message', m.id)));
+});
+
+router.post('/mailbox/messages/:id/send', (req, res) => {
+  const m = loadMailVisible(req, res);
+  if (!m) return;
+  if (m.sender_user_id !== req.user.id) return res.status(403).json({ error: 'Only the sender can send this message' });
+  if (m.status === 'SENT') return res.json(mailRow(req.user, m));
+  const now = new Date().toISOString();
+  if (req.body && req.body.subject !== undefined) {
+    const subject = String(req.body.subject || '').trim().slice(0, 200);
+    if (!subject) return res.status(400).json({ error: 'A subject is required to send a message' });
+    updateRow('message', m.id, { subject, updated_at: now });
+  }
+  if (!get('message', m.id).subject) return res.status(400).json({ error: 'A subject is required to send a message' });
+  updateRow('message', m.id, { status: 'SENT', sent_at: now, updated_at: now });
+  res.json(mailRow(req.user, get('message', m.id)));
+});
+
+router.put('/mailbox/messages/:id/read', (req, res) => {
+  const m = loadMailVisible(req, res);
+  if (!m) return;
+  const readAt = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO message_state (user_id, message_id, read_at) VALUES (?, ?, ?)
+     ON CONFLICT(user_id, message_id) DO UPDATE SET read_at = excluded.read_at`
+  ).run(req.user.id, m.id, readAt);
+  res.json({ message_id: m.id, read_at: readAt });
+});
+
+router.put('/mailbox/messages/:id/archive', (req, res) => {
+  const m = loadMailVisible(req, res);
+  if (!m) return;
+  const archivedAt = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO message_state (user_id, message_id, archived_at) VALUES (?, ?, ?)
+     ON CONFLICT(user_id, message_id) DO UPDATE SET archived_at = excluded.archived_at`
+  ).run(req.user.id, m.id, archivedAt);
+  res.json({ message_id: m.id, archived_at: archivedAt });
+});
+
+router.put('/mailbox/messages/:id/unarchive', (req, res) => {
+  const m = loadMailVisible(req, res);
+  if (!m) return;
+  db.prepare('UPDATE message_state SET archived_at = NULL WHERE user_id = ? AND message_id = ?').run(req.user.id, m.id);
+  res.json({ message_id: m.id, archived_at: null });
+});
 
 router.get('/mailbox', (req, res) => {
   const user = req.user;
@@ -235,6 +475,8 @@ router.get('/mailbox', (req, res) => {
   const history = tasks.filter((task) => CLOSED.has(task.status) && taskInvolvement(user, task));
   const messages = messagesFor(user, tasks);
   const unreadMessages = messages.filter((message) => message.unread);
+  const mail = mailFolders(user);
+  const mailUnread = mail.inbox.filter((message) => message.unread).length;
   res.json({
     inbox: inbox.map((task) => threadSummary(task, user)),
     sent: sent.map((task) => threadSummary(task, user)),
@@ -243,6 +485,20 @@ router.get('/mailbox', (req, res) => {
     messages,
     unread_messages: unreadMessages,
     unread_count: unreadMessages.length,
+    mail_inbox: mail.inbox,
+    mail_outbox: mail.outbox,
+    mail_sent: mail.sent,
+    mail_drafts: mail.drafts,
+    mail_archive: mail.archive,
+    mail_unread_count: mailUnread,
+    mail_counts: {
+      inbox: mail.inbox.length,
+      outbox: mail.outbox.length,
+      sent: mail.sent.length,
+      drafts: mail.drafts.length,
+      archive: mail.archive.length,
+      unread: mailUnread,
+    },
   });
 });
 
@@ -251,17 +507,25 @@ router.get('/mailbox/summary', (req, res) => {
   const tasks = taskRows(user);
   const messages = messagesFor(user, tasks);
   const unread = messages.filter((message) => message.unread);
+  const mail = mailFolders(user);
+  const mailUnread = mail.inbox.filter((message) => message.unread).length;
   const byKind = {};
   for (const message of messages) byKind[message.kind] = (byKind[message.kind] || 0) + 1;
   const unreadByKind = {};
   for (const message of unread) unreadByKind[message.kind] = (unreadByKind[message.kind] || 0) + 1;
   res.json({
-    unread_count: unread.length,
+    unread_count: unread.length + mailUnread,
     inbox_count: tasks.filter((task) => OPEN.has(task.status)).length,
     message_count: messages.length,
     report_count: messages.filter((message) => message.kind === 'REPORT').length,
     by_kind: byKind,
     unread_by_kind: unreadByKind,
+    mail_inbox_count: mail.inbox.length,
+    mail_outbox_count: mail.outbox.length,
+    mail_sent_count: mail.sent.length,
+    mail_drafts_count: mail.drafts.length,
+    mail_archive_count: mail.archive.length,
+    mail_unread_count: mailUnread,
   });
 });
 

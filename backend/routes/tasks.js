@@ -14,6 +14,7 @@ const { canAssignCrew, taskVisible, authorizedCrewIds } = require('../authority'
 const { taskReadiness, taskRequirements, resolveTaskCrewId, taskCrewSource } = require('../readiness');
 const { readyCrew, scoreCrewFit } = require('../assignment');
 const { resolveTarget } = require('../target');
+const { sendMail, primaryUserForPerson, immediateBossForTask } = require('../mail');
 
 const router = express.Router();
 
@@ -971,8 +972,43 @@ router.post('/tasks/:id/state', (req, res) => {
   res.json(payload);
 });
 
+// On completion, file the execution report into the mailbox of the crew's
+// immediate line manager (crew lead -> region manager -> org-unit manager), so
+// the person accountable for the work is notified without a manual send.
+function sendExecutionReport(req, t) {
+  const bossId = immediateBossForTask(t);
+  if (!bossId || bossId === req.user.person_id) return null;
+  if (!primaryUserForPerson(bossId)) return null;
+  const actorPerson = req.user.person_id ? get('person', req.user.person_id) : null;
+  const actor = actorPerson ? ([actorPerson.first_name, actorPerson.last_name].filter(Boolean).join(' ') || req.user.username) : req.user.username;
+  const crew = t.crew_id ? get('crew', t.crew_id) : null;
+  const findings = db.prepare('SELECT COUNT(*) c FROM task_finding WHERE task_id = ?').get(t.id).c;
+  const body = [
+    `Task ${t.task_number} — ${t.title}`,
+    `Result: ${t.result || 'COMPLETED'}`,
+    `Crew: ${crew ? crew.name : '—'}`,
+    `Completed by: ${actor}`,
+    t.completion_summary ? `Summary: ${t.completion_summary}` : null,
+    findings ? `Findings raised: ${findings}` : null,
+    `Open the task: /tasks/${t.id}`,
+  ].filter(Boolean).join('\n');
+  return sendMail({
+    senderUserId: req.user.id,
+    senderPersonId: req.user.person_id || null,
+    recipientPersonId: bossId,
+    subject: `Task ${t.task_number} completed`,
+    body,
+    category: 'EXECUTION',
+    priority: ['HIGH', 'CRITICAL'].includes(t.priority) ? 'HIGH' : 'NORMAL',
+    entityType: 'task',
+    entityId: t.id,
+    link: `/tasks/${t.id}`,
+  });
+}
+
 function applyCompletionSideEffects(req, t, cost = null) {
   const now = new Date().toISOString();
+  try { sendExecutionReport(req, t); } catch (e) { console.error('execution report mail failed', e); }
   if (t.asset_id) {
     updateRow('asset', t.asset_id, { last_maintenance_at: now });
     insertRow('asset_maintenance_event', {
