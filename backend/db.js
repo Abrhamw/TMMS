@@ -567,6 +567,11 @@ function initSchema() {
   CREATE INDEX IF NOT EXISTS idx_asset_substation ON asset(substation_id);
   CREATE INDEX IF NOT EXISTS idx_asset_line ON asset(line_id);
   CREATE INDEX IF NOT EXISTS idx_asset_tower ON asset(tower_id);
+  -- Exactly one asset row may mirror a given tower. The tower table is the
+  -- infrastructure record; the mirror carries asset lifecycle data. This partial
+  -- index guarantees the 1:1 relationship the sync code maintains.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_tower_mirror ON asset(tower_id)
+    WHERE asset_type = 'TOWER' AND tower_id IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_asset_parent ON asset(parent_asset_id);
   CREATE INDEX IF NOT EXISTS idx_asset_type ON asset(asset_type);
   CREATE INDEX IF NOT EXISTS idx_asset_lifecycle ON asset(lifecycle_status);

@@ -80,7 +80,12 @@ router.post('/gps-validations', (req, res) => {
 
 function updateTargetFlag(targetType, targetId, valid, now) {
   try {
-    if (targetType === 'ASSET') updateRow('asset', targetId, { gps_validated: valid, last_gps_validation_at: now });
+    if (targetType === 'ASSET') {
+      updateRow('asset', targetId, { gps_validated: valid, last_gps_validation_at: now });
+      // A tower-mirror asset shares the tower's position: keep the tower flag in step.
+      const a = db.prepare('SELECT tower_id, asset_type FROM asset WHERE id = ?').get(targetId);
+      if (a && a.tower_id && a.asset_type === 'TOWER') updateRow('tower', a.tower_id, { gps_validated: valid });
+    }
     if (targetType === 'SUBSTATION') updateRow('substation', targetId, { gps_validated: valid, last_gps_validation_at: now });
     if (targetType === 'TOWER') {
       updateRow('tower', targetId, { gps_validated: valid });

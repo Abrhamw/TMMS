@@ -802,7 +802,10 @@ function AssetsTab({ tower, lineId, canWrite, setError, setNotice }) {
 
   const types = useMemo(() => {
     const out = [];
-    for (const f of catalog?.families || []) for (const t of f.types || []) out.push(t);
+    for (const f of catalog?.families || []) {
+      if (f.family === 'TOWER_PARTS' || f.family === 'TOWER_STRUCTURE') continue;
+      for (const t of f.types || []) out.push(t);
+    }
     return out;
   }, [catalog]);
 

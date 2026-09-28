@@ -36,6 +36,7 @@ function readFile(file, format) {
 const EDITABLE = {
   substations: { substation_id: 'text', name: 'text', region_code: 'text', latitude: 'number', longitude: 'number' },
   lines: { line_id: 'text', name: 'text', voltage_kv: 'number' },
+  assets: { asset_id: 'text', name: 'text', asset_type: 'text' },
 };
 
 // Two-step bulk import backed by /infrastructure/import/*. The same dialog
@@ -58,6 +59,7 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
   const [geoEdit, setGeoEdit] = useState(null);
 
   const editable = preview ? EDITABLE[preview.kind] || {} : {};
+  const hasGeometry = !!preview && (preview.kind === 'substations' || preview.kind === 'lines');
 
   function setEdit(index, key, value) {
     setEdits((prev) => ({ ...prev, [index]: { ...(prev[index] || {}), [key]: value } }));
@@ -180,7 +182,7 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
                 <thead><tr><th>Item</th><th>{t('importReason')}</th></tr></thead>
                 <tbody>
                   {result.skipped.map((s, i) => (
-                    <tr key={i}><td className="mono">{s.substation_id || s.line_id || '—'}</td><td>{s.reason}</td></tr>
+                    <tr key={i}><td className="mono">{s.substation_id || s.line_id || s.asset_id || '—'}</td><td>{s.reason}</td></tr>
                   ))}
                 </tbody>
               </table>
@@ -240,7 +242,7 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
                   <thead>
                     <tr>
                       {columns.map((c) => <th key={c.key}>{c.label}</th>)}
-                      <th>Geometry</th>
+                      {hasGeometry && <th>Geometry</th>}
                       <th>{t('importReason')}</th>
                     </tr>
                   </thead>
@@ -260,11 +262,13 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
                             {edits[row.index] && edits[row.index][c.key] !== undefined && <span className="edit-dot" title="edited" />}
                           </td>
                         ))}
-                        <td>
-                          <button type="button" className="btn btn-sm" onClick={() => setGeoEdit(row)}>
-                            {preview.kind === 'lines' ? 'Route' : 'Boundary'}
-                          </button>
-                        </td>
+                        {hasGeometry && (
+                          <td>
+                            <button type="button" className="btn btn-sm" onClick={() => setGeoEdit(row)}>
+                              {preview.kind === 'lines' ? 'Route' : 'Boundary'}
+                            </button>
+                          </td>
+                        )}
                         <td>{row.will_skip ? row.reason : <span className="ok">OK</span>}</td>
                       </tr>
                     ))}

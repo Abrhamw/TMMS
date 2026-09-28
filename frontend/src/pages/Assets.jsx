@@ -5,6 +5,7 @@ import { can, getStoredUser } from '../auth';
 import { linesForSubstation, linesInRegion, subsInRegion } from '../cascade';
 import MapPicker from '../components/MapPicker';
 import Comments from '../components/Comments';
+import ImportDialog from '../components/ImportDialog';
 import Dossier from '../components/Dossier';
 import RegisterTree from '../components/RegisterTree';
 import ViewMap from '../components/ViewMap';
@@ -186,6 +187,7 @@ export default function Assets() {
   const [lines, setLines] = useState([]);
   const [crews, setCrews] = useState([]);
   const [geo, setGeo] = useState(null);       // { format, fileName, preview, confirmToken, busy, error }
+  const [showImport, setShowImport] = useState(false);
   const [typeFilter, setTypeFilter] = useState('');
   const [subFilter, setSubFilter] = useState('');
   const [regionFilter, setRegionFilter] = useState('');
@@ -318,6 +320,7 @@ export default function Assets() {
     <Page title="Assets" crumbs="TMMS / Infrastructure"
       actions={<>
         {canWrite && <button className="btn" onClick={() => setGeo({ format: 'kmz', fileName: '', preview: null, busy: false, error: null })}>Import KMZ/KML</button>}
+        {canWrite && <button className="btn" onClick={() => setShowImport(true)}>Import CSV</button>}
         {canWrite ? <button className="btn btn-primary" onClick={() => setForm({ ...blank })}>+ Add Asset</button> : null}
       </>}>
       {error && <ErrorNote error={error} />}
@@ -607,7 +610,7 @@ export default function Assets() {
                 setForm({ ...form, asset_type: first ? first.asset_type : '', sub_type: '' });
               }}>
                 <option value="">— pick family —</option>
-                {(catalog?.families || []).filter((f) => f.family !== 'TOWER_PARTS').map((f) => <option key={f.family} value={f.family}>{f.family_label}</option>)}
+                {(catalog?.families || []).filter((f) => f.family !== 'TOWER_PARTS' && f.family !== 'TOWER_STRUCTURE').map((f) => <option key={f.family} value={f.family}>{f.family_label}</option>)}
               </SearchSelect></div>
             <div className="field"><label>Asset type</label>
               <SearchSelect value={form.asset_type} onChange={(e) => {
@@ -747,6 +750,25 @@ export default function Assets() {
             </>
           )}
         </Modal>
+      )}
+
+      {showImport && (
+        <ImportDialog
+          title="Import assets from CSV"
+          endpoint="/assets/import"
+          templatePath="/assets/import/template"
+          templateName="tmms-assets-template.csv"
+          columns={[
+            { key: 'asset_id', label: 'Asset ID', mono: true },
+            { key: 'name', label: 'Name' },
+            { key: 'asset_type', label: 'Type' },
+            { key: 'anchor', label: 'Anchor' },
+          ]}
+          regions={regions}
+          supportsUpdate
+          onClose={() => setShowImport(false)}
+          onDone={() => { setShowImport(false); load(); }}
+        />
       )}
     </Page>
   );
