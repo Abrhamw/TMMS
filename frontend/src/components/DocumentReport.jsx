@@ -275,6 +275,7 @@ function DocumentSections({ document, onOpenEntity }) {
             <div className="grid grid-4 mt" style={{ gap: 8 }}>
               <Mini label="Executions" v={perf.tasks} />
               <Mini label="Completed" v={perf.completed} />
+              <Mini label="Checklist pass %" v={perf.checklist_pass_rate} />
               <Mini label="Overdue" v={perf.overdue} warn={perf.overdue > 0} />
             </div>
           )}

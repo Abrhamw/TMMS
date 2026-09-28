@@ -189,6 +189,16 @@ function crewPerformanceRows(crews, tasks) {
       `SELECT COUNT(*) c FROM gps_validation v JOIN task t ON t.id = v.linked_task_id
        WHERE v.result = 'FAIL' AND t.crew_id = ?`
     ).get(c.id).c;
+    const exec = db.prepare(
+      `SELECT SUM(CASE WHEN i.result = 'PASS' THEN 1 ELSE 0 END) AS pass,
+              SUM(CASE WHEN i.result = 'FAIL' THEN 1 ELSE 0 END) AS fail
+         FROM checklist_execution_item i
+         JOIN checklist_execution e ON e.id = i.execution_id
+         JOIN task t ON t.id = e.task_id
+        WHERE t.crew_id = ? AND e.submitted_at IS NOT NULL`
+    ).get(c.id);
+    const pass = Number(exec.pass) || 0;
+    const fail = Number(exec.fail) || 0;
     const lastActivity = owned.reduce((m, t) => {
       const d = t.actual_end || t.created_at;
       return d && d > m ? d : m;
@@ -198,6 +208,7 @@ function crewPerformanceRows(crews, tasks) {
       tasks: owned.length, completed: completed.length, completion_rate: ratePct(completed.length, owned.length),
       on_time: onTime.length, on_time_rate: ratePct(onTime.length, completed.length),
       failed: failed.length, open: open.length, overdue: overdue.length,
+      checklist_pass: pass, checklist_fail: fail, checklist_pass_rate: ratePct(pass, pass + fail),
       avg_cycle_hours: avgNum(completed.map(cycleHours)),
       last_activity: lastActivity || null,
       findings, gps_violations: gps,
@@ -227,6 +238,15 @@ function personPerformanceRows(tasks) {
       : 0;
     const gpsViol = db.prepare("SELECT linked_task_id FROM gps_validation WHERE validated_by = ? AND result = 'FAIL'").all(pid)
       .filter((v) => v.linked_task_id != null && taskIds.has(v.linked_task_id)).length;
+    const itemAgg = execIds.length
+      ? db.prepare(
+        `SELECT SUM(CASE WHEN result = 'PASS' THEN 1 ELSE 0 END) AS pass,
+                SUM(CASE WHEN result = 'FAIL' THEN 1 ELSE 0 END) AS fail
+           FROM checklist_execution_item WHERE execution_id IN (${execIds.map(() => '?').join(',')})`
+      ).get(...execIds)
+      : null;
+    const pass = itemAgg ? Number(itemAgg.pass) || 0 : 0;
+    const fail = itemAgg ? Number(itemAgg.fail) || 0 : 0;
     const open = arr.filter(({ t }) => OPEN_TASK_STATES.includes(t.status));
     const overdue = open.filter(({ t }) => t.due_date && t.due_date < now);
     const lastActivity = arr.reduce((m, { ex }) => (ex.submitted_at && ex.submitted_at > m ? ex.submitted_at : m), '');
@@ -234,6 +254,7 @@ function personPerformanceRows(tasks) {
       id: pid, name: personName(pid),
       tasks: arr.length, completed: done.length, completion_rate: ratePct(done.length, arr.length),
       on_time: onTime.length, on_time_rate: ratePct(onTime.length, done.length),
+      checklist_pass: pass, checklist_fail: fail, checklist_pass_rate: ratePct(pass, pass + fail),
       open: open.length, overdue: overdue.length,
       last_activity: lastActivity || null,
       findings, gps_violations: gpsViol,

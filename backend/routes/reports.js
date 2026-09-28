@@ -790,6 +790,7 @@ function compute(reportType, params, user) {
         { label: 'Certifications', value: certs.length },
         { label: 'Executions', value: perf ? perf.tasks : visibleExecs.length },
         { label: 'Completed (submitted)', value: perf ? perf.completed : visibleExecs.filter((e) => e.result).length },
+        { label: 'Checklist pass rate', value: perf ? `${perf.checklist_pass_rate}%` : '—' },
         { label: 'On-time rate', value: perf && perf.on_time_rate != null ? `${perf.on_time_rate}%` : '—' },
         { label: 'Findings', value: perf ? perf.findings : findings.length },
         { label: 'GPS violations', value: perf ? perf.gps_violations : 0 },
