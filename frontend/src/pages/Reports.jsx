@@ -109,7 +109,7 @@ export default function Reports() {
             <div className="card">
               <div className="tbl-wrap">
                 <table>
-                  <thead><tr><th>{perfScope === 'crew' ? 'Crew' : 'Person'}</th><th>Tasks</th><th>Completed</th><th>Rate</th><th>On time</th><th>On-time rate</th><th>Checklist pass</th><th>Open</th><th>Overdue</th><th>Avg cycle (h)</th><th>Findings</th><th>GPS viol.</th></tr></thead>
+                  <thead><tr><th>{perfScope === 'crew' ? 'Crew' : 'Person'}</th><th>Tasks</th><th>Completed</th><th>Rate</th><th>On time</th><th>On-time rate</th><th>Open</th><th>Overdue</th><th>Avg cycle (h)</th><th>Findings</th><th>GPS viol.</th></tr></thead>
                   <tbody>
                     {perf.map((r) => {
                       const detailType = perfScope === 'crew' ? 'CREW_DETAIL' : 'PERSON_DETAIL';
@@ -123,7 +123,6 @@ export default function Reports() {
                           <td>{r.completion_rate}%</td>
                           <td>{r.on_time}</td>
                           <td>{r.on_time_rate}%</td>
-                          <td>{r.checklist_pass_rate != null ? `${r.checklist_pass_rate}%` : '—'}</td>
                           <td>{r.open ?? 0}</td>
                           <td className={r.overdue ? 'bad' : undefined}>{r.overdue ?? 0}</td>
                           <td>{r.avg_cycle_hours != null ? r.avg_cycle_hours : '—'}</td>
@@ -132,7 +131,7 @@ export default function Reports() {
                         </tr>
                       );
                     })}
-                    {perf.length === 0 && <tr><td colSpan={12} className="muted center">No data for this scope.</td></tr>}
+                    {perf.length === 0 && <tr><td colSpan={11} className="muted center">No data for this scope.</td></tr>}
                   </tbody>
                 </table>
               </div>
