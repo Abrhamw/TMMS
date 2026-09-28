@@ -175,3 +175,9 @@
 *.lz
 *.lzma
 *.iso
+
+# Runtime SQLite databases (WAL-mode; rewritten while the server runs)
+backend/tmms.db
+backend/tmms.db-shm
+backend/tmms.db-wal
+backend/tmms1.db
