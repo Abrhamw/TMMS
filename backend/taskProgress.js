@@ -7,11 +7,18 @@ function latestSubmittedExecution(taskId) {
 }
 
 // Display-only checklist progress: pass rate over the graded items of the
-// latest submitted execution. Never drives a state transition.
+// latest submitted execution of *each* template a task is governed by, so a
+// multi-checklist task reflects all of its runs. Never drives a state
+// transition.
 function taskProgress(taskId) {
-  const execRow = latestSubmittedExecution(taskId);
-  if (!execRow) return { progress_pct: 0, progress_graded: 0, progress_passed: 0 };
-  const items = db.prepare('SELECT result FROM checklist_execution_item WHERE execution_id = ?').all(execRow.id);
+  const items = db.prepare(
+    `SELECT i.result FROM checklist_execution_item i
+       JOIN (SELECT template_id, MAX(id) AS exec_id FROM checklist_execution
+              WHERE task_id = ? AND submitted_at IS NOT NULL
+              GROUP BY template_id) m
+         ON m.exec_id = i.execution_id`
+  ).all(taskId);
+  if (!items.length) return { progress_pct: 0, progress_graded: 0, progress_passed: 0 };
   const graded = items.filter((i) => i.result === 'PASS' || i.result === 'FAIL').length;
   const passed = items.filter((i) => i.result === 'PASS').length;
   return {

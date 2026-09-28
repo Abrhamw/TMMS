@@ -52,7 +52,7 @@ function taskDispatchAdvisory(task, crewId) {
 const TASK_WRITABLE = [
   'title', 'description', 'task_type', 'priority', 'priority_reason', 'due_date',
   'scheduled_start', 'scheduled_end', 'region_id', 'substation_id', 'line_id',
-  'tower_id', 'asset_id', 'checklist_template_id', 'crew_id',
+  'tower_id', 'asset_id', 'checklist_template_id', 'checklist_template_ids', 'crew_id',
   'permit_required', 'is_energized_work',
 ];
 
@@ -62,6 +62,61 @@ function pickTaskFields(body) {
     if (body && body[k] !== undefined) out[k] = body[k];
   }
   return out;
+}
+
+// A task may be governed by more than one checklist template. The
+// task_checklist_template join table is the source of truth; the legacy
+// task.checklist_template_id column mirrors the first selection so schedule
+// generation, follow-up carry and older consumers keep working unchanged.
+function taskTemplateIds(taskId) {
+  const rows = db.prepare(
+    'SELECT template_id FROM task_checklist_template WHERE task_id = ? ORDER BY sequence, template_id'
+  ).all(taskId);
+  if (rows.length) return rows.map((r) => r.template_id);
+  const t = get('task', taskId);
+  return t && t.checklist_template_id ? [t.checklist_template_id] : [];
+}
+
+function taskTemplateIdsMap() {
+  const map = new Map();
+  for (const r of db.prepare(
+    'SELECT task_id, template_id FROM task_checklist_template ORDER BY task_id, sequence, template_id'
+  ).all()) {
+    if (!map.has(r.task_id)) map.set(r.task_id, []);
+    map.get(r.task_id).push(r.template_id);
+  }
+  return map;
+}
+
+// Replace a task's checklist templates. Every id must reference an existing
+// template; duplicates are dropped and order is preserved as the selection
+// sequence. task.checklist_template_id is kept in sync with the first choice.
+function setTaskTemplates(taskId, ids) {
+  const clean = [...new Set((ids || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  for (const tid of clean) {
+    if (!get('checklist_template', tid)) throw new Error(`Checklist template ${tid} not found`);
+  }
+  db.prepare('DELETE FROM task_checklist_template WHERE task_id = ?').run(taskId);
+  clean.forEach((tid, i) => {
+    db.prepare('INSERT INTO task_checklist_template (task_id, template_id, sequence) VALUES (?,?,?)').run(taskId, tid, i);
+  });
+  db.prepare('UPDATE task SET checklist_template_id = ? WHERE id = ?').run(clean[0] || null, taskId);
+  return clean;
+}
+
+// Normalise the several shapes a caller may send for checklist selection into a
+// single ordered id array: an explicit checklist_template_ids array, a lone
+// checklist_template_ids value, or the legacy single checklist_template_id.
+function requestedTemplateIds(fields) {
+  if (Array.isArray(fields.checklist_template_ids)) return fields.checklist_template_ids;
+  if (fields.checklist_template_ids !== undefined) {
+    return fields.checklist_template_ids === null || fields.checklist_template_ids === ''
+      ? []
+      : [fields.checklist_template_ids];
+  }
+  if (fields.checklist_template_id === null || fields.checklist_template_id === '') return [];
+  if (fields.checklist_template_id !== undefined) return [fields.checklist_template_id];
+  return null;
 }
 
 function taskDetail(t) {
@@ -74,6 +129,9 @@ function taskDetail(t) {
   out.asset = t.asset_id ? get('asset', t.asset_id) : null;
   out.crew = t.crew_id ? get('crew', t.crew_id) : null;
   out.checklist_template = t.checklist_template_id ? get('checklist_template', t.checklist_template_id) : null;
+  out.checklist_templates = taskTemplateIds(t.id)
+    .map((tid) => get('checklist_template', tid))
+    .filter(Boolean);
   out.schedule = t.schedule_id ? get('maintenance_schedule', t.schedule_id) : null;
   out.links = db.prepare('SELECT * FROM task_link WHERE task_id = ?').all(t.id);
   return out;
@@ -93,10 +151,10 @@ function taskProgressMap() {
     `SELECT m.task_id,
             SUM(CASE WHEN i.result = 'PASS' THEN 1 ELSE 0 END) AS passed,
             SUM(CASE WHEN i.result IN ('PASS','FAIL') THEN 1 ELSE 0 END) AS graded
-     FROM (SELECT task_id, MAX(id) AS exec_id
+     FROM (SELECT task_id, template_id, MAX(id) AS exec_id
              FROM checklist_execution
             WHERE submitted_at IS NOT NULL
-            GROUP BY task_id) m
+            GROUP BY task_id, template_id) m
      JOIN checklist_execution_item i ON i.execution_id = m.exec_id
      GROUP BY m.task_id`
   ).all();
@@ -126,6 +184,7 @@ function taskDetails(rows) {
   const assets = indexById(list('asset'));
   const crews = indexById(list('crew'));
   const templates = indexById(list('checklist_template'));
+  const taskTemplates = taskTemplateIdsMap();
   const schedules = indexById(list('maintenance_schedule'));
   const progress = taskProgressMap();
   const links = new Map();
@@ -145,6 +204,8 @@ function taskDetails(rows) {
       asset: t.asset_id ? assets.get(t.asset_id) || null : null,
       crew: t.crew_id ? crews.get(t.crew_id) || null : null,
       checklist_template: t.checklist_template_id ? templates.get(t.checklist_template_id) || null : null,
+      checklist_templates: (taskTemplates.get(t.id) || (t.checklist_template_id ? [t.checklist_template_id] : []))
+        .map((tid) => templates.get(tid) || null).filter(Boolean),
       schedule: t.schedule_id ? schedules.get(t.schedule_id) || null : null,
       links: links.get(t.id) || [],
     };
@@ -304,11 +365,11 @@ router.get('/tasks/export.csv', (req, res) => {
     const target = taskTarget(t);
     const progress = taskProgress(t.id);
     const crew = t.crew_id ? get('crew', t.crew_id) : null;
-    const tpl = t.checklist_template_id ? get('checklist_template', t.checklist_template_id) : null;
+    const tpl = taskTemplateIds(t.id).map((tid) => get('checklist_template', tid)).filter(Boolean);
     const region = t.region_id ? get('region', t.region_id) : null;
     return [
       t.task_number, t.title, t.task_type, t.priority, t.status, t.result || '', region?.name || '',
-      crew?.name || '', target.type, target.name, tpl?.name || '', t.due_date || '', t.scheduled_start || '',
+      crew?.name || '', target.type, target.name, tpl.map((x) => x.name).join('; '), t.due_date || '', t.scheduled_start || '',
       t.actual_start || '', t.actual_end || '', personName(t.created_by), personName(t.assigned_by),
       personName(t.verified_by), progress.progress_pct,
     ].map(csvField).join(',');
@@ -575,6 +636,9 @@ router.post('/tasks', (req, res) => {
       revision: 1,
     };
     const id = insertRow('task', body);
+    if (req.body.checklist_template_ids !== undefined || req.body.checklist_template_id !== undefined) {
+      setTaskTemplates(id, requestedTemplateIds(fields) || []);
+    }
     audit(req.user, 'CREATE', 'task', id, fields);
     const created = taskDetail(get('task', id));
     const advisory = taskDispatchAdvisory(created, created.crew_id);
@@ -606,9 +670,20 @@ router.put('/tasks/:id', (req, res) => {
   updateRow('task', Number(req.params.id), { ...fields, updated_at: new Date().toISOString() }, [], 'revision');
   // updateRow drops null values, but clearing a reference is a meaningful edit
   // (detach a crew or a checklist template from a task). Apply those explicitly.
-  const clears = ['crew_id', 'checklist_template_id'].filter((k) => fields[k] === null);
+  const handledTemplates = fields.checklist_template_ids !== undefined || fields.checklist_template_id !== undefined;
+  const clears = ['crew_id'].filter((k) => fields[k] === null);
+  if (!handledTemplates && fields.checklist_template_id === null) clears.push('checklist_template_id');
   if (clears.length) {
     db.prepare(`UPDATE task SET ${clears.map((k) => `${k} = NULL`).join(', ')} WHERE id = ?`).run(Number(req.params.id));
+  }
+  // The join table is authoritative for which templates govern the task; sync it
+  // (and the legacy primary column) whenever the caller touched the selection.
+  if (handledTemplates) {
+    try {
+      setTaskTemplates(Number(req.params.id), requestedTemplateIds(fields) || []);
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
   }
   audit(req.user, 'UPDATE', 'task', Number(req.params.id), fields);
   res.json(taskDetail(get('task', Number(req.params.id))));
@@ -668,13 +743,21 @@ function assetRegion(a) {
 // submitted execution has every required item graded. Returns a reason string
 // when the checklist is not finished, or null when the transition is allowed.
 function checklistCompletionBlocker(t) {
-  if (!t.checklist_template_id) return null;
-  const exec = db.prepare(
-    "SELECT result FROM checklist_execution WHERE task_id = ? AND submitted_at IS NOT NULL ORDER BY id DESC LIMIT 1"
-  ).get(t.id);
-  if (!exec) return 'no checklist execution has been submitted for this task';
-  if (!exec.result || exec.result === 'INCOMPLETE') return 'required checklist items are still unanswered';
-  return null;
+  const ids = taskTemplateIds(t.id);
+  if (!ids.length) return null;
+  const missing = [];
+  for (const tid of ids) {
+    const exec = db.prepare(
+      "SELECT result FROM checklist_execution WHERE task_id = ? AND template_id = ? AND submitted_at IS NOT NULL ORDER BY id DESC LIMIT 1"
+    ).get(t.id, tid);
+    if (!exec) { missing.push({ tid, reason: 'no checklist execution has been submitted' }); continue; }
+    if (!exec.result || exec.result === 'INCOMPLETE') missing.push({ tid, reason: 'required checklist items are still unanswered' });
+  }
+  if (!missing.length) return null;
+  return missing.map((m) => {
+    const tpl = get('checklist_template', m.tid);
+    return `${tpl ? tpl.name : `template #${m.tid}`}: ${m.reason}`;
+  }).join('; ');
 }
 
 // ---------------- State machine ----------------
@@ -775,9 +858,11 @@ router.post('/tasks/:id/state', (req, res) => {
   // before the task can be completed. An out-of-range (FAIL) reading is never
   // silently dropped — it is kept on record and the verifier reviews the
   // captured coordinates and decides the outcome.
-  if (action === 'verify' && t.checklist_template_id) {
-    const tpl = get('checklist_template', t.checklist_template_id);
-    if (tpl && tpl.requires_gps_confirmation) {
+  if (action === 'verify') {
+    const gpsRequired = taskTemplateIds(t.id)
+      .map((tid) => get('checklist_template', tid))
+      .some((tpl) => tpl && tpl.requires_gps_confirmation);
+    if (gpsRequired) {
       const any = db.prepare(
         "SELECT COUNT(*) c FROM gps_validation WHERE linked_task_id = ?"
       ).get(id).c;
@@ -789,13 +874,13 @@ router.post('/tasks/:id/state', (req, res) => {
     }
   }
 
-  // Segregation of duties: whoever performed the latest submitted checklist
-  // cannot also verify/complete the same task.
+  // Segregation of duties: whoever performed any submitted checklist run on this
+  // task cannot also verify/complete it.
   if (action === 'verify') {
-    const lastExec = db.prepare(
-      "SELECT executed_by FROM checklist_execution WHERE task_id = ? AND submitted_at IS NOT NULL ORDER BY id DESC LIMIT 1"
-    ).get(id);
-    if (lastExec && lastExec.executed_by && req.user.person_id && lastExec.executed_by === req.user.person_id) {
+    const mine = db.prepare(
+      "SELECT COUNT(*) c FROM checklist_execution WHERE task_id = ? AND submitted_at IS NOT NULL AND executed_by = ?"
+    ).get(id, req.user.person_id || null).c;
+    if (mine > 0) {
       return res.status(409).json({
         error: 'Segregation of duties: the verifier cannot be the person who executed the checklist',
       });
@@ -1041,11 +1126,13 @@ function buildFollowUpPlans(source) {
   const recommend = [];
   const reason = followUpReason(s);
   const carriedItems = deriveWorkItems(source);
-  const tpl = source.checklist_template_id ? get('checklist_template', source.checklist_template_id) : null;
+  const sourceTemplateIds = taskTemplateIds(source.id);
+  const sourceTemplates = sourceTemplateIds.map((tid) => get('checklist_template', tid)).filter(Boolean);
   const carry = {
     carry_count: carriedItems.length,
-    carry_checklist_template_id: source.checklist_template_id || null,
-    carry_checklist_name: tpl ? tpl.name : null,
+    carry_checklist_template_id: sourceTemplateIds[0] || null,
+    carry_checklist_template_ids: sourceTemplateIds,
+    carry_checklist_name: sourceTemplates.map((tpl) => tpl.name).join(', ') || null,
   };
   if (isEmergency(s)) {
     const due = new Date();
@@ -1083,9 +1170,14 @@ function createFollowUpTask(req, source, plan) {
   if (isFollowUpTask(source)) return null;
   if (openTaskLike(source, plan.task_type)) return null;
   const now = new Date().toISOString();
-  const templateId = plan.checklist_template_id === undefined
-    ? source.checklist_template_id || null
-    : plan.checklist_template_id;
+  // Which checklist templates the new task carries: an explicit override wins,
+  // otherwise the source task's full selection is carried over.
+  const templateIds = Array.isArray(plan.checklist_template_ids)
+    ? plan.checklist_template_ids
+    : plan.checklist_template_id !== undefined
+      ? (plan.checklist_template_id ? [plan.checklist_template_id] : [])
+      : taskTemplateIds(source.id);
+  const templateId = templateIds[0] || null;
   const id = insertRow('task', {
     ...baseFollowUpTask(source),
     task_number: nextTaskNumber(),
@@ -1103,6 +1195,7 @@ function createFollowUpTask(req, source, plan) {
     updated_at: now,
     revision: 1,
   });
+  setTaskTemplates(id, templateIds);
   const derived = deriveWorkItems(source);
   derived.forEach((item, idx) => {
     insertRow('task_work_item', {
@@ -1118,7 +1211,7 @@ function createFollowUpTask(req, source, plan) {
     });
   });
   db.prepare("INSERT INTO task_link (task_id, linked_task_id, link_type) VALUES (?, ?, 'FOLLOW_UP')").run(id, source.id);
-  audit(req.user, 'CREATE', 'task', id, { follow_up: true, source_task: source.id, task_type: plan.task_type, reason: plan.reason || null, checklist_template_id: templateId, work_items: derived.length });
+  audit(req.user, 'CREATE', 'task', id, { follow_up: true, source_task: source.id, task_type: plan.task_type, reason: plan.reason || null, checklist_template_id: templateId, checklist_template_ids: templateIds, work_items: derived.length });
   return id;
 }
 
@@ -1155,18 +1248,35 @@ router.post('/tasks/:id/follow-ups', (req, res) => {
   const plans = [...auto, ...recommend];
   const plan = req.body.key ? plans.find((p) => p.key === req.body.key) : plans[0];
   if (!plan) return res.status(409).json({ error: 'No follow-up work is warranted from this task result' });
-  let templateChoice = plan.carry_checklist_template_id ?? null;
-  if (req.body.checklist_template_id !== undefined && req.body.checklist_template_id !== null && req.body.checklist_template_id !== '') {
-    const requested = Number(req.body.checklist_template_id);
+  // Which checklist(s) the follow-up carries. undefined = carry the source
+  // task's whole selection; an explicit list (or a lone id) is validated here.
+  let templateIdsChoice;
+  const validateTemplate = (v) => {
+    const requested = Number(v);
     const tpl = Number.isInteger(requested) ? get('checklist_template', requested) : null;
-    if (!tpl || tpl.status !== 'ACTIVE') return res.status(400).json({ error: 'checklist_template_id must reference an existing ACTIVE template' });
-    templateChoice = tpl.id;
+    if (!tpl || tpl.status !== 'ACTIVE') return null;
+    return tpl.id;
+  };
+  if (req.body.checklist_template_ids !== undefined) {
+    const raw = req.body.checklist_template_ids;
+    const arr = Array.isArray(raw) ? raw : (raw === null || raw === '' ? [] : [raw]);
+    const clean = [];
+    for (const v of arr) {
+      const tid = validateTemplate(v);
+      if (!tid) return res.status(400).json({ error: 'checklist_template_ids must reference existing ACTIVE templates' });
+      if (!clean.includes(tid)) clean.push(tid);
+    }
+    templateIdsChoice = clean;
+  } else if (req.body.checklist_template_id !== undefined && req.body.checklist_template_id !== null && req.body.checklist_template_id !== '') {
+    const tid = validateTemplate(req.body.checklist_template_id);
+    if (!tid) return res.status(400).json({ error: 'checklist_template_id must reference an existing ACTIVE template' });
+    templateIdsChoice = [tid];
   } else if (req.body.checklist_template_id === null) {
-    templateChoice = null;
+    templateIdsChoice = [];
   }
   let created;
   try {
-    created = withTx(() => createFollowUpTask(req, source, { ...plan, checklist_template_id: templateChoice, status: req.body.status || plan.status }));
+    created = withTx(() => createFollowUpTask(req, source, { ...plan, checklist_template_ids: templateIdsChoice, status: req.body.status || plan.status }));
   } catch (e) {
     return res.status(400).json({ error: e.message });
   }
@@ -1185,11 +1295,21 @@ router.get('/tasks/:id/checklist', (req, res) => {
   if (!t) return res.status(404).json({ error: 'Task not found' });
   if (!taskVisible(req.user, t)) return res.status(404).json({ error: 'Task not found' });
   if (!can(req, 'task:execute')) return res.status(403).json({ error: 'Forbidden: requires task:execute' });
-  if (!t.checklist_template_id) return res.status(400).json({ error: 'Task has no checklist template' });
-  const tpl = get('checklist_template', t.checklist_template_id);
-  tpl.items = db.prepare('SELECT * FROM checklist_item WHERE template_id = ? ORDER BY sequence').all(tpl.id)
-    .map((it) => ({ ...it, pass_criteria: parseCriteria(it.pass_criteria) }));
-  res.json({ task: t, template: tpl });
+  const ids = taskTemplateIds(t.id);
+  if (!ids.length) return res.status(400).json({ error: 'Task has no checklist template' });
+  const itemQ = db.prepare('SELECT * FROM checklist_item WHERE template_id = ? ORDER BY sequence');
+  const templates = ids.map((tid) => {
+    const tpl = get('checklist_template', tid);
+    if (!tpl) return null;
+    const items = itemQ.all(tpl.id).map((it) => ({ ...it, pass_criteria: parseCriteria(it.pass_criteria) }));
+    const last = db.prepare(
+      "SELECT * FROM checklist_execution WHERE task_id = ? AND template_id = ? AND submitted_at IS NOT NULL ORDER BY id DESC LIMIT 1"
+    ).get(t.id, tpl.id) || null;
+    return { ...tpl, items, last_execution: last };
+  }).filter(Boolean);
+  // `template` stays the primary template for callers written against the
+  // single-template shape; `templates` carries every governed template.
+  res.json({ task: t, template: templates[0] || null, templates });
 });
 
 router.post('/tasks/:id/checklist', (req, res) => {
@@ -1200,8 +1320,16 @@ router.post('/tasks/:id/checklist', (req, res) => {
   if (isCrewUser(req.user) && !isOnCrew(req.user, t.crew_id)) {
     return res.status(403).json({ error: 'Forbidden: not your assigned task' });
   }
-  if (!t.checklist_template_id) return res.status(400).json({ error: 'Task has no checklist template' });
-  const tpl = get('checklist_template', t.checklist_template_id);
+  const ids = taskTemplateIds(t.id);
+  if (!ids.length) return res.status(400).json({ error: 'Task has no checklist template' });
+  const requestedId = (req.body.template_id !== undefined && req.body.template_id !== null && req.body.template_id !== '')
+    ? Number(req.body.template_id)
+    : ids[0];
+  if (!ids.includes(requestedId)) {
+    return res.status(400).json({ error: 'template_id is not one of this task\'s checklist templates' });
+  }
+  const tpl = get('checklist_template', requestedId);
+  if (!tpl) return res.status(400).json({ error: 'Checklist template not found' });
   const items = db.prepare('SELECT * FROM checklist_item WHERE template_id = ? ORDER BY sequence').all(tpl.id);
   const now = new Date().toISOString();
 
@@ -1317,20 +1445,28 @@ router.post('/tasks/:id/checklist', (req, res) => {
       const overall = hasCriticalFail || gpsFailed ? 'FAIL' : hasRequiredMissing ? 'INCOMPLETE' : hasFail ? 'FAIL' : 'PASS';
       updateRow('checklist_execution', execId, { result: overall });
 
-      // Only advance the task when the run is finished. An INCOMPLETE run
-      // (required items unanswered) is kept on record but leaves the task in
-      // progress so the field crew can complete the outstanding steps.
-      const advanced = canSubmitRun && overall !== 'INCOMPLETE' && (t.status === 'IN_PROGRESS' || t.status === 'ASSIGNED');
+      // The task advances only once *every* governed template has a finished
+      // run. The task-level result fails if any template's latest run failed.
+      const allTemplatesDone = !checklistCompletionBlocker(t);
+      const latest = db.prepare(
+        `SELECT e.result FROM checklist_execution e
+          JOIN (SELECT template_id, MAX(id) AS exec_id FROM checklist_execution
+                 WHERE task_id = ? AND submitted_at IS NOT NULL GROUP BY template_id) m
+            ON m.exec_id = e.id`
+      ).all(t.id);
+      const taskResult = latest.some((r) => r.result === 'FAIL') ? 'FAIL' : 'PASS';
+      const advanced = canSubmitRun && overall !== 'INCOMPLETE' && allTemplatesDone
+        && (t.status === 'IN_PROGRESS' || t.status === 'ASSIGNED');
       if (advanced) {
         db.prepare('UPDATE task SET status = ?, updated_at = ?, actual_start = COALESCE(actual_start, ?), result = ?, revision = revision + 1 WHERE id = ?')
-          .run('PENDING_VERIFICATION', now, now, overall === 'PASS' ? 'PASS' : 'FAIL', t.id);
+          .run('PENDING_VERIFICATION', now, now, taskResult, t.id);
       }
-      return { execId, overall, gpsCreated, advanced };
+      return { execId, overall, gpsCreated, advanced, templates_done: allTemplatesDone };
     });
   } catch (e) {
     return res.status(400).json({ error: e.message });
   }
-  res.status(201).json({ execution_id: outcome.execId, result: outcome.overall, advanced: outcome.advanced, gps_validations_created: outcome.gpsCreated, execution: get('checklist_execution', outcome.execId) });
+  res.status(201).json({ execution_id: outcome.execId, result: outcome.overall, advanced: outcome.advanced, templates_done: outcome.templates_done, gps_validations_created: outcome.gpsCreated, execution: get('checklist_execution', outcome.execId) });
 });
 
 // Resolve the installed device location for a task target. Returns

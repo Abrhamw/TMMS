@@ -7,7 +7,7 @@
 // schema holds no crew equipment inventory.
 
 const { db, list, get } = require('./util');
-const { buildRequirements, evaluateCrew, certIsValid } = require('./dispatch');
+const { buildRequirements, mergeRequirements, evaluateCrew, certIsValid } = require('./dispatch');
 
 const OPEN_TASK_STATES = ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION'];
 
@@ -53,12 +53,26 @@ function taskCrewSource(t, crewId) {
 }
 
 // The checklist requirements a task imposes, or null when it names no template.
+// A task governed by several templates yields a merged requirement profile.
 function taskRequirements(t) {
-  const tpl = t && t.checklist_template_id ? get('checklist_template', t.checklist_template_id) : null;
-  if (!tpl) return null;
-  const items = db.prepare('SELECT instruction, pass_criteria, test_equipment, section FROM checklist_item WHERE template_id = ?').all(tpl.id);
-  const context = t ? { is_energized_work: !!t.is_energized_work, permit_required: !!t.permit_required } : {};
-  return buildRequirements(tpl, items, context);
+  if (!t) return null;
+  const ids = [];
+  if (t.id) {
+    for (const r of db.prepare('SELECT template_id FROM task_checklist_template WHERE task_id = ? ORDER BY sequence, template_id').all(t.id)) {
+      ids.push(r.template_id);
+    }
+  }
+  if (!ids.length && t.checklist_template_id) ids.push(t.checklist_template_id);
+  if (!ids.length) return null;
+  const context = { is_energized_work: !!t.is_energized_work, permit_required: !!t.permit_required };
+  const reqs = [];
+  for (const tid of ids) {
+    const tpl = get('checklist_template', tid);
+    if (!tpl) continue;
+    const items = db.prepare('SELECT instruction, pass_criteria, test_equipment, section FROM checklist_item WHERE template_id = ?').all(tpl.id);
+    reqs.push(buildRequirements(tpl, items, context));
+  }
+  return mergeRequirements(reqs);
 }
 
 // A crew shaped for the dispatch evaluator (crew_type + members + valid certs)

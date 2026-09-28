@@ -6,7 +6,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "fix-data": "node scripts/fixRuntimeData.js",
+    "fix-data:apply": "node scripts/fixRuntimeData.js --apply"
   },
   "engines": {
     "node": ">=22.5.0"

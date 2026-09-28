@@ -193,6 +193,47 @@ function buildRequirements(template, items = [], context = {}) {
   };
 }
 
+// Combine the requirements of several templates a task is governed by into one
+// dispatch profile: skills/materials/certs are unioned, the team size is the
+// largest single template's, and a certification required by any template stays
+// REQUIRED in the merged set.
+function mergeRequirements(reqs) {
+  const list = (reqs || []).filter(Boolean);
+  if (!list.length) return null;
+  if (list.length === 1) return list[0];
+  const skillByLabel = new Map();
+  for (const r of list) for (const s of r.skills) if (!skillByLabel.has(s.label)) skillByLabel.set(s.label, s);
+  const skills = [...skillByLabel.values()];
+  const certByCert = new Map();
+  for (const r of list) for (const c of (r.cert_requirements || [])) {
+    const prev = certByCert.get(c.cert);
+    if (!prev || (prev.level !== 'REQUIRED' && c.level === 'REQUIRED')) certByCert.set(c.cert, c);
+  }
+  const certRequirements = [...certByCert.values()];
+  const largest = list.reduce((best, r) => (r.min_team_size > best.min_team_size ? r : best), list[0]);
+  const materials = unique(list.flatMap((r) => r.materials || []));
+  const testEquipment = unique(list.flatMap((r) => r.test_equipment || []));
+  return {
+    template_id: list[0].template_id,
+    template_code: list.map((r) => r.template_code).filter(Boolean).join('+'),
+    template_name: list.map((r) => r.template_name).filter(Boolean).join(' + '),
+    template_ids: list.map((r) => r.template_id),
+    task_type: largest.task_type,
+    team: largest.team,
+    min_team_size: largest.min_team_size,
+    skills,
+    crew_types: unique(list.flatMap((r) => r.crew_types || [])),
+    roles: unique(list.flatMap((r) => r.roles || [])),
+    min_skill: maxSkill(list.map((r) => r.min_skill)),
+    materials,
+    test_equipment: testEquipment,
+    equipment: unique([...materials, ...testEquipment]),
+    cert_requirements: certRequirements,
+    required_certs: certRequirements.filter((c) => c.level === 'REQUIRED').map((c) => c.cert),
+    recommended_certs: certRequirements.filter((c) => c.level === 'RECOMMENDED').map((c) => c.cert),
+  };
+}
+
 function certIsValid(cert, now = Date.now()) {
   if (!cert || cert.status !== 'VALID') return false;
   if (cert.expires_at) {
@@ -288,6 +329,7 @@ module.exports = {
   parsePersonnel,
   teamSize,
   buildRequirements,
+  mergeRequirements,
   crewCoversSkill,
   evaluateCrew,
 };

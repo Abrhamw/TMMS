@@ -259,6 +259,14 @@ function initSchema() {
   );
   CREATE INDEX IF NOT EXISTS idx_task_work_item_task ON task_work_item(task_id);
 
+  CREATE TABLE IF NOT EXISTS task_checklist_template (
+    task_id INTEGER NOT NULL REFERENCES task(id) ON DELETE CASCADE,
+    template_id INTEGER NOT NULL REFERENCES checklist_template(id),
+    sequence INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (task_id, template_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_task_checklist_template_task ON task_checklist_template(task_id);
+
   CREATE TABLE IF NOT EXISTS maintenance_schedule (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     schedule_name TEXT NOT NULL,
@@ -692,6 +700,17 @@ function initSchema() {
           SET status = 'ASSIGNED', updated_at = ?
         WHERE status = 'SCHEDULED' AND crew_id IS NOT NULL`
     ).run(new Date().toISOString());
+  } catch (_) { /* non-fatal */ }
+
+  // Tasks historically carried a single checklist template on
+  // task.checklist_template_id. Seed the join table from that column so the
+  // multi-template model has a complete starting point. INSERT OR IGNORE makes
+  // this safe to run on every boot.
+  try {
+    db.prepare(
+      `INSERT OR IGNORE INTO task_checklist_template (task_id, template_id, sequence)
+       SELECT id, checklist_template_id, 0 FROM task WHERE checklist_template_id IS NOT NULL`
+    ).run();
   } catch (_) { /* non-fatal */ }
 
   // Let SQLite refresh its statistics after any new indexes/columns so the

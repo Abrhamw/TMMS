@@ -59,7 +59,7 @@ export default function TaskDetail() {
   const [assignOptions, setAssignOptions] = useState(null);
   const [assignBusy, setAssignBusy] = useState(false);
   const [editCrewId, setEditCrewId] = useState('');
-  const [editChecklistId, setEditChecklistId] = useState('');
+  const [editChecklistIds, setEditChecklistIds] = useState([]);
   const [editBusy, setEditBusy] = useState(false);
   const [viewExec, setViewExec] = useState(null);
   const [dossierBusy, setDossierBusy] = useState(false);
@@ -98,9 +98,10 @@ export default function TaskDetail() {
   }, [task?.crew_id, task?.checklist_template_id, task?.status, canAssign, id]);
 
   useEffect(() => {
-    if (task) setEditCrewId(task.crew_id || '');
-    if (task?.checklist_template_id) setEditChecklistId(task.checklist_template_id);
-  }, [task?.crew_id, task?.checklist_template_id, task]);
+    if (!task) return;
+    setEditCrewId(task.crew_id || '');
+    setEditChecklistIds((task.checklist_templates || []).map((x) => x.id));
+  }, [task?.crew_id, task?.checklist_templates, task]);
 
   useEffect(() => {
     const checks = task?.readiness?.equipment_checks || [];
@@ -122,12 +123,15 @@ export default function TaskDetail() {
 
   const recorder = useRouteRecorder(id, loadTrace);
 
-  async function fetchChecklist() {
+  async function fetchChecklist(templateId) {
     try {
       const data = await api.get(`/tasks/${id}/checklist`);
-      setTpl(data.template);
+      const list = data.templates || (data.template ? [data.template] : []);
+      const chosen = list.find((x) => x.id === templateId) || list[0];
+      if (!chosen) { setError('Task has no checklist template'); return; }
+      setTpl(chosen);
       const items = {};
-      data.template.items.forEach((it) => { items[it.id] = { value: null, comment: '' }; });
+      chosen.items.forEach((it) => { items[it.id] = { value: null, comment: '' }; });
       setChecklist(items);
       setVerifyForm({ ...verifyForm, summary: task?.completion_summary || '' });
     } catch (e) { setError(e.message); }
@@ -164,7 +168,9 @@ export default function TaskDetail() {
     try {
       const body = {};
       if (editCrewId !== String(task.crew_id || '')) body.crew_id = editCrewId ? Number(editCrewId) : null;
-      if (editChecklistId !== String(task.checklist_template_id || '')) body.checklist_template_id = editChecklistId ? Number(editChecklistId) : null;
+      const before = (task.checklist_templates || []).map((x) => x.id).sort((a, b) => a - b).join(',');
+      const after = [...editChecklistIds].sort((a, b) => a - b).join(',');
+      if (before !== after) body.checklist_template_ids = editChecklistIds;
       if (Object.keys(body).length) {
         await api.put(`/tasks/${id}`, body);
         setNotif('Assignment updated');
@@ -192,10 +198,12 @@ export default function TaskDetail() {
   async function submitChecklist() {
     try {
       const items = Object.entries(checklist).map(([tid, v]) => ({ template_item_id: Number(tid), response_value: v.value, comment: v.comment }));
-      const res = await api.post(`/tasks/${id}/checklist`, { items });
-      setNotif(res.advanced === false
-        ? `Checklist result ${res.result} — required steps missing, task not advanced`
-        : `Checklist submitted — result ${res.result}`);
+      const res = await api.post(`/tasks/${id}/checklist`, { template_id: tpl.id, items });
+      setNotif(res.templates_done === false
+        ? `Checklist result ${res.result} — other templates still pending, task not advanced`
+        : res.advanced === false
+          ? `Checklist result ${res.result} — required steps missing, task not advanced`
+          : `Checklist submitted — result ${res.result}`);
       setChecklist(null);
       setTpl(null);
       load();
@@ -225,13 +233,14 @@ export default function TaskDetail() {
     finally { setDossierBusy(false); }
   }
 
-  async function createFollowUp(key, carryTemplateId) {
+  async function createFollowUp(key) {
     try {
       setFuBusyKey(key);
-      const picked = fuTemplate[key] === undefined ? carryTemplateId : fuTemplate[key];
+      const picked = fuTemplate[key];
       const body = { key };
-      if (picked !== undefined && picked !== null && picked !== '') body.checklist_template_id = Number(picked);
-      else if (picked === '') body.checklist_template_id = null;
+      // undefined = carry the source task's whole checklist selection.
+      if (picked === '__none__') body.checklist_template_ids = [];
+      else if (picked !== undefined && picked !== null && picked !== '') body.checklist_template_ids = [Number(picked)];
       await api.post(`/tasks/${task.id}/follow-ups`, body);
       load();
     } catch (e) { setError(e.message); }
@@ -460,7 +469,7 @@ export default function TaskDetail() {
             <span className="k">Target</span><span>{t.tower ? `${t.tower.tower_id} (Tower)` : t.asset?.name || t.substation?.name || t.line?.name || '—'}</span>
             <span className="k">Region</span><span>{t.region?.name}</span>
             <span className="k">Crew</span><span>{t.crew?.name || '—'}</span>
-            <span className="k">Checklist</span><span>{t.checklist_template?.name || '—'}</span>
+            <span className="k">Checklist</span><span>{(t.checklist_templates?.length ? t.checklist_templates : (t.checklist_template ? [t.checklist_template] : [])).map((x) => x.name).join(', ') || '—'}</span>
             <span className="k">Due</span><span>{fmtDateTime(t.due_date)}</span>
             <span className="k">Started / Ended</span><span>{fmtDateTime(t.actual_start)} / {fmtDateTime(t.actual_end)}</span>
             <span className="k">Result</span><span>{t.result || '—'}</span>
@@ -531,7 +540,14 @@ export default function TaskDetail() {
             {(t.status === 'SCHEDULED' || (t.status === 'ASSIGNED' && !t.crew_id)) && canAssign && <button className="btn btn-primary" onClick={() => act('assign')}>Assign (keep/assign crew)</button>}
             {t.status === 'ASSIGNED' && canStart && <button className="btn btn-primary" onClick={() => act('start')}>Start work</button>}
             {t.status === 'IN_PROGRESS' && (canExecute || canSubmit) && <>
-              {t.checklist_template_id && canExecute && <button className="btn btn-primary" onClick={fetchChecklist}>Run checklist</button>}
+              {canExecute && (t.checklist_templates?.length ? t.checklist_templates : (t.checklist_template ? [t.checklist_template] : [])).map((ct) => {
+                const done = (t.executions || []).some((e) => e.template_id === ct.id && e.submitted_at && e.result && e.result !== 'INCOMPLETE');
+                return (
+                  <button key={ct.id} className={done ? 'btn' : 'btn btn-primary'} onClick={() => fetchChecklist(ct.id)}>
+                    {done ? 'Re-run' : 'Run'} checklist: {ct.name}
+                  </button>
+                );
+              })}
               {canSubmit && <button className="btn btn-primary" onClick={() => act('submit')}>Submit for verification</button>}
               {canSubmit && <button className="btn" onClick={() => act('hold')}>Hold (blocked)</button>}
               {canExecute && !canSubmit && <div className="muted" style={{ fontSize: 12 }}>Field capture recorded — the crew lead submits the run for verification.</div>}
@@ -623,11 +639,22 @@ export default function TaskDetail() {
                   {t.crew && !(assignOptions?.candidates || []).some((c) => c.id === t.crew_id) ? <option value={t.crew_id}>{t.crew.name}</option> : null}
                 </select>
               </div>
-              <div className="field"><label>Checklist template</label>
-                <select value={editChecklistId} onChange={(e) => setEditChecklistId(e.target.value)}>
-                  <option value="">— none —</option>
-                  {checklists.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+              <div className="field"><label>Checklist templates</label>
+                <div style={{ maxHeight: 140, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 6, padding: '6px 8px' }}>
+                  {checklists.filter((c) => c.status === 'ACTIVE').map((c) => (
+                    <label key={c.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, padding: '2px 0' }}>
+                      <input
+                        type="checkbox"
+                        checked={editChecklistIds.includes(c.id)}
+                        onChange={(e) => setEditChecklistIds(e.target.checked
+                          ? [...editChecklistIds, c.id]
+                          : editChecklistIds.filter((x) => x !== c.id))}
+                      />
+                      <span>{c.name}</span>
+                    </label>
+                  ))}
+                  {!checklists.filter((c) => c.status === 'ACTIVE').length && <span className="muted" style={{ fontSize: 12 }}>No active templates.</span>}
+                </div>
               </div>
               <div>
                 <button className="btn btn-primary" disabled={editBusy} onClick={saveAssignment}>Save assignment</button>
@@ -956,25 +983,21 @@ export default function TaskDetail() {
                   <>
                     {(plan.carry_checklist_template_id || plan.carry_count > 0) && (
                       <div className="field" style={{ margin: '6px 0' }}>
-                        <label>Checklist template</label>
+                        <label>Checklist templates</label>
                         <select
                           style={{ width: '100%' }}
-                          value={fuTemplate[plan.key] ?? String(plan.carry_checklist_template_id ?? '')}
+                          value={fuTemplate[plan.key] ?? ''}
                           onChange={(e) => setFuTemplate({ ...fuTemplate, [plan.key]: e.target.value })}
                         >
-                          {plan.carry_checklist_template_id ? (
-                            <option value={String(plan.carry_checklist_template_id)}>Source default — {plan.carry_checklist_name}</option>
-                          ) : (
-                            <option value="">No source template (default)</option>
-                          )}
-                          {checklists.filter((c) => c.status === 'ACTIVE' && c.id !== plan.carry_checklist_template_id).map((c) => (
+                          <option value="">Carry source — {plan.carry_checklist_name || 'none'}</option>
+                          {checklists.filter((c) => c.status === 'ACTIVE' && !(plan.carry_checklist_template_ids || []).includes(c.id)).map((c) => (
                             <option key={c.id} value={String(c.id)}>{c.name}</option>
                           ))}
-                          <option value="">— no checklist —</option>
+                          <option value="__none__">— no checklist —</option>
                         </select>
                       </div>
                     )}
-                    <button className="btn btn-sm btn-primary mt" disabled={fuBusyKey === plan.key} onClick={() => createFollowUp(plan.key, plan.carry_checklist_template_id)}>
+                    <button className="btn btn-sm btn-primary mt" disabled={fuBusyKey === plan.key} onClick={() => createFollowUp(plan.key)}>
                       {fuBusyKey === plan.key ? 'Creating…' : 'Create task'}
                     </button>
                   </>

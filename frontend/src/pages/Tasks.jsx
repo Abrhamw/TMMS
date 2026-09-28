@@ -6,7 +6,7 @@ import { KpiTile } from '../components/InfraVisuals';
 
 const TITLE = 'Maintenance Tasks';
 const CRUMBS = 'TMMS / Operations';
-const blank = { title: '', task_type: 'PREVENTIVE', priority: 'MEDIUM', description: '', region_id: 1, substation_id: null, line_id: null, tower_id: null, asset_id: null, checklist_template_id: null, crew_id: null, due_date: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 16) };
+const blank = { title: '', task_type: 'PREVENTIVE', priority: 'MEDIUM', description: '', region_id: 1, substation_id: null, line_id: null, tower_id: null, asset_id: null, checklist_template_ids: [], crew_id: null, due_date: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 16) };
 
 const STATUSES = ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION', 'COMPLETED', 'CANCELLED', 'FAILED'];
 
@@ -347,11 +347,24 @@ export default function Tasks() {
                 <option value="">— none —</option>
                 {assets.map((a) => <option key={a.id} value={a.id}>{a.name} {a.default_crew_name ? `(${a.default_crew_name})` : ''}</option>)}
               </select></div>
-            <div className="field"><label>Checklist</label>
-              <select value={form.checklist_template_id || ''} onChange={(e) => setForm({ ...form, checklist_template_id: e.target.value ? Number(e.target.value) : null })}>
-                <option value="">— none —</option>
-                {checklists.filter((c) => c.status === 'ACTIVE').map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select></div>
+            <div className="field"><label>Checklist templates</label>
+              <div style={{ maxHeight: 140, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 6, padding: '6px 8px' }}>
+                {checklists.filter((c) => c.status === 'ACTIVE').map((c) => (
+                  <label key={c.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, padding: '2px 0' }}>
+                    <input
+                      type="checkbox"
+                      checked={(form.checklist_template_ids || []).includes(c.id)}
+                      onChange={(e) => {
+                        const cur = form.checklist_template_ids || [];
+                        setForm({ ...form, checklist_template_ids: e.target.checked ? [...cur, c.id] : cur.filter((x) => x !== c.id) });
+                      }}
+                    />
+                    <span>{c.name}</span>
+                  </label>
+                ))}
+                {!checklists.filter((c) => c.status === 'ACTIVE').length && <span className="muted" style={{ fontSize: 12 }}>No active templates.</span>}
+              </div>
+            </div>
             <div className="field"><label>Crew</label>
               <select value={form.crew_id || ''} onChange={(e) => setForm({ ...form, crew_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">— none —</option>

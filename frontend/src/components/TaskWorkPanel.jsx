@@ -58,12 +58,15 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
     if (await act('cancel', { reason })) setCancelFlow(null);
   }
 
-  async function runChecklist() {
+  async function runChecklist(templateId) {
     try {
       const data = await api.get(`/tasks/${taskId}/checklist`);
+      const list = data.templates || (data.template ? [data.template] : []);
+      const chosen = list.find((y) => y.id === templateId) || list[0];
+      if (!chosen) { setError('Task has no checklist template'); return; }
       const items = {};
-      data.template.items.forEach((it) => { items[it.id] = { value: null, comment: '' }; });
-      setTpl(data.template);
+      chosen.items.forEach((it) => { items[it.id] = { value: null, comment: '' }; });
+      setTpl(chosen);
       setChecklist(items);
     } catch (e) { setError(e.message); }
   }
@@ -71,10 +74,12 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
   async function submitChecklist() {
     try {
       const items = Object.entries(checklist).map(([tid, v]) => ({ template_item_id: Number(tid), response_value: v.value, comment: v.comment }));
-      const res = await api.post(`/tasks/${taskId}/checklist`, { items });
-      setNotif(res.advanced === false
-        ? `Checklist result ${res.result} — required steps missing, task not advanced`
-        : `Checklist submitted — result ${res.result}`);
+      const res = await api.post(`/tasks/${taskId}/checklist`, { template_id: tpl.id, items });
+      setNotif(res.templates_done === false
+        ? `Checklist result ${res.result} — other templates still pending, task not advanced`
+        : res.advanced === false
+          ? `Checklist result ${res.result} — required steps missing, task not advanced`
+          : `Checklist submitted — result ${res.result}`);
       setChecklist(null); setTpl(null);
       await load();
       if (onChanged) onChanged();
@@ -119,7 +124,7 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
         <span className="k">Asset worked on</span><span>{tgt.asset || '—'}</span>
         <span className="k">Infrastructure</span><span>{tgt.infrastructure || '—'}</span>
         <span className="k">Crew</span><span>{t.crew?.name || '—'}</span>
-        <span className="k">Checklist</span><span>{t.checklist_template?.name || '—'}</span>
+        <span className="k">Checklist</span><span>{(t.checklist_templates?.length ? t.checklist_templates : (t.checklist_template ? [t.checklist_template] : [])).map((c) => c.name).join(', ') || '—'}</span>
         <span className="k">Result</span><span>{t.result || '—'}</span>
       </div>
       <p className="muted">{t.description || 'No description.'}</p>
@@ -142,7 +147,14 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
           {t.status === 'ASSIGNED' && canStart && <button className="btn btn-primary" onClick={() => act('start')}>Start work</button>}
           {t.status === 'IN_PROGRESS' && (
             <>
-              {t.checklist_template_id && canExecute && <button className="btn btn-primary" onClick={runChecklist}>Run checklist</button>}
+              {canExecute && (t.checklist_templates?.length ? t.checklist_templates : (t.checklist_template ? [t.checklist_template] : [])).map((ct) => {
+                const doneRun = (t.executions || []).some((e) => e.template_id === ct.id && e.submitted_at && e.result && e.result !== 'INCOMPLETE');
+                return (
+                  <button key={ct.id} className={doneRun ? 'btn' : 'btn btn-primary'} onClick={() => runChecklist(ct.id)}>
+                    {doneRun ? 'Re-run' : 'Run'} checklist: {ct.name}
+                  </button>
+                );
+              })}
               {canLead && <button className="btn btn-primary" onClick={() => act('submit')}>Submit for verification</button>}
               {canLead && <button className="btn" onClick={() => act('hold')}>Hold (blocked)</button>}
             </>

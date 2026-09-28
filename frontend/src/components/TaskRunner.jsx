@@ -51,12 +51,15 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
     finally { setBusy(false); }
   }
 
-  async function openChecklist() {
+  async function openChecklist(templateId) {
     try {
       const data = await api.get(`/tasks/${taskId}/checklist`);
+      const list = data.templates || (data.template ? [data.template] : []);
+      const chosen = list.find((y) => y.id === templateId) || list[0];
+      if (!chosen) { setError(t('noData')); return; }
       const items = {};
-      data.template.items.forEach((it) => { items[it.id] = { value: null, comment: '' }; });
-      setTpl(data.template);
+      chosen.items.forEach((it) => { items[it.id] = { value: null, comment: '' }; });
+      setTpl(chosen);
       setChecklist(items);
     } catch (e) { setError(e.message); }
   }
@@ -65,14 +68,15 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
     try {
       setBusy(true);
       const items = Object.entries(checklist).map(([tid, v]) => ({ template_item_id: Number(tid), response_value: v.value, comment: v.comment }));
-      const body = { items };
+      const body = { template_id: tpl.id, items };
       if (gps) body.finish_gps = gps;
       const res = await api.post(`/tasks/${taskId}/checklist`, body);
       setTpl(null); setChecklist(null);
       await load();
       if (onChanged) onChanged();
-      if (canLead) flash(`${t('result')}: ${res.result}`);
-      else flash(t('waitingLead'), 4200);
+      if (!canLead) flash(t('waitingLead'), 4200);
+      else if (res.templates_done === false) flash(`${t('result')}: ${res.result} — other checklists pending`, 4200);
+      else flash(`${t('result')}: ${res.result}`);
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
@@ -142,7 +146,7 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
         <span className="k">{t('due')}</span><span>{fmtDateTime(x.due_date)}</span>
         <span className="k">{t('region')}</span><span>{x.region?.name || '—'}</span>
         <span className="k">{t('assignedTo')}</span><span>{x.crew?.name || '—'}</span>
-        <span className="k">{t('checklist')}</span><span>{x.checklist_template?.name || '—'}</span>
+        <span className="k">{t('checklist')}</span><span>{(x.checklist_templates?.length ? x.checklist_templates : (x.checklist_template ? [x.checklist_template] : [])).map((c) => c.name).join(', ') || '—'}</span>
       </div>
       <p className="muted">{x.description || x.title}</p>
       <ReadinessNotes taskId={taskId} />
@@ -179,7 +183,7 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
           <Step
             n={1}
             title={t('runChecklist')}
-            detail={x.checklist_template ? x.checklist_template.name : t('noData')}
+            detail={(x.checklist_templates?.length ? x.checklist_templates : (x.checklist_template ? [x.checklist_template] : [])).map((c) => c.name).join(', ') || t('noData')}
           >
             {x.status === 'ASSIGNED' && canStart && (
               <button className="btn btn-primary" onClick={() => act('start')} disabled={busy}>{t('startWork')}</button>
@@ -187,9 +191,14 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
             {x.status === 'ASSIGNED' && !canStart && (
               <span className="muted">{t('waitingLead')}</span>
             )}
-            {x.status === 'IN_PROGRESS' && x.checklist_template_id && canExecute && (
-              <button className="btn btn-primary" onClick={openChecklist} disabled={busy}>{t('runChecklist')}</button>
-            )}
+            {x.status === 'IN_PROGRESS' && canExecute && (x.checklist_templates?.length ? x.checklist_templates : (x.checklist_template ? [x.checklist_template] : [])).map((ct) => {
+              const doneRun = (x.executions || []).some((e) => e.template_id === ct.id && e.submitted_at && e.result && e.result !== 'INCOMPLETE');
+              return (
+                <button key={ct.id} className={doneRun ? 'btn btn-sm' : 'btn btn-primary'} onClick={() => openChecklist(ct.id)} disabled={busy}>
+                  {doneRun ? `${t('runChecklist')} (re-run)` : t('runChecklist')}: {ct.name}
+                </button>
+              );
+            })}
             {!done && x.status !== 'ASSIGNED' && !x.checklist_template_id && <span className="muted">{t('noData')}</span>}
           </Step>
 

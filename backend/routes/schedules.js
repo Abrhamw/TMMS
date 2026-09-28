@@ -395,6 +395,11 @@ router.post('/schedules/run', (req, res) => {
           revision: 1,
         };
         const tid = insertRow('task', t);
+        // Mirror the schedule's template into the task's checklist join table so
+        // generated tasks carry the same authoritative selection as manual ones.
+        if (s.checklist_template_id) {
+          db.prepare('INSERT OR IGNORE INTO task_checklist_template (task_id, template_id, sequence) VALUES (?,?,0)').run(tid, s.checklist_template_id);
+        }
         results.generated++;
         results.tasks.push(get('task', tid));
       }
