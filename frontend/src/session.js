@@ -12,6 +12,10 @@
 // belongs to the session being ended.
 const TOKEN_KEY = 'tmms_token';
 const USER_KEY = 'tmms_user';
+// A device-level registry of known accounts, so one device can hold (and switch
+// between) several signed-in users without re-entering credentials.
+const ACCOUNTS_KEY = 'tmms_accounts';
+const ACCOUNT_LIMIT = 6;
 
 function tabStore() {
   try {
@@ -58,7 +62,39 @@ export function setSession(token, user) {
   if (tab) { write(tab, TOKEN_KEY, token); write(tab, USER_KEY, JSON.stringify(user)); }
   // A tab signed in for the first time becomes the default for new tabs.
   if (def) { write(def, TOKEN_KEY, token); write(def, USER_KEY, JSON.stringify(user)); }
+  rememberAccount(token, user);
 }
+
+// ---------------------------------------------------------------------------
+// Multi-account registry (device-level)
+// ---------------------------------------------------------------------------
+export function getAccounts() {
+  const raw = read(defaultStore(), ACCOUNTS_KEY);
+  if (!raw) return [];
+  try {
+    const list = JSON.parse(raw);
+    return Array.isArray(list) ? list.filter((a) => a && a.token && a.user && a.user.id != null) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function saveAccounts(list) {
+  write(defaultStore(), ACCOUNTS_KEY, JSON.stringify(list.slice(0, ACCOUNT_LIMIT)));
+}
+
+// Remember (or refresh) an account and move it to the front of the list.
+export function rememberAccount(token, user) {
+  if (!token || !user) return;
+  const list = getAccounts().filter((a) => a.user.id !== user.id);
+  list.unshift({ token, user });
+  saveAccounts(list);
+}
+
+export function forgetAccount(userId) {
+  saveAccounts(getAccounts().filter((a) => a.user.id !== userId));
+}
+
 
 // Refresh the cached user without touching the token (e.g. after /auth/me).
 // The shared default is only refreshed when it is this tab's own session, so a

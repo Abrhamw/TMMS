@@ -1,5 +1,5 @@
 import { api } from './api';
-import { getSessionToken, getSessionUser, setSession, setSessionUser, clearSession } from './session';
+import { getSessionToken, getSessionUser, setSession, setSessionUser, clearSession, getAccounts, rememberAccount, forgetAccount } from './session';
 
 // Mirror of the backend RBAC permission matrix.
 // Master-data writes (regions, substations, lines, towers, assets, checklists,
@@ -86,13 +86,49 @@ export async function login(username, password) {
 
 export async function logout() {
   const token = getSessionToken();
+  const user = getStoredUser();
   try {
     await api.post('/auth/logout');
   } catch (_) {
     /* ignore */
   }
   clearSession(token);
+  if (user) forgetAccount(user.id);
 }
+
+// ---------------------------------------------------------------------------
+// Account switching (two users on one device)
+// ---------------------------------------------------------------------------
+export function listAccounts() {
+  return getAccounts();
+}
+
+export function listOtherAccounts() {
+  const current = getStoredUser();
+  return getAccounts().filter((a) => a.user.id !== current?.id);
+}
+
+// Make another remembered account the active one for this tab and device. The
+// token is re-validated against the server; a stale token falls back to the
+// cached user so the caller can route the user to sign in again.
+export async function switchAccount(token) {
+  const account = getAccounts().find((a) => a.token === token);
+  if (!account) return null;
+  setSession(account.token, account.user);
+  try {
+    const data = await api.get('/auth/me');
+    setSessionUser(data.user);
+    rememberAccount(account.token, data.user);
+    return data.user;
+  } catch (_) {
+    return account.user;
+  }
+}
+
+export function removeAccount(userId) {
+  forgetAccount(userId);
+}
+
 
 export function setStoredUser(user) {
   setSessionUser(user);
