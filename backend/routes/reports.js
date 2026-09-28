@@ -791,7 +791,7 @@ function compute(reportType, params, user) {
         { label: 'Executions', value: perf ? perf.tasks : visibleExecs.length },
         { label: 'Completed (submitted)', value: perf ? perf.completed : visibleExecs.filter((e) => e.result).length },
         { label: 'On-time rate', value: perf && perf.on_time_rate != null ? `${perf.on_time_rate}%` : '—' },
-        { label: 'Findings (evidence)', value: perf ? perf.findings : findings.length },
+        { label: 'Findings', value: perf ? perf.findings : findings.length },
         { label: 'GPS violations', value: perf ? perf.gps_violations : 0 },
       ];
       const document = {
