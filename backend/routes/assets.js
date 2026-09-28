@@ -1,0 +1,547 @@
+const express = require('express');
+const { db, list, get, parseRow, insertRow, updateRow, safeDelete } = require('../util');
+const { can, isGlobal, audit } = require('../auth');
+const { commandScope } = require('../authority');
+
+const router = express.Router();
+
+const { extractKmzText, extractPlacemarks } = require('../geoimport');
+const { findCatalog } = require('../assetCatalog');
+const { maintenanceCostForRegions } = require('../maintenanceCost');
+const { syncSubstationBayCount } = require('../integrity');
+const { computeHealth, suggestAssetCondition } = require('../assetCondition');
+
+// Chain-of-command helpers: a manager only reaches the assets their command is
+// responsible for; global roles keep the open (all) view.
+function scopeAllowsAsset(scope, id) {
+  return scope.global || scope.assetIds.has(id);
+}
+
+function anchorInScope(scope, body) {
+  if (scope.global) return true;
+  if (body.substation_id != null && body.substation_id !== '') return scope.substationIds.has(Number(body.substation_id));
+  if (body.line_id != null && body.line_id !== '') return scope.lineIds.has(Number(body.line_id));
+  if (body.tower_id != null && body.tower_id !== '') return scope.towerIds.has(Number(body.tower_id));
+  return false;
+}
+
+const pendingPreviews = new Map();
+let previewSeq = 1;
+const PREVIEW_TTL_MS = 30 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of pendingPreviews) if (now - v.at > PREVIEW_TTL_MS) pendingPreviews.delete(k);
+}, 5 * 60 * 1000).unref();
+
+function guessAssetType(name) {
+  const n = String(name || '').toUpperCase();
+  const map = [['TRANSFORMER', 'TRANSFORMER'], ['CIRCUIT BREAKER', 'CIRCUIT_BREAKER'], ['BREAKER', 'CIRCUIT_BREAKER'],
+    ['DISCONNECTOR', 'DISCONNECTOR'], ['CT ', 'CT'], ['VT ', 'VT'], ['RELAY', 'PROTECTION_RELAY'], ['BATTERY', 'BATTERY_BANK'],
+    ['RTU', 'SCADA_RTU'], ['REACTOR', 'REACTOR'], ['CAPACITOR', 'CAPACITOR_BANK'], ['BUSBAR', 'BUSBAR'], ['GIS', 'GIS'],
+    ['ARRESTER', 'LIGHTNING_ARRESTER'], ['INSULATOR', 'INSULATOR_STRING'], ['METER', 'METER']];
+  for (const [needle, type] of map) if (n.includes(needle)) return type;
+  return 'OTHER';
+}
+
+// Shared lookup maps so list endpoints resolve region/crew/line references in
+// memory instead of issuing a query per asset.
+function buildAssetLookups() {
+  return {
+    substations: new Map(list('substation').map((s) => [s.id, s])),
+    lines: new Map(list('transmission_line').map((l) => [l.id, l])),
+    crews: new Map(list('crew').map((c) => [c.id, c])),
+  };
+}
+
+function enrichAsset(a, lk) {
+  const h = computeHealth(a);
+  const out = { ...a, health_index: h.health_index, remaining_useful_life_years: h.remaining_useful_life_years };
+  out.default_crew = out.default_crew_id ? (lk ? lk.crews.get(out.default_crew_id) || null : get('crew', out.default_crew_id)) : null;
+  return out;
+}
+
+// Shape shared by the asset-detail map: a substation with its parsed yard
+// boundary plus the line(s) it terminates, so the client can draw the parent
+// line route and the substation yard behind a selected asset.
+function substationBrief(id) {
+  if (id == null) return null;
+  const s = get('substation', id, ['boundary_json']);
+  if (!s) return null;
+  const region = s.region_id != null ? get('region', s.region_id) : null;
+  return {
+    id: s.id,
+    substation_id: s.substation_id,
+    name: s.name,
+    latitude: s.latitude,
+    longitude: s.longitude,
+    elevation_m: s.elevation_m,
+    voltage_levels: s.voltage_levels,
+    substation_type: s.substation_type,
+    operational_status: s.operational_status,
+    owner: s.owner,
+    fence_radius_m: s.fence_radius_m,
+    boundary_json: s.boundary_json,
+    region_id: s.region_id,
+    region_name: region ? region.name : null,
+  };
+}
+
+function lineBrief(id) {
+  if (id == null) return null;
+  const l = get('transmission_line', id, ['route_json']);
+  if (!l) return null;
+  const region = l.region_id != null ? get('region', l.region_id) : null;
+  const from = substationBrief(l.from_substation_id);
+  const to = substationBrief(l.to_substation_id);
+  return {
+    id: l.id,
+    line_id: l.line_id,
+    name: l.name,
+    voltage_kv: l.voltage_kv,
+    route_json: l.route_json,
+    from_substation_id: l.from_substation_id,
+    to_substation_id: l.to_substation_id,
+    from_name: from ? from.name : null,
+    to_name: to ? to.name : null,
+    from,
+    to,
+    region_id: l.region_id || null,
+    region_name: region ? region.name : null,
+    length_km: l.length_km,
+    conductor_type: l.conductor_type || null,
+    circuit_count: l.circuit_count,
+    tower_count: l.tower_count,
+    operational_status: l.operational_status,
+    gps_validated: l.gps_validated,
+  };
+}
+
+function assetFilter(req) {
+  const { substation_id, line_id, tower_id, asset_type, parent_asset_id } = req.query;
+  const where = [];
+  const args = [];
+  if (substation_id) { where.push('substation_id = ?'); args.push(Number(substation_id)); }
+  if (line_id) { where.push('line_id = ?'); args.push(Number(line_id)); }
+  if (tower_id) { where.push('tower_id = ?'); args.push(Number(tower_id)); }
+  if (asset_type) { where.push('asset_type = ?'); args.push(asset_type); }
+  if (parent_asset_id) { where.push('parent_asset_id = ?'); args.push(Number(parent_asset_id)); }
+  return { where, args };
+}
+
+function findAssetId(req) {
+  const { where, args } = assetFilter(req);
+  const scope = commandScope(req.user);
+  const sql = `SELECT * FROM asset${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY id`;
+  let rows = db.prepare(sql).all(...args).map((r) => parseRow(r, ['metadata']));
+  if (!scope.global) rows = rows.filter((a) => scope.assetIds.has(a.id));
+  return rows;
+}
+
+// Compact rows for dropdowns (task/schedule/GPS target pickers). The full asset
+// row set is ~12 MB on a large register and carries fields those pickers never
+// read; this projection keeps only the id/name/location/parent/default-crew
+// fields they do.
+function findAssetBrief(req) {
+  const { where, args } = assetFilter(req);
+  const scope = commandScope(req.user);
+  const sql = `SELECT id, asset_id, name, asset_type, sub_type, latitude, longitude,
+      substation_id, line_id, tower_id, operational_status, default_crew_id
+    FROM asset${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY id`;
+  let rows = db.prepare(sql).all(...args);
+  if (!scope.global) rows = rows.filter((a) => scope.assetIds.has(a.id));
+  const crewNames = new Map(list('crew').map((c) => [c.id, c.name]));
+  return rows.map((a) => ({
+    ...a,
+    default_crew_name: a.default_crew_id != null ? (crewNames.get(a.default_crew_id) ?? null) : null,
+  }));
+}
+
+router.get('/assets', (req, res) => {
+  if (req.query.brief) return res.json(findAssetBrief(req));
+  const lk = buildAssetLookups();
+  const rows = findAssetId(req).map((a) => enrichAsset(a, lk));
+  for (const a of rows) {
+    // Compact location briefs. The full substation (boundary_json) and line
+    // (route_json) were duplicated on every asset, producing an 80+ MB
+    // response on large registers. Detail reads keep the full geometry.
+    const s = a.substation_id ? lk.substations.get(a.substation_id) : null;
+    a.substation = s ? {
+      id: s.id, substation_id: s.substation_id, name: s.name,
+      voltage_levels: s.voltage_levels, region_id: s.region_id,
+    } : null;
+    const l = a.line_id ? lk.lines.get(a.line_id) : null;
+    a.line = l ? {
+      id: l.id, line_id: l.line_id, name: l.name, voltage_kv: l.voltage_kv,
+      operational_status: l.operational_status, region_id: l.region_id,
+    } : null;
+  }
+  res.json(rows);
+});
+
+// Register summary — population counts by class (asset_type) and category
+// (sub_type), average condition, within the user's regional scope.
+router.get('/assets/summary', (req, res) => {
+  const scope = commandScope(req.user);
+  const scoped = list('asset').filter((a) => a.lifecycle_status !== 'REMOVED')
+    .filter((a) => scope.global || scope.assetIds.has(a.id));
+  const byClass = {};
+  const byCategory = {};
+  let total = 0;
+  for (const a of scoped) {
+    total++;
+    const cls = a.asset_type || 'UNSPECIFIED';
+    byClass[cls] = byClass[cls] || { asset_type: cls, count: 0, cond_sum: 0 };
+    byClass[cls].count++;
+    if (a.condition_rating) byClass[cls].cond_sum += a.condition_rating;
+    const cat = a.sub_type || 'UNSPECIFIED';
+    byCategory[cat] = byCategory[cat] || { category: cat, count: 0 };
+    byCategory[cat].count++;
+  }
+  res.json({
+    total_assets: total,
+    by_class: Object.values(byClass).map((x) => ({ asset_type: x.asset_type, count: x.count, avg_condition: x.count ? Math.round((x.cond_sum / x.count) * 10) / 10 : 0 })),
+    by_category: Object.values(byCategory).sort((a, b) => b.count - a.count),
+  });
+});
+
+// Dry-run: parse a KMZ/KML placemark set and echo what would be imported.
+router.post('/assets/import-geo/preview', (req, res) => {
+  if (!can(req, 'asset:write')) return res.status(403).json({ error: 'Forbidden: requires asset:write' });
+  const { format, content, default_region_id, substation_id, transmission_line_id } = req.body;
+  let marks;
+  try {
+    const text = format === 'kmz' ? extractKmzText(content) : content;
+    marks = extractPlacemarks(text);
+  } catch (e) { return res.status(400).json({ error: e.message }); }
+  if (!marks.length) return res.status(400).json({ error: 'No usable placemarks found (each needs a name + coordinates)' });
+  const deriveRegion = () => {
+    if (default_region_id) return Number(default_region_id);
+    if (substation_id) return get('substation', Number(substation_id))?.region_id ?? null;
+    if (transmission_line_id) return get('transmission_line', Number(transmission_line_id))?.region_id ?? null;
+    return null;
+  };
+  const region_id = deriveRegion();
+  const token = `geo${previewSeq++}-${Date.now()}`;
+  const candidates = marks.map((m) => {
+    const will_skip = !region_id;
+    return {
+      name: m.name, asset_type: guessAssetType(m.name), kind: m.kind,
+      lat: m.lat, lng: m.lng, will_skip, reason: will_skip ? 'no resolvable region (supply default_region_id or a substation/line parent)' : null,
+    };
+  });
+  pendingPreviews.set(token, { at: Date.now(), region_id, substation_id: substation_id ? Number(substation_id) : null, transmission_line_id: transmission_line_id ? Number(transmission_line_id) : null, marks, candidates });
+  res.json({ token, count: candidates.length, candidates });
+});
+
+// Confirm: insert the previously previewed candidates, skipping invalid ones.
+router.post('/assets/import-geo', (req, res) => {
+  if (!can(req, 'asset:write')) return res.status(403).json({ error: 'Forbidden: requires asset:write' });
+  const pv = pendingPreviews.get(req.body.token);
+  if (!pv) return res.status(400).json({ error: 'Preview token missing or expired — run the preview again' });
+  pendingPreviews.delete(req.body.token);
+  const created = [];
+  const skipped = [];
+  const now = new Date().toISOString();
+  pv.marks.forEach((m, i) => {
+    if (!pv.region_id) { skipped.push({ name: m.name, reason: 'no resolvable region' }); return; }
+    if (m.lat == null || m.lng == null || m.lat < -90 || m.lat > 90 || m.lng < -180 || m.lng > 180) {
+      skipped.push({ name: m.name, reason: 'invalid coordinates' });
+      return;
+    }
+    try {
+      const id = insertRow('asset', {
+        asset_id: `AST-${Date.now()}-${i}`,
+        name: m.name || `Imported ${i}`,
+        asset_type: guessAssetType(m.name),
+        substation_id: pv.substation_id,
+        line_id: pv.transmission_line_id,
+        latitude: m.lat,
+        longitude: m.lng,
+        condition_rating: 7,
+        lifecycle_status: 'IN_SERVICE',
+        operational_status: 'OPERATIONAL',
+        criticality: 'MEDIUM',
+        gps_validated: m.kind === 'Point' ? 0 : 1,
+        metadata: JSON.stringify({ source: 'geo_import', placemark_kind: m.kind }),
+        revision: 1,
+      });
+      created.push(get('asset', id, ['metadata']));
+    } catch (e) {
+      skipped.push({ name: m.name, reason: e.message });
+    }
+  });
+  audit(req.user, 'IMPORT_ASSETS', 'asset', null, { attempted: pv.marks.length, created: created.length, skipped: skipped.length });
+  res.status(201).json({ created: created.length, skipped, assets: created });
+});
+
+// Evidence-based condition suggestion (advisory). Available to any user who
+// can read the asset; an authorised evaluator confirms it via
+// POST /assets/:id/evaluation with `use_suggested: true`.
+router.get('/assets/:id/condition-suggestion', (req, res) => {
+  const a = get('asset', Number(req.params.id), ['metadata']);
+  if (!a) return res.status(404).json({ error: 'Asset not found' });
+  if (!scopeAllowsAsset(commandScope(req.user), a.id)) return res.status(403).json({ error: 'Forbidden: asset is outside your command scope' });
+  res.json(suggestAssetCondition(a));
+});
+
+// Condition evaluation by a region manager/director — persists the derived
+// health index and remaining useful life alongside free-text notes. With
+// `use_suggested: true` the evidence-based suggestion becomes the stored
+// rating; otherwise the supplied (or existing) manual rating is used.
+router.post('/assets/:id/evaluation', (req, res) => {
+  if (!can(req, 'asset:evaluate')) return res.status(403).json({ error: 'Forbidden: requires asset:evaluate' });
+  const a = get('asset', Number(req.params.id), ['metadata']);
+  if (!a) return res.status(404).json({ error: 'Asset not found' });
+  if (!scopeAllowsAsset(commandScope(req.user), a.id)) return res.status(403).json({ error: 'Forbidden: asset is outside your command scope' });
+  const suggestion = req.body.use_suggested ? suggestAssetCondition(a) : null;
+  const rating = suggestion
+    ? suggestion.suggested_rating
+    : (req.body.condition_rating == null ? a.condition_rating : Number(req.body.condition_rating));
+  if (rating == null || Number.isNaN(rating) || rating < 1 || rating > 10) {
+    return res.status(400).json({ error: 'condition_rating must be 1-10' });
+  }
+  const merged = { ...a, condition_rating: rating };
+  const health = computeHealth(merged);
+  const operational = rating <= 3 ? 'DEGRADED' : 'OPERATIONAL';
+  const lifecycle = rating <= 2 ? 'DEFECTIVE' : a.lifecycle_status;
+  const now = new Date().toISOString();
+  const autoNote = suggestion
+    ? `Auto evaluation: suggested ${suggestion.suggested_rating}/10 (${suggestion.recommendation_label}). Evidence: ${suggestion.reasons.join('; ')}.`
+    : null;
+  updateRow('asset', a.id, {
+    condition_rating: rating,
+    condition_assessed_at: now,
+    health_index: health.health_index,
+    remaining_useful_life_years: health.remaining_useful_life_years,
+    evaluation_notes: req.body.evaluation_notes || req.body.notes || autoNote || null,
+    operational_status: operational,
+    lifecycle_status: lifecycle,
+  }, [], 'revision');
+  audit(req.user, 'EVALUATE', 'asset', a.id, { condition_rating: rating, suggested: !!suggestion, health_index: health.health_index });
+  const updated = enrichAsset(get('asset', a.id, ['metadata']));
+  updated.evaluation = suggestion ? { recommendation: suggestion.recommendation, reasons: suggestion.reasons } : null;
+  res.json(updated);
+});
+
+
+router.get('/assets/:id', (req, res) => {
+  const a = get('asset', Number(req.params.id), ['metadata']);
+  if (!a) return res.status(404).json({ error: 'Asset not found' });
+  const scope = commandScope(req.user);
+  if (!scopeAllowsAsset(scope, a.id)) return res.status(403).json({ error: 'Forbidden: asset is outside your command scope' });
+  const enriched = enrichAsset(a);
+  const tower = a.tower_id ? get('tower', a.tower_id) : null;
+  const lineId = a.line_id || (tower ? tower.line_id : null);
+  enriched.substation = a.substation_id ? substationBrief(a.substation_id) : null;
+  enriched.line = lineId ? lineBrief(lineId) : null;
+  enriched.tower = tower;
+  enriched.parent = a.parent_asset_id ? get('asset', a.parent_asset_id) : null;
+  enriched.related_lines = enriched.substation
+    ? list('transmission_line')
+      .filter((l) => l.from_substation_id === enriched.substation.id || l.to_substation_id === enriched.substation.id)
+      .map((l) => lineBrief(l.id))
+      .filter(Boolean)
+    : [];
+  enriched.maintenance_events = db.prepare('SELECT * FROM asset_maintenance_event WHERE asset_id = ? ORDER BY performed_at DESC').all(a.id);
+  const openTasks = db.prepare(
+    "SELECT * FROM task WHERE asset_id = ? AND status NOT IN ('COMPLETED','CANCELLED','FAILED')"
+  ).all(a.id);
+  enriched.open_tasks = scope.global ? openTasks : openTasks.filter((t) => scope.taskIds.has(t.id));
+  const gpsRows = db.prepare('SELECT * FROM gps_validation WHERE target_type = ? AND target_id = ? ORDER BY validated_at DESC')
+    .all('ASSET', a.id);
+  enriched.gps_validations = scope.global ? gpsRows : gpsRows.filter((v) => scope.validationIds.has(v.id));
+  res.json(enriched);
+});
+
+// Anchor + catalog rules. Exactly one structural home: substation XOR tower
+// (line allowed alongside tower for tower assets) XOR line-with-km-range;
+// standalone lat/lng remains legal for legacy rows. km_* requires line_id.
+function validateAssetBody(req, res, body) {
+  const { asset_type, sub_type } = body;
+  const cat = asset_type ? findCatalog(asset_type, sub_type) : undefined;
+  if (!cat) {
+    res.status(400).json({ error: `Unknown asset_type '${asset_type || ''}' — pick a catalog type` });
+    return false;
+  }
+  const hasSub = body.sub_type != null && String(body.sub_type) !== '';
+  if (hasSub && !cat.sub_type) {
+    res.status(400).json({ error: `asset_type '${asset_type}' has no subtypes — remove sub_type` });
+    return false;
+  }
+  const sid = body.substation_id != null && body.substation_id !== '' ? Number(body.substation_id) : null;
+  const tid = body.tower_id != null && body.tower_id !== '' ? Number(body.tower_id) : null;
+  const lid = body.line_id != null && body.line_id !== '' ? Number(body.line_id) : null;
+  if (sid != null && (tid != null || lid != null)) {
+    res.status(400).json({ error: 'Substation asset cannot also anchor to a tower or line' });
+    return false;
+  }
+  const kmFrom = body.km_from;
+  const kmTo = body.km_to;
+  const hasKm = kmFrom != null && kmFrom !== '' || kmTo != null && kmTo !== '';
+  if (hasKm && lid == null) {
+    res.status(400).json({ error: 'km_from/km_to require a line_id anchor' });
+    return false;
+  }
+  if (hasKm && tid != null) {
+    res.status(400).json({ error: 'km_from/km_to cannot be set on a tower asset' });
+    return false;
+  }
+  if (hasKm) {
+    const a = Number(kmFrom);
+    const b = Number(kmTo);
+    if ((kmFrom != null && kmFrom !== '' && !Number.isFinite(a)) || (kmTo != null && kmTo !== '' && !Number.isFinite(b))) {
+      res.status(400).json({ error: 'km_from/km_to must be numeric' });
+      return false;
+    }
+    if (kmFrom != null && kmFrom !== '' && kmTo != null && kmTo !== '' && b < a) {
+      res.status(400).json({ error: 'km_to must be >= km_from' });
+      return false;
+    }
+  }
+  if (!sid && !tid && !lid) {
+    const lat = Number(body.latitude);
+    const lng = Number(body.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      res.status(400).json({ error: 'Standalone assets require latitude and longitude' });
+      return false;
+    }
+  }
+  return true;
+}
+
+router.post('/assets', (req, res) => {
+  if (!can(req, 'asset:write')) return res.status(403).json({ error: 'Forbidden: requires asset:write' });
+  if (!anchorInScope(commandScope(req.user), req.body)) {
+    return res.status(403).json({ error: 'Forbidden: asset anchor is outside your command scope' });
+  }
+  try {
+    if (!validateAssetBody(req, res, req.body)) return;
+    const body = { ...req.body, metadata: req.body.metadata || {}, revision: 1 };
+    if (typeof body.metadata !== 'string') body.metadata = JSON.stringify(body.metadata);
+    const id = insertRow('asset', body, ['metadata']);
+    syncSubstationBayCount(body.substation_id);
+    audit(req.user, 'CREATE', 'asset', id, req.body);
+    res.status(201).json(enrichAsset(get('asset', id, ['metadata'])));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+router.put('/assets/:id', (req, res) => {
+  if (!can(req, 'asset:write')) return res.status(403).json({ error: 'Forbidden: requires asset:write' });
+  const a = get('asset', Number(req.params.id));
+  if (!a) return res.status(404).json({ error: 'Asset not found' });
+  const scope = commandScope(req.user);
+  if (!scopeAllowsAsset(scope, a.id)) return res.status(403).json({ error: 'Forbidden: asset is outside your command scope' });
+  const body = { ...req.body };
+  const anchorTouched = ['substation_id', 'line_id', 'tower_id'].some((k) => body[k] !== undefined && Number(body[k] || 0) !== (a[k] || 0));
+  if (anchorTouched && !scope.global) {
+    const merged = { substation_id: null, line_id: null, tower_id: null, ...body };
+    if (!anchorInScope(scope, merged)) return res.status(403).json({ error: 'Forbidden: asset anchor is outside your command scope' });
+  }
+  if (!validateAssetBody(req, res, { ...a, ...req.body })) return;
+  if (body.metadata && typeof body.metadata === 'object') body.metadata = JSON.stringify(body.metadata);
+  updateRow('asset', Number(req.params.id), body, ['metadata'], 'revision');
+  syncSubstationBayCount(a.substation_id);
+  syncSubstationBayCount(body.substation_id);
+  audit(req.user, 'UPDATE', 'asset', Number(req.params.id), req.body);
+  res.json(enrichAsset(get('asset', Number(req.params.id), ['metadata'])));
+});
+
+router.delete('/assets/:id', (req, res) => {
+  if (!can(req, 'asset:write')) return res.status(403).json({ error: 'Forbidden: requires asset:write' });
+  const id = Number(req.params.id);
+  const a = get('asset', id);
+  if (!a) return res.status(404).json({ error: 'Asset not found' });
+  if (!scopeAllowsAsset(commandScope(req.user), a.id)) return res.status(403).json({ error: 'Forbidden: asset is outside your command scope' });
+  const events = db.prepare('SELECT COUNT(*) c FROM asset_maintenance_event WHERE asset_id = ?').get(id).c;
+  const children = db.prepare('SELECT COUNT(*) c FROM asset WHERE parent_asset_id = ?').get(id).c;
+  if (events > 0 || children > 0) {
+    return res.status(409).json({ error: `Cannot delete: ${events} maintenance events, ${children} child assets` });
+  }
+  safeDelete('asset', id);
+  syncSubstationBayCount(a.substation_id);
+  audit(req.user, 'DELETE', 'asset', id, {});
+  res.json({ ok: true });
+});
+
+// Condition assessment — recompute health, update operational status
+router.post('/assets/:id/condition', (req, res) => {
+  if (!can(req, 'asset:write')) return res.status(403).json({ error: 'Forbidden: requires asset:write' });
+  const a = get('asset', Number(req.params.id), ['metadata']);
+  if (!a) return res.status(404).json({ error: 'Asset not found' });
+  if (!scopeAllowsAsset(commandScope(req.user), a.id)) return res.status(403).json({ error: 'Forbidden: asset is outside your command scope' });
+  const rating = Number(req.body.condition_rating);
+  if (!rating || rating < 1 || rating > 10) return res.status(400).json({ error: 'condition_rating must be 1-10' });
+  const operational = rating <= 3 ? 'DEGRADED' : 'OPERATIONAL';
+  const lifecycle = rating <= 2 ? 'DEFECTIVE' : a.lifecycle_status;
+  updateRow('asset', a.id, {
+    condition_rating: rating,
+    condition_assessed_at: new Date().toISOString(),
+    operational_status: operational,
+    lifecycle_status: lifecycle,
+    last_maintenance_at: new Date().toISOString(),
+  }, [], 'revision');
+  audit(req.user, 'ASSESS', 'asset', a.id, { condition_rating: rating });
+  const updated = enrichAsset(get('asset', a.id, ['metadata']));
+  res.json(updated);
+});
+
+// Maintenance events
+router.get('/maintenance-events', (req, res) => {
+  const { asset_id } = req.query;
+  let rows = list('asset_maintenance_event');
+  if (asset_id) rows = rows.filter((e) => e.asset_id === Number(asset_id));
+  const scope = commandScope(req.user);
+  if (!scope.global) rows = rows.filter((e) => scope.assetIds.has(e.asset_id));
+  for (const e of rows) {
+    e.asset = get('asset', e.asset_id);
+    e.crew = e.crew_id ? get('crew', e.crew_id) : null;
+    if (e.measured_values) {
+      try { e.measured_values = JSON.parse(e.measured_values); } catch (_) { /* ignore */ }
+    }
+  }
+  res.json(rows);
+});
+
+router.post('/maintenance-events', (req, res) => {
+  if (!can(req, 'task:execute') && !can(req, 'asset:write')) return res.status(403).json({ error: 'Forbidden' });
+  const a = get('asset', req.body.asset_id);
+  if (!a) return res.status(404).json({ error: 'Asset not found' });
+  if (!scopeAllowsAsset(commandScope(req.user), a.id)) return res.status(403).json({ error: 'Forbidden: asset is outside your command scope' });
+  try {
+    const body = { ...req.body };
+    if (body.measured_values && typeof body.measured_values === 'object') body.measured_values = JSON.stringify(body.measured_values);
+    if (body.cost !== undefined && body.cost !== null && body.cost !== '') {
+      const n = Number(body.cost);
+      body.cost = Number.isFinite(n) && n >= 0 ? n : null;
+    } else if (body.cost === '') {
+      body.cost = null;
+    }
+    const id = insertRow('asset_maintenance_event', body);
+    if (body.condition_after) {
+      const asset = get('asset', body.asset_id);
+      if (asset) updateRow('asset', asset.id, { condition_rating: body.condition_after, last_maintenance_at: body.performed_at || new Date().toISOString() });
+    }
+    audit(req.user, 'CREATE', 'maintenance_event', id, body);
+    res.status(201).json(get('asset_maintenance_event', id));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Maintenance cost rollup (used by the Value & Cost page and the reports).
+router.get('/maintenance-cost', (req, res) => {
+  const wanted = req.query.region_id ? Number(req.query.region_id) : null;
+  if (wanted && !isGlobal(req.user) && wanted !== req.user.region_id) {
+    return res.status(403).json({ error: 'Forbidden: resource is outside your region scope' });
+  }
+  const regionIds = wanted ? [wanted]
+    : isGlobal(req.user)
+      ? db.prepare('SELECT id FROM region ORDER BY code').all().map((r) => r.id)
+      : [req.user.region_id];
+  const data = maintenanceCostForRegions(regionIds, { from: req.query.from, to: req.query.to });
+  res.json(data);
+});
+
+module.exports = router;
