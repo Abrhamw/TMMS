@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
-import { flyToPoints, mapSizeReady, relatedSegment, pulseIcon, flashIcon, isEnergized, voltageChip, voltageLabel, popupRows } from '../mapFocus';
+import { flyToPoints, mapSizeReady, relatedSegment, pulseIcon, flashIcon, isEnergized, voltageChip, voltageLabel, popupRows, boundaryRing } from '../mapFocus';
 import MapSearchBox from './MapSearchBox';
 import MapLegend from './MapLegend';
 import { createBaseLayer, DEFAULT_BASE_KEY } from '../mapBase';
@@ -139,6 +139,17 @@ export default function LineWorkspaceMap({
     if (layerRef.current) layerRef.current.remove();
     const layer = L.layerGroup();
     layerRef.current = layer;
+
+    // Substation yards at the line terminals, drawn from each substation's
+    // recorded boundary polygon (falling back to nothing) so the workspace
+    // matches the dossier and the main infrastructure map.
+    const li = data.current.lineInfo;
+    [li && li.from_substation, li && li.to_substation].forEach((s) => {
+      const ring = boundaryRing(s && s.boundary_json);
+      if (ring) {
+        L.polygon(ring, { color: '#0f766e', weight: 2, dashArray: '6 4', fillColor: '#0f766e', fillOpacity: 0.06 }).addTo(layer);
+      }
+    });
 
     coveredPaths.forEach((path) => {
       if (Array.isArray(path) && path.length > 1) {

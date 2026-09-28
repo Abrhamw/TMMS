@@ -1,5 +1,5 @@
 import StaticMap from './StaticMap';
-import { entityColor, maxVoltageKv } from '../mapFocus';
+import { entityColor, maxVoltageKv, boundaryRing } from '../mapFocus';
 
 // Renders the geographic footprint of a dossier entity: the parent line route,
 // the substation yard/fence, tower positions and the entity point itself. Used
@@ -38,7 +38,13 @@ function addSub(out, sub) {
     out.markers.push({ lat: pos[0], lng: pos[1], color, label: sub.name, sub: sub.substation_id, alwaysLabel: true, legendLabel: `Substation ${sub.name || ''}`.trim() });
     out.fit.push(pos);
   }
-  if (num(sub.fence_radius_m) && pos) {
+  // Prefer the substation's recorded boundary polygon; only fall back to a
+  // synthetic fence-radius circle when no boundary geometry exists.
+  const ring = boundaryRing(sub.boundary_json);
+  if (ring) {
+    out.polygons.push({ points: ring, color, label: `${sub.name} perimeter`, legendLabel: 'Substation perimeter' });
+    ring.forEach((p) => out.fit.push(p));
+  } else if (num(sub.fence_radius_m) && pos) {
     out.circles.push({ lat: pos[0], lng: pos[1], radius: sub.fence_radius_m, color, label: `${sub.name} fence`, legendLabel: 'Substation fence' });
   }
 }

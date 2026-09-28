@@ -570,6 +570,7 @@ export default function LineMapWorkspace({ embedded }) {
               bulkSelected={bulkMode ? bulkSelected : null}
               routeMode={routeMode}
               bulkMode={bulkMode}
+              lineInfo={detail}
               coveredPaths={coveredPaths}
               inspectedIds={inspectedIds}
               lineId={detail.id}

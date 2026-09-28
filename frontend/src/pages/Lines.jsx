@@ -7,7 +7,7 @@ import DossierReport from '../components/DossierReport';
 import ImportDialog from '../components/ImportDialog';
 import ViewMap from '../components/ViewMap';
 import { KpiTile } from '../components/InfraVisuals';
-import { entityColor, maxVoltageKv, isEnergized, parseVoltageLevels, voltageChip, popupRows } from '../mapFocus';
+import { entityColor, maxVoltageKv, isEnergized, parseVoltageLevels, voltageChip, popupRows, boundaryRing } from '../mapFocus';
 import { t } from '../i18n';
 
 const R = 6371;
@@ -35,6 +35,18 @@ function substationMarker(s, sub) {
         ['Type', s.substation_type],
         ['Status', s.operational_status],
       ]) + '</div>',
+  };
+}
+
+function substationPerimeter(s, sub) {
+  const ring = boundaryRing(s && s.boundary_json);
+  if (!ring) return null;
+  const kv = maxVoltageKv(s.voltage_levels);
+  return {
+    points: ring,
+    color: entityColor(kv, s.operational_status),
+    label: `${s.name} perimeter`,
+    sub,
   };
 }
 
@@ -258,6 +270,10 @@ export default function Lines({ embedded }) {
                   ['Status', detail.operational_status],
                 ]) + '</div>',
             }] : []}
+            polygons={[
+              substationPerimeter(detail.from_substation, 'From substation'),
+              substationPerimeter(detail.to_substation, 'To substation'),
+            ].filter(Boolean)}
             focus={detailRoute.length ? detailRoute : null}
             focusKey={detail.id}
           />

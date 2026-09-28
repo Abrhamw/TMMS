@@ -137,6 +137,29 @@ export function circleCorners(lat, lng, radiusM) {
   return [[lat - dLat, lng - dLng], [lat + dLat, lng + dLng]];
 }
 
+// Normalizes a stored substation boundary into a [lat, lng][] ring, or null
+// when it is not a usable polygon. Accepts the JSON-array string the API
+// returns on nested references, a real array, or a [{lat,lng}] list. This is
+// the single source of truth so every map (dossier, site plan, line workspace,
+// interactive map) draws the same substation yard shape from its recorded
+// geometry rather than a synthetic radius circle.
+export function boundaryRing(v) {
+  let r = v;
+  if (typeof r === 'string') {
+    const s = r.trim();
+    if (!s) return null;
+    try { r = JSON.parse(s); } catch (_) { return null; }
+  }
+  if (!Array.isArray(r) || r.length < 3) return null;
+  const pts = [];
+  for (const p of r) {
+    const lat = Array.isArray(p) ? Number(p[0]) : Number(p && p.lat);
+    const lng = Array.isArray(p) ? Number(p[1]) : Number(p && (p.lng != null ? p.lng : p.lon));
+    if (Number.isFinite(lat) && Number.isFinite(lng)) pts.push([lat, lng]);
+  }
+  return pts.length >= 3 ? pts : null;
+}
+
 export function flyToPoints(map, points, { maxZoom = 15, padding = [48, 48], duration = 0.7, singleZoom = 15 } = {}) {
   const b = boundsOf(points);
   if (!map || !b || !b.isValid()) return false;

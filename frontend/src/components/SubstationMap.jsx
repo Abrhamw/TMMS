@@ -1,5 +1,5 @@
 import StaticMap from './StaticMap';
-import { entityColor, maxVoltageKv } from '../mapFocus';
+import { entityColor, maxVoltageKv, boundaryRing } from '../mapFocus';
 import { substationDescription, assetDescription } from '../checklistFormat';
 
 // A compact, fully static site plan for a work location that is a substation
@@ -12,20 +12,6 @@ const num = (v) => {
   const n = typeof v === 'number' ? v : parseFloat(v);
   return Number.isFinite(n) ? n : null;
 };
-
-function ringOf(v) {
-  let r = v;
-  if (typeof r === 'string') {
-    try { r = JSON.parse(r); } catch (_) { return null; }
-  }
-  if (!Array.isArray(r) || r.length < 3) return null;
-  const pts = r.map((p) => {
-    if (Array.isArray(p) && p.length >= 2) return [num(p[0]), num(p[1])];
-    if (p && p.lat != null && p.lng != null) return [num(p.lat), num(p.lng)];
-    return null;
-  }).filter((p) => p && p[0] != null && p[1] != null);
-  return pts.length >= 3 ? pts : null;
-}
 
 export function hasSubstationMap(target) {
   if (!target) return false;
@@ -59,7 +45,7 @@ export default function SubstationMap({ target, height = 180 }) {
   if (s && sPos && sPos[0] != null) {
     markers.push({ lat: sPos[0], lng: sPos[1], color: sColor, radius: 7, label: s.name, sub: s.substation_id, legendLabel: 'Substation' });
     focus.push(sPos);
-    ring = ringOf(s.boundary_json);
+    ring = boundaryRing(s.boundary_json);
     if (ring) {
       polygons.push({ points: ring, color: sColor, label: `${s.name} perimeter`, legendLabel: 'Substation perimeter' });
       ring.forEach((p) => focus.push(p));

@@ -10,7 +10,7 @@ import { getDevicePosition } from '../components/MapPicker';
 import Comments from '../components/Comments';
 import ViewMap from '../components/ViewMap';
 import LineWorkspaceMap from '../components/LineWorkspaceMap';
-import { entityColor, maxVoltageKv, isEnergized, parseVoltageLevels, voltageChip, popupRows } from '../mapFocus';
+import { entityColor, maxVoltageKv, isEnergized, parseVoltageLevels, voltageChip, popupRows, boundaryRing } from '../mapFocus';
 import useRouteRecorder from '../useRouteRecorder';
 
 const GPS_TOLERANCE = 500;
@@ -310,11 +310,13 @@ export default function TaskDetail() {
       const a = t.asset;
       const kv = (a.line && a.line.voltage_kv) ?? (a.substation ? maxVoltageKv(a.substation.voltage_levels) : null);
       const status = a.operational_status || 'OPERATIONAL';
+      const yardRing = boundaryRing(a.substation && a.substation.boundary_json);
       return {
         lat: a.latitude,
         lng: a.longitude,
         label: a.name,
         color: entityColor(kv, status),
+        polygons: yardRing ? [{ points: yardRing, color: entityColor(kv, status), label: `${a.substation.name} yard` }] : [],
         popup: `<div class="tmms-pop"><b>${a.name}</b> ${voltageChip(kv, { energized: isEnergized(status) })}` +
           `<div class="tmms-pop-sub">${a.asset_id}${a.sub_type ? ` · ${a.sub_type}` : ''}</div>` +
           popupRows([
@@ -349,11 +351,13 @@ export default function TaskDetail() {
     if (t.substation && typeof t.substation.latitude === 'number') {
       const s = t.substation;
       const kv = maxVoltageKv(s.voltage_levels);
+      const ring = boundaryRing(s.boundary_json);
       return {
         lat: s.latitude,
         lng: s.longitude,
         label: s.name,
         color: entityColor(kv, s.operational_status),
+        polygons: ring ? [{ points: ring, color: entityColor(kv, s.operational_status), label: `${s.name} yard` }] : [],
         popup: `<div class="tmms-pop"><b>${s.name}</b> ${voltageChip(kv, { energized: isEnergized(s.operational_status) })}` +
           `<div class="tmms-pop-sub">${s.substation_id || ''}${s.substation_type ? ` · ${s.substation_type}` : ''}</div>` +
           popupRows([
@@ -436,6 +440,7 @@ export default function TaskDetail() {
           height={200}
           center={targetPos}
           markers={[{ lat: targetPos.lat, lng: targetPos.lng, label: targetPos.label, sub: 'Work target', color: targetPos.color || '#dc2626', radius: 7, flash: true, popup: targetPos.popup }]}
+          polygons={targetPos.polygons || []}
           radius={GPS_TOLERANCE}
           radiusLatLng={{ lat: targetPos.lat, lng: targetPos.lng }}
           zoom={12}
