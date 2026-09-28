@@ -89,28 +89,33 @@ export default function RouteSketch({ target }) {
   let toXY;
   let pinXY;
   if (geo.length >= 2) {
-    const latOf = (p) => p[0];
-    const lngOf = (p) => p[1];
-    const latSpan = Math.max(...all.map(latOf)) - Math.min(...all.map(latOf));
-    const lngSpan = Math.max(...all.map(lngOf)) - Math.min(...all.map(lngOf));
-    const verticalIsLat = latSpan >= lngSpan;
-    const minA = Math.min(...all.map((p) => (verticalIsLat ? p[0] : p[1])));
-    const maxA = Math.max(...all.map((p) => (verticalIsLat ? p[0] : p[1])));
-    const minB = Math.min(...all.map((p) => (verticalIsLat ? p[1] : p[0])));
-    const maxB = Math.max(...all.map((p) => (verticalIsLat ? p[1] : p[0])));
-    const spanA = maxA - minA || 1e-9;
-    const spanB = maxB - minB || 1e-9;
+    // Always north-up: latitude is the vertical axis and longitude the
+    // horizontal one, scaled by the local cos(latitude) so the shape keeps its
+    // true proportions. The map is a faithful copy of the real route, never a
+    // rotated/schematic one, so a printed report matches the map on screen.
+    const lats = all.map((p) => p[0]);
+    const lngs = all.map((p) => p[1]);
+    const midLat = (Math.min(...lats) + Math.max(...lats)) / 2;
+    const lngK = Math.max(0.1, Math.cos((midLat * Math.PI) / 180));
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    const spanA = maxLat - minLat || 1e-9;
+    const spanB = (maxLng - minLng) * lngK || 1e-9;
     const scale = Math.min((W - 2 * PAD) / spanB, (H - 2 * PAD) / spanA);
     const offX = PAD + ((W - 2 * PAD) - spanB * scale) / 2;
     const offY = PAD + ((H - 2 * PAD) - spanA * scale) / 2;
-    const project = (p) => {
-      const a = verticalIsLat ? p[0] : p[1];
-      const b = verticalIsLat ? p[1] : p[0];
-      return { x: offX + (b - minB) * scale, y: offY + (maxA - a) * scale };
-    };
+    const project = (p) => ({
+      x: offX + (p[1] - minLng) * lngK * scale,
+      y: offY + (maxLat - p[0]) * scale,
+    });
     pts = geo.map(project);
-    fromXY = fromPos ? project(fromPos) : pts[0];
-    toXY = toPos ? project(toPos) : pts[pts.length - 1];
+    // Terminals are pinned to the route ends (its real geometry), and the
+    // from/to names label those ends — so a mis-stored substation coordinate
+    // can never drag the drawn route away from where it actually runs.
+    fromXY = pts[0];
+    toXY = pts[pts.length - 1];
     pinXY = pinPos ? project(pinPos) : midOf(pts);
   } else {
     pts = [{ x: W / 2, y: PAD }, { x: W / 2, y: H - PAD }];
@@ -162,8 +167,8 @@ export default function RouteSketch({ target }) {
 
         <circle cx={fromXY.x} cy={fromXY.y} r="6.5" fill="#ffffff" stroke={color} strokeWidth="2.6" />
         <circle cx={toXY.x} cy={toXY.y} r="6.5" fill="#ffffff" stroke={color} strokeWidth="2.6" />
-        {endLabel(fromXY, from && from.name, 'top')}
-        {endLabel(toXY, to && to.name, 'bottom')}
+        {endLabel(fromXY, from && from.name, fromXY.y <= toXY.y ? 'top' : 'bottom')}
+        {endLabel(toXY, to && to.name, toXY.y <= fromXY.y ? 'top' : 'bottom')}
 
         {pinName && (
           <g>
