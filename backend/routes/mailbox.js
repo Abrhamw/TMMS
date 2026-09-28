@@ -1,6 +1,6 @@
 const express = require('express');
 const { db, get } = require('../util');
-const { isGlobal, isCrewUser, isOnCrew } = require('../auth');
+const { isGlobal, isCrewUser, isOnCrew, hasPerm } = require('../auth');
 const { authorizedCrewIds, taskVisible } = require('../authority');
 
 const router = express.Router();
@@ -162,15 +162,20 @@ function messagesFor(user, tasks) {
   const messages = [];
   for (const task of tasks) messages.push(...taskMessageRows(task, user));
 
-  let reports = db.prepare('SELECT * FROM report ORDER BY generated_at DESC, id DESC').all()
-    .filter((report) => isGlobal(user) || !report.scope_region_id || report.scope_region_id === user.region_id);
+  // Reports are a management/oversight surface: only roles holding
+  // `report:read` see them in the mailbox. Field crews (which lack the
+  // permission) must not receive report messages or unread report badges.
+  const reports = hasPerm(user, 'report:read')
+    ? db.prepare('SELECT * FROM report ORDER BY generated_at DESC, id DESC').all()
+      .filter((report) => isGlobal(user) || !report.scope_region_id || report.scope_region_id === user.region_id)
+    : [];
   const reportAudit = db.prepare("SELECT entity_id, actor, created_at FROM audit_log WHERE entity = 'report' AND action = 'GENERATE' ORDER BY id DESC").all();
   const authorByReportId = new Map();
   for (const row of reportAudit) if (!authorByReportId.has(row.entity_id)) authorByReportId.set(row.entity_id, row);
-  reports = reports.map((report) => {
+  const reportMessages = reports.map((report) => {
     const authored = authorByReportId.get(report.id);
     const actor = authored?.actor || 'System';
-    const message = messageRow(user, {
+    return messageRow(user, {
       key: `report-${report.id}`,
       kind: 'REPORT',
       entity_type: 'report',
@@ -187,14 +192,14 @@ function messagesFor(user, tasks) {
       tags: reportTags(report),
       link: `/reports?report=${report.id}`,
     });
-    return message;
   });
-  return [...messages, ...reports].sort((a, b) => b.at.localeCompare(a.at));
+  return [...messages, ...reportMessages].sort((a, b) => b.at.localeCompare(a.at));
 }
 
 function messageKeyVisible(user, key) {
   let m = /^report-(\d+)$/.exec(key);
   if (m) {
+    if (!hasPerm(user, 'report:read')) return false;
     const report = get('report', Number(m[1]));
     if (!report) return false;
     return isGlobal(user) || !report.scope_region_id || report.scope_region_id === user.region_id;

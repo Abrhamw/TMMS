@@ -228,6 +228,14 @@ function RequireExecutive({ children }) {
   return children;
 }
 
+// Reports are a management/oversight surface. A role without `report:read`
+// (field crews) is sent home rather than shown an empty, forbidden page.
+function RequireReportAccess({ children }) {
+  const user = getStoredUser();
+  if (!user || !can(user, 'report:read')) return <Navigate to="/home" replace />;
+  return children;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -252,7 +260,7 @@ export default function App() {
           <Route path="/checklists" element={<Checklists />} />
           <Route path="/gps" element={<Gps />} />
           <Route path="/certifications" element={<Certifications />} />
-          <Route path="/reports" element={<Reports />} />
+          <Route path="/reports" element={<RequireReportAccess><Reports /></RequireReportAccess>} />
           <Route path="/value" element={<RequireExecutive><Value /></RequireExecutive>} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/organization" element={<Organization />} />

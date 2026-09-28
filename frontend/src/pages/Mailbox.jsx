@@ -4,6 +4,7 @@ import { api, fmtDateTime, fmtDate } from '../api';
 import { ErrorNote, Loading, Page, Pill, SearchField } from '../components';
 import Comments from '../components/Comments';
 import { t } from '../i18n';
+import { can, getStoredUser } from '../auth';
 import { ReportView } from './Reports';
 
 const FOLDERS = [
@@ -38,6 +39,10 @@ function TagChips({ tags }) {
 
 export default function Mailbox() {
   const nav = useNavigate();
+  const me = getStoredUser();
+  // The Reports folder is only meaningful to roles that can read reports;
+  // field crews (no `report:read`) see task messages only.
+  const folders = FOLDERS.filter((item) => item.key !== 'reports' || can(me, 'report:read'));
   const [data, setData] = useState(null);
   const [folder, setFolder] = useState('inbox');
   const [selectedId, setSelectedId] = useState(null);
@@ -151,7 +156,7 @@ export default function Mailbox() {
           <aside className="mailbox-list">
             <div className="mailbox-unread-total"><b>{data.unread_count || 0}</b> {t('mailboxUnreadTotal')}</div>
             <div className="mailbox-folders" role="tablist" aria-label="Mailbox folders">
-              {FOLDERS.map((item) => (
+              {folders.map((item) => (
                 <button key={item.key} className={'mail-folder' + (folder === item.key ? ' active' : '')}
                   role="tab" aria-selected={folder === item.key}
                   onClick={() => {

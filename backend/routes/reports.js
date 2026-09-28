@@ -865,10 +865,12 @@ function statusBreakdown(tasks) {
 }
 
 router.get('/report-templates', (req, res) => {
+  if (!can(req, 'report:read')) return res.status(403).json({ error: 'Forbidden: requires report:read' });
   res.json(list('report_template'));
 });
 
 router.get('/reports', (req, res) => {
+  if (!can(req, 'report:read')) return res.status(403).json({ error: 'Forbidden: requires report:read' });
   const rows = list('report').filter((r) => isGlobal(req.user) || !r.scope_region_id || r.scope_region_id === req.user.region_id);
   res.json(rows);
 });
@@ -888,6 +890,7 @@ router.get('/reports/dossier', (req, res) => {
 });
 
 router.get('/reports/:id', (req, res) => {
+  if (!can(req, 'report:read')) return res.status(403).json({ error: 'Forbidden: requires report:read' });
   const r = get('report', Number(req.params.id), ['parameters']);
   if (!r) return res.status(404).json({ error: 'Report not found' });
   if (!isGlobal(req.user) && r.scope_region_id && r.scope_region_id !== req.user.region_id) {
