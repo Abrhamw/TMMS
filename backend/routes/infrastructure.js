@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, list, insertRow, withTx } = require('../util');
+const { db, list, insertRow, updateRow, withTx } = require('../util');
 const { can, audit } = require('../auth');
 const { commandScope } = require('../authority');
 const { countSubstationBays, validateIntegrity, reconcileAll, syncSubstationBayCount, syncLineTowerCount, syncTowerMirror } = require('../integrity');
@@ -325,6 +325,12 @@ function importContext(scope, defaultRegionId) {
     if (s.name) subByCode.set(String(s.name).toUpperCase(), s);
   }
   const lines = list('transmission_line');
+  const lineByCode = new Map();
+  for (const l of lines) if (l.line_id) lineByCode.set(String(l.line_id).toUpperCase(), l);
+  const towerByCode = new Map();
+  for (const t of db.prepare('SELECT id, tower_id, line_id FROM tower').all()) {
+    if (t.tower_id) towerByCode.set(String(t.tower_id).toUpperCase(), t);
+  }
   return {
     scope,
     regionByCode: new Map(regions.map((r) => [String(r.code || '').toUpperCase(), r])),
@@ -332,7 +338,9 @@ function importContext(scope, defaultRegionId) {
     subByCode,
     existingSubCodes: new Set(subs.map((s) => String(s.substation_id || '').toUpperCase())),
     existingLineCodes: new Set(lines.map((l) => String(l.line_id || '').toUpperCase())),
-    existingTowerIds: new Set(db.prepare('SELECT tower_id FROM tower').all().map((t) => String(t.tower_id).toUpperCase())),
+    lineByCode,
+    towerByCode,
+    existingTowerIds: new Set([...towerByCode.keys()]),
     defaultRegionId: defaultRegionId != null && Number.isFinite(Number(defaultRegionId)) ? Number(defaultRegionId) : null,
   };
 }
@@ -392,16 +400,26 @@ function normalizeSubstations(records, ctx) {
   });
 }
 
-function normalizeLineGroups(groups, ctx) {
+function normalizeLineGroups(groups, ctx, opts = {}) {
+  const allowUpdate = !!(opts && opts.update);
   const seenTowerIds = new Set();
   return groups.map((g) => {
     const header = g.header || {};
-    const out = { line_id: '', name: '', region_code: null, voltage_kv: null, from: null, to: null, tower_count: 0, route_points: 0, will_skip: false, reason: null, data: null };
+    const out = { line_id: '', name: '', region_code: null, voltage_kv: null, from: null, to: null, tower_count: 0, route_points: 0, update: false, existing_id: null, tower_skips: [], will_skip: false, reason: null, data: null };
     const lineId = pick(header, ['line_id', 'line_code', 'line']) || (g.key && g.key !== '__single__' ? g.key : '');
     out.line_id = lineId;
     out.name = pick(header, ['name', 'line_name']) || lineId;
     if (!lineId) { out.will_skip = true; out.reason = 'missing line_id'; return out; }
-    if (ctx.existingLineCodes.has(lineId.toUpperCase())) { out.will_skip = true; out.reason = 'line_id already exists'; return out; }
+    const existingLine = ctx.lineByCode ? ctx.lineByCode.get(lineId.toUpperCase()) : null;
+    if (existingLine) {
+      if (!allowUpdate) {
+        out.will_skip = true;
+        out.reason = 'line_id already exists (enable "Update existing" to overwrite it)';
+        return out;
+      }
+      out.update = true;
+      out.existing_id = existingLine.id;
+    }
     const voltage = num(pick(header, ['voltage_kv', 'voltage']));
     if (!(voltage > 0)) { out.will_skip = true; out.reason = 'voltage_kv must be a positive number'; return out; }
     out.voltage_kv = voltage;
@@ -414,7 +432,9 @@ function normalizeLineGroups(groups, ctx) {
     out.to = to.substation_id;
     const region = resolveImportRegion(pick(header, REGION_CODE_KEYS), ctx) || ctx.regionById.get(from.region_id);
     if (!regionInScope(region, ctx)) { out.will_skip = true; out.reason = 'target region is outside your command scope'; return out; }
-    if (from.region_id !== region.id || to.region_id !== region.id) { out.will_skip = true; out.reason = 'from/to substations must be in the target region'; return out; }
+    // A transmission line may legitimately span two regions (e.g. Gelan C2 ->
+    // Koka R8), so the endpoints only need to be in the caller's scope - not
+    // necessarily the same region as the line record itself.
     if (!ctx.scope.global && (!ctx.scope.substationIds.has(from.id) || !ctx.scope.substationIds.has(to.id))) {
       out.will_skip = true; out.reason = 'from/to substation is outside your command scope'; return out;
     }
@@ -439,15 +459,34 @@ function normalizeLineGroups(groups, ctx) {
         corrosion_rating: num(pick(tp, ['corrosion_rating', 'corrosion'])) ?? 8,
       };
     });
+    // Resolve what happens to each tower. A collision with a tower that lives
+    // on this very line is an update (when update mode is on); a collision with
+    // a tower on another line only drops that one tower instead of failing the
+    // whole line, so a partially-overlapping export still imports.
     for (const t of towers) {
       if (!validCoord(t.latitude, t.longitude)) { out.will_skip = true; out.reason = `tower ${t.tower_id} has invalid coordinates`; return out; }
       const key = t.tower_id.toUpperCase();
-      if (ctx.existingTowerIds.has(key) || seenTowerIds.has(key)) { out.will_skip = true; out.reason = `tower_id ${t.tower_id} already exists`; return out; }
+      if (seenTowerIds.has(key)) { out.will_skip = true; out.reason = `duplicate tower_id ${t.tower_id} in file`; return out; }
+      seenTowerIds.add(key);
+      const existingTower = ctx.towerByCode ? ctx.towerByCode.get(key) : null;
+      if (!existingTower) { t.action = 'insert'; t.existing_id = null; continue; }
+      if (out.update && existingTower.line_id === out.existing_id) {
+        t.action = 'update';
+        t.existing_id = existingTower.id;
+      } else {
+        t.action = 'skip';
+        t.existing_id = null;
+        out.tower_skips.push({
+          tower_id: t.tower_id,
+          reason: out.update ? 'tower_id belongs to another line' : 'tower_id already exists',
+        });
+      }
     }
-    if (route.length < 2 && towers.length >= 2) route = towers.map((t) => [t.latitude, t.longitude]);
+    const importableTowers = towers.filter((t) => t.action !== 'skip');
+    if (route.length < 2 && importableTowers.length >= 2) route = importableTowers.map((t) => [t.latitude, t.longitude]);
     if (route.length < 2) { out.will_skip = true; out.reason = 'need a route with at least 2 points (route column or >=2 valid tower coordinates)'; return out; }
-    for (const t of towers) seenTowerIds.add(t.tower_id.toUpperCase());
-    out.tower_count = towers.length;
+    out.tower_count = importableTowers.length;
+    out.towers_skipped = out.tower_skips.length;
     out.route_points = route.length;
     out.data = {
       line_id: lineId,
@@ -603,22 +642,26 @@ router.post('/infrastructure/import/substations/commit', (req, res) => {
 router.post('/infrastructure/import/lines/preview', (req, res) => {
   if (!can(req, 'line:write')) return res.status(403).json({ error: 'Forbidden: requires line:write' });
   if (!can(req, 'tower:write')) return res.status(403).json({ error: 'Forbidden: requires tower:write' });
-  const { format, content, default_region_id } = req.body || {};
+  const { format, content, default_region_id, update } = req.body || {};
   let parsed;
   try { parsed = parseInfra(format, content); } catch (e) { return res.status(400).json({ error: e.message }); }
   const scope = commandScope(req.user);
   const ctx = importContext(scope, default_region_id);
   const groups = lineGroups(parsed);
   if (!groups.length) return res.status(400).json({ error: 'No line records found (need rows with line_id or LineString features)' });
-  const candidates = normalizeLineGroups(groups, ctx);
+  const allowUpdate = !!update;
+  const candidates = normalizeLineGroups(groups, ctx, { update: allowUpdate });
   const token = `imp${importSeq++}-${Date.now()}`;
-  pendingImports.set(token, { at: Date.now(), kind: 'lines', candidates, groups, default_region_id: ctx.defaultRegionId });
+  pendingImports.set(token, { at: Date.now(), kind: 'lines', candidates, groups, default_region_id: ctx.defaultRegionId, update: allowUpdate });
   res.json({
     token,
     kind: 'lines',
+    update: allowUpdate,
     count: candidates.length,
-    will_create: candidates.filter((c) => !c.will_skip).length,
+    will_create: candidates.filter((c) => !c.will_skip && !c.update).length,
+    will_update: candidates.filter((c) => !c.will_skip && c.update).length,
     will_skip: candidates.filter((c) => c.will_skip).length,
+    towers_skipped: candidates.reduce((n, c) => n + (c.towers_skipped || 0), 0),
     candidates: candidates.map((c, i) => {
       const g = groups[i] || { header: {}, route: [], towers: [] };
       const normalizedTowers = c.data ? c.data.towers : [];
@@ -626,6 +669,7 @@ router.post('/infrastructure/import/lines/preview', (req, res) => {
         index: i,
         line_id: c.line_id, name: c.name, region_code: c.region_code, voltage_kv: c.voltage_kv,
         from: c.from, to: c.to, tower_count: c.tower_count, route_points: c.route_points,
+        update: c.update,
         line_type: c.data ? c.data.line_type : null,
         operational_status: c.data ? c.data.operational_status : null,
         route: (g.route || []).map((p) => [p[0], p[1]]),
@@ -636,6 +680,7 @@ router.post('/infrastructure/import/lines/preview', (req, res) => {
           latitude: t.lat,
           longitude: t.lng,
         })),
+        towers_skipped: c.towers_skipped || 0,
         will_skip: c.will_skip, reason: c.reason,
       };
     }),
@@ -651,17 +696,21 @@ router.post('/infrastructure/import/lines/commit', (req, res) => {
   // Apply any inline reviewer edits to the raw groups and re-validate before
   // writing, so corrected geometry or metadata is what actually lands.
   const edits = req.body && req.body.edits && typeof req.body.edits === 'object' ? req.body.edits : null;
+  const allowUpdate = !!pv.update || !!(req.body && req.body.update);
   let candidates = pv.candidates;
   if (edits && Array.isArray(pv.groups)) {
     const ctx = importContext(commandScope(req.user), pv.default_region_id);
     const groups = pv.groups.map((g, i) => applyLineEdit(g, edits[i]));
-    candidates = normalizeLineGroups(groups, ctx);
+    candidates = normalizeLineGroups(groups, ctx, { update: allowUpdate });
   }
   const created = [];
+  const updatedLines = [];
   const skipped = [];
   let towersCreated = 0;
+  let towersUpdated = 0;
   for (const c of candidates) {
     if (c.will_skip) { skipped.push({ line_id: c.line_id, reason: c.reason }); continue; }
+    for (const ts of (c.tower_skips || [])) skipped.push({ line_id: c.line_id, tower_id: ts.tower_id, reason: ts.reason });
     const d = c.data;
     const route = d.route.map((p) => [p[0], p[1]]);
     let lengthKm = 0;
@@ -671,8 +720,7 @@ router.post('/infrastructure/import/lines/commit', (req, res) => {
     lengthKm = Math.round(lengthKm * 10) / 10;
     try {
       const result = withTx(() => {
-        const lineId = insertRow('transmission_line', {
-          line_id: d.line_id,
+        const fields = {
           name: d.name,
           region_id: d.region_id,
           from_substation_id: d.from_substation_id,
@@ -685,16 +733,23 @@ router.post('/infrastructure/import/lines/commit', (req, res) => {
           operational_status: d.operational_status,
           commissioned_date: d.commissioned_date,
           length_km: lengthKm,
-          tower_count: 0,
           gps_validated: 1,
-          revision: 1,
-        });
+        };
+        let lineId;
+        if (c.update && c.existing_id) {
+          updateRow('transmission_line', c.existing_id, fields, ['route_json'], 'revision');
+          lineId = c.existing_id;
+        } else {
+          lineId = insertRow('transmission_line', { line_id: d.line_id, ...fields, tower_count: 0, revision: 1 });
+        }
         const height = d.voltage_kv >= 500 ? 55 : 38;
         let made = 0;
+        let changed = 0;
         for (const t of d.towers) {
+          if (t.action === 'skip') continue;
           const proj = t.km_marker == null ? projectPointToRoute(route, t.latitude, t.longitude) : null;
           const km = t.km_marker != null ? t.km_marker : (proj ? proj.km : t.seq);
-          const towerRow = insertRow('tower', {
+          const towerFields = {
             tower_id: t.tower_id,
             line_id: lineId,
             tower_number: t.tower_number,
@@ -707,23 +762,30 @@ router.post('/infrastructure/import/lines/commit', (req, res) => {
             foundation_type: t.foundation_type,
             corrosion_rating: t.corrosion_rating,
             gps_validated: 1,
-            revision: 1,
-          });
+          };
+          if (t.action === 'update' && t.existing_id) {
+            updateRow('tower', t.existing_id, towerFields, [], 'revision');
+            changed += 1;
+            continue;
+          }
+          const towerRow = insertRow('tower', { ...towerFields, revision: 1 });
           seedStandardComponents(towerRow, t.tower_type);
           syncTowerMirror(towerRow);
           made += 1;
         }
         syncLineTowerCount(lineId);
-        return { id: lineId, towers: made };
+        return { id: lineId, towers: made, towersUpdated: changed, updated: !!(c.update && c.existing_id) };
       });
       towersCreated += result.towers;
-      created.push({ id: result.id, line_id: d.line_id, towers: result.towers, length_km: lengthKm });
+      towersUpdated += result.towersUpdated;
+      if (result.updated) updatedLines.push({ id: result.id, line_id: d.line_id, towers: result.towers, towers_updated: result.towersUpdated, length_km: lengthKm });
+      else created.push({ id: result.id, line_id: d.line_id, towers: result.towers, towers_updated: result.towersUpdated, length_km: lengthKm });
     } catch (e) {
       skipped.push({ line_id: c.line_id, reason: e.message });
     }
   }
-  audit(req.user, 'IMPORT_LINES', 'transmission_line', null, { attempted: candidates.length, created: created.length, towers: towersCreated, skipped: skipped.length });
-  res.status(201).json({ created: created.length, towers_created: towersCreated, skipped, lines: created });
+  audit(req.user, 'IMPORT_LINES', 'transmission_line', null, { attempted: candidates.length, created: created.length, updated: updatedLines.length, towers: towersCreated, towers_updated: towersUpdated, skipped: skipped.length });
+  res.status(201).json({ created: created.length, updated: updatedLines.length, towers_created: towersCreated, towers_updated: towersUpdated, skipped, lines: created, updated_lines: updatedLines });
 });
 
 module.exports = router;

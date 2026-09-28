@@ -522,6 +522,7 @@ export default function Lines({ embedded }) {
           templatePath="/infrastructure/templates/lines"
           templateName="tmms-lines-template.csv"
           regions={regions}
+          supportsUpdate
           columns={[
             { key: 'line_id', label: 'Line', mono: true },
             { key: 'name', label: 'Name' },

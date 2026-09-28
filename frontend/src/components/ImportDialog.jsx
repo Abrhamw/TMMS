@@ -43,11 +43,12 @@ const EDITABLE = {
 // `endpoint` the API base. Preview is mandatory so every candidate (and the
 // reason it would be skipped) is reviewed — and can be corrected inline or via
 // the geometry editor — before anything is written.
-export default function ImportDialog({ title, endpoint, templatePath, templateName, columns, regions, onClose, onDone }) {
+export default function ImportDialog({ title, endpoint, templatePath, templateName, columns, regions, supportsUpdate, onClose, onDone }) {
   const [fileName, setFileName] = useState('');
   const [format, setFormat] = useState('');
   const [content, setContent] = useState(null);
   const [defaultRegionId, setDefaultRegionId] = useState('');
+  const [updateExisting, setUpdateExisting] = useState(!!supportsUpdate);
   const [preview, setPreview] = useState(null);
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -119,6 +120,7 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
       setEdits({});
       const body = { format, content };
       if (defaultRegionId !== '') body.default_region_id = Number(defaultRegionId);
+      if (supportsUpdate && updateExisting) body.update = true;
       const res = await api.post(`${endpoint}/preview`, body);
       setPreview(res);
       if (!res.will_create) setNotice(res.will_skip ? `${res.will_skip} ${t('importWillSkip')}` : null);
@@ -147,7 +149,7 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
     }
   }
 
-  const canCommit = !!preview && preview.will_create > 0 && !busy;
+  const canCommit = !!preview && (preview.will_create + (preview.will_update || 0)) > 0 && !busy;
   const editedCount = Object.keys(edits).length;
 
   return (
@@ -166,9 +168,12 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
         <div>
           <div className="grid grid-2 mb">
             <div className="card card-pad"><b>{t('importDone')}</b><div className="value" style={{ fontSize: 24 }}>{result.created}</div></div>
+            {result.updated != null && (
+              <div className="card card-pad"><b>{t('importUpdated')}</b><div className="value" style={{ fontSize: 24 }}>{result.updated}</div></div>
+            )}
             <div className="card card-pad"><b>{t('importSkipped')}</b><div className="value" style={{ fontSize: 24 }}>{(result.skipped || []).length}</div></div>
           </div>
-          {result.towers_created != null && <p className="muted">{result.towers_created} tower(s) created.</p>}
+          {result.towers_created != null && <p className="muted">{result.towers_created} tower(s) created{result.towers_updated ? `, ${result.towers_updated} tower(s) updated` : ''}.</p>}
           {(result.skipped || []).length > 0 && (
             <div className="tbl-wrap">
               <table>
@@ -197,6 +202,19 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
                 </select>
               </div>
             )}
+            {supportsUpdate && (
+              <div className="field">
+                <label>{t('importUpdateExisting')}</label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 400 }}>
+                  <input
+                    type="checkbox"
+                    checked={updateExisting}
+                    onChange={(e) => { setUpdateExisting(e.target.checked); setPreview(null); setEdits({}); setResult(null); setNotice(null); }}
+                  />
+                  {t('importUpdateExistingHint')}
+                </label>
+              </div>
+            )}
           </div>
 
           {preview && (
@@ -204,7 +222,11 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
               <div className="spread mb" style={{ gap: 10, flexWrap: 'wrap' }}>
                 <div>
                   <b>{t('importWillCreate')}: <span className="ok">{preview.will_create}</span></b>
+                  {preview.will_update != null && (
+                    <> {' · '}<b>{t('importWillUpdate')}: <span className="ok">{preview.will_update}</span></b></>
+                  )}
                   {' · '}<b>{t('importWillSkip')}: <span className="bad">{preview.will_skip}</span></b>
+                  {preview.towers_skipped > 0 && <span className="muted"> · {preview.towers_skipped} tower(s) skipped</span>}
                   {editedCount > 0 && <span className="muted"> · {editedCount} edited</span>}
                 </div>
                 {editedCount > 0 && <button type="button" className="btn btn-sm" onClick={resetEdits}>Reset edits</button>}
