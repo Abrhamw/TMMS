@@ -831,7 +831,7 @@ router.post('/tasks/:id/state', (req, res) => {
     patch.scheduled_start = t.scheduled_start || req.body.scheduled_start || now;
     if (t.crew_id && !t.assigned_by) patch.assigned_by = req.user.person_id || null;
   }
-  if (action === 'assign') { patch.crew_id = req.body.crew_id || t.crew_id; patch.assigned_by = req.body.assigned_by || t.assigned_by; }
+  if (action === 'assign') { patch.crew_id = req.body.crew_id || t.crew_id; patch.assigned_by = req.user.person_id || null; }
   if (action === 'start') { patch.actual_start = now; }
   if (action === 'verify') {
     patch.actual_end = now;

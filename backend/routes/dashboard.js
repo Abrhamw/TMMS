@@ -257,6 +257,32 @@ router.get('/executive/summary', (req, res) => {
     line_name: task.line_id ? get('transmission_line', task.line_id)?.name || null : null,
   }));
 
+  // Task numbering: task numbers are TK-<YYYY>-<seq>. Grouping by year lets the
+  // board see workload issued per year; by_type_all counts every task (the
+  // existing by_type only counts open work). HR: people grouped by title/role.
+  const taskByNumberYear = {};
+  for (const task of tasks) {
+    const m = /^TK-(\d{4})-/.exec(String(task.task_number || ''));
+    const key = m ? m[1] : 'Unnumbered';
+    taskByNumberYear[key] = (taskByNumberYear[key] || 0) + 1;
+  }
+  const taskByTypeAll = {};
+  for (const task of tasks) taskByTypeAll[task.task_type] = (taskByTypeAll[task.task_type] || 0) + 1;
+  const peopleByRole = {};
+  for (const person of people) {
+    const key = (person.title || person.role || 'Unspecified').trim();
+    peopleByRole[key] = (peopleByRole[key] || 0) + 1;
+  }
+  const certByType = {};
+  for (const cert of certifications) {
+    const entry = certByType[cert.cert_type] || { cert_type: cert.cert_type, total: 0, valid: 0, expired: 0, expiring: 0 };
+    entry.total += 1;
+    if (cert.status !== 'REVOKED' && cert.expires_at < nowIso) entry.expired += 1;
+    else if (cert.status !== 'REVOKED' && cert.expires_at >= nowIso && new Date(cert.expires_at).getTime() <= now.getTime() + 90 * 864e5) entry.expiring += 1;
+    else if (cert.status === 'VALID') entry.valid += 1;
+    certByType[cert.cert_type] = entry;
+  }
+
   res.json({
     generated_at: nowIso,
     currency: cost.currency.code,
@@ -272,23 +298,39 @@ router.get('/executive/summary', (req, res) => {
       overdue_tasks: overdueTasks.length,
       executions,
     },
-    valuation: valuation.totals,
+    // The totals plus the full valuation breakdown (by class / family / location)
+    // so the executive assets tab can render valuation by asset class.
+    valuation: {
+      ...valuation.totals,
+      by_type: valuation.by_type || [],
+      by_family: valuation.by_family || [],
+      unpriced_types: valuation.unpriced_types || [],
+    },
     condition,
     infrastructure_condition: infrastructureCondition,
     asset_mix: [...typeMix].map(([asset_type, count]) => ({ asset_type, count })).sort((a, b) => b.count - a.count),
     owner_mix: [...ownerMix.values()].sort((a, b) => a.owner.localeCompare(b.owner) || a.asset_type.localeCompare(b.asset_type)),
     maintenance_cost_by_owner: [...maintenanceCostByOwner.values()].sort((a, b) => b.spend - a.spend),
-    tasks: { by_status: taskByStatus, by_type: taskByType, recent: recentTasks },
+    tasks: {
+      total: tasks.length,
+      by_status: taskByStatus,
+      by_type: taskByType,
+      by_type_all: taskByTypeAll,
+      by_number_year: taskByNumberYear,
+      recent: recentTasks,
+    },
     maintenance_cost: cost,
     schedules: { total: schedules.length, by_frequency: frequencyMix },
     workforce: {
       people: people.length,
       crews: crews.length,
       active_crews: crews.filter((crew) => crew.status === 'AVAILABLE' || crew.status === 'ON_TASK').length,
+      by_role: peopleByRole,
       certifications: certifications.length,
       valid_certifications: certifications.filter((cert) => cert.status === 'VALID' && cert.expires_at >= nowIso).length,
       expired_certifications: expiredCerts.length,
       expiring_90_days: expiringCerts.length,
+      by_type: Object.values(certByType).sort((a, b) => b.total - a.total),
     },
     equipment,
     recommendations,

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { api } from '../api';
 import { Modal, ErrorNote } from '../components';
+import BoundaryPicker from './BoundaryPicker';
+import RoutePathEditor from './RoutePathEditor';
 import { t } from '../i18n';
 
 function detectFormat(name) {
@@ -29,10 +31,18 @@ function readFile(file, format) {
   });
 }
 
+// Fields a reviewer may correct in the preview before committing. Everything
+// else still flows through the normal server-side validator.
+const EDITABLE = {
+  substations: { substation_id: 'text', name: 'text', region_code: 'text', latitude: 'number', longitude: 'number' },
+  lines: { line_id: 'text', name: 'text', voltage_kv: 'number' },
+};
+
 // Two-step bulk import backed by /infrastructure/import/*. The same dialog
 // serves substations and lines; `columns` describes the preview table and
 // `endpoint` the API base. Preview is mandatory so every candidate (and the
-// reason it would be skipped) is reviewed before anything is written.
+// reason it would be skipped) is reviewed — and can be corrected inline or via
+// the geometry editor — before anything is written.
 export default function ImportDialog({ title, endpoint, templatePath, templateName, columns, regions, onClose, onDone }) {
   const [fileName, setFileName] = useState('');
   const [format, setFormat] = useState('');
@@ -43,6 +53,23 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
+  const [edits, setEdits] = useState({});
+  const [geoEdit, setGeoEdit] = useState(null);
+
+  const editable = preview ? EDITABLE[preview.kind] || {} : {};
+
+  function setEdit(index, key, value) {
+    setEdits((prev) => ({ ...prev, [index]: { ...(prev[index] || {}), [key]: value } }));
+  }
+
+  function resetEdits() {
+    setEdits({});
+  }
+
+  function valueFor(row, key) {
+    const e = edits[row.index] || {};
+    return e[key] !== undefined ? e[key] : row[key];
+  }
 
   async function pickFile(e) {
     const file = e.target.files && e.target.files[0];
@@ -52,6 +79,7 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
     setResult(null);
     setPreview(null);
     setNotice(null);
+    setEdits({});
     if (!fmt) {
       setFileName(file.name);
       setFormat('');
@@ -88,6 +116,7 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
       setError(null);
       setResult(null);
       setNotice(null);
+      setEdits({});
       const body = { format, content };
       if (defaultRegionId !== '') body.default_region_id = Number(defaultRegionId);
       const res = await api.post(`${endpoint}/preview`, body);
@@ -105,7 +134,9 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
     try {
       setBusy(true);
       setError(null);
-      const res = await api.post(`${endpoint}/commit`, { token: preview.token });
+      const body = { token: preview.token };
+      if (Object.keys(edits).length) body.edits = edits;
+      const res = await api.post(`${endpoint}/commit`, body);
       setResult(res);
       setPreview(null);
       if (onDone) onDone(res);
@@ -117,6 +148,7 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
   }
 
   const canCommit = !!preview && preview.will_create > 0 && !busy;
+  const editedCount = Object.keys(edits).length;
 
   return (
     <Modal title={title} onClose={onClose} wide
@@ -159,7 +191,7 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
             </div>
             {regions && regions.length > 0 && (
               <div className="field"><label>{t('importDefaultRegion')}</label>
-                <select value={defaultRegionId} onChange={(e) => { setDefaultRegionId(e.target.value); setPreview(null); }}>
+                <select value={defaultRegionId} onChange={(e) => { setDefaultRegionId(e.target.value); setPreview(null); setEdits({}); }}>
                   <option value="">—</option>
                   {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
                 </select>
@@ -169,22 +201,48 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
 
           {preview && (
             <div className="mt">
-              <div className="mb">
-                <b>{t('importWillCreate')}: <span className="ok">{preview.will_create}</span></b>
-                {' · '}<b>{t('importWillSkip')}: <span className="bad">{preview.will_skip}</span></b>
+              <div className="spread mb" style={{ gap: 10, flexWrap: 'wrap' }}>
+                <div>
+                  <b>{t('importWillCreate')}: <span className="ok">{preview.will_create}</span></b>
+                  {' · '}<b>{t('importWillSkip')}: <span className="bad">{preview.will_skip}</span></b>
+                  {editedCount > 0 && <span className="muted"> · {editedCount} edited</span>}
+                </div>
+                {editedCount > 0 && <button type="button" className="btn btn-sm" onClick={resetEdits}>Reset edits</button>}
               </div>
-              <div className="tbl-wrap" style={{ maxHeight: 320, overflowY: 'auto' }}>
+              <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+                Review the rows below. Edit any field inline, or open the geometry editor to adjust coordinates.
+                Corrections are re-validated on commit.
+              </p>
+              <div className="tbl-wrap" style={{ maxHeight: 340, overflowY: 'auto' }}>
                 <table>
                   <thead>
                     <tr>
                       {columns.map((c) => <th key={c.key}>{c.label}</th>)}
+                      <th>Geometry</th>
                       <th>{t('importReason')}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {preview.candidates.map((row, i) => (
-                      <tr key={i} style={row.will_skip ? { background: '#fef2f2' } : undefined}>
-                        {columns.map((c) => <td key={c.key} className={c.mono ? 'mono' : undefined}>{formatCell(row[c.key])}</td>)}
+                    {preview.candidates.map((row) => (
+                      <tr key={row.index} style={row.will_skip ? { background: '#fef2f2' } : undefined}>
+                        {columns.map((c) => (
+                          <td key={c.key} className={c.mono ? 'mono' : undefined}>
+                            {editable[c.key] ? (
+                              <input
+                                type={editable[c.key] === 'number' ? 'number' : 'text'}
+                                className="inline-edit"
+                                value={valueFor(row, c.key) ?? ''}
+                                onChange={(e) => setEdit(row.index, c.key, editable[c.key] === 'number' ? e.target.value : e.target.value)}
+                              />
+                            ) : formatCell(row[c.key])}
+                            {edits[row.index] && edits[row.index][c.key] !== undefined && <span className="edit-dot" title="edited" />}
+                          </td>
+                        ))}
+                        <td>
+                          <button type="button" className="btn btn-sm" onClick={() => setGeoEdit(row)}>
+                            {preview.kind === 'lines' ? 'Route' : 'Boundary'}
+                          </button>
+                        </td>
                         <td>{row.will_skip ? row.reason : <span className="ok">OK</span>}</td>
                       </tr>
                     ))}
@@ -195,7 +253,85 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
           )}
         </>
       )}
+
+      {geoEdit && preview && (
+        <Modal title={`${geoEdit.line_id || geoEdit.substation_id || geoEdit.name} — geometry`} onClose={() => setGeoEdit(null)} wide
+          footer={<button className="btn btn-primary" onClick={() => setGeoEdit(null)}>Done</button>}>
+          {preview.kind === 'lines' ? (
+            <LineGeometryEditor
+              row={geoEdit}
+              edit={edits[geoEdit.index] || {}}
+              setEdit={(key, value) => setEdit(geoEdit.index, key, value)}
+            />
+          ) : (
+            <SubstationGeometryEditor
+              row={geoEdit}
+              edit={edits[geoEdit.index] || {}}
+              setEdit={(key, value) => setEdit(geoEdit.index, key, value)}
+            />
+          )}
+        </Modal>
+      )}
     </Modal>
+  );
+}
+
+// Substation point + boundary editor.
+function SubstationGeometryEditor({ row, edit, setEdit }) {
+  const boundary = edit.boundary !== undefined ? edit.boundary : (row.boundary || []);
+  const center = row.latitude != null && row.longitude != null ? [row.latitude, row.longitude] : undefined;
+  return (
+    <div>
+      <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+        Existing boundary: {boundary.length} vertices. Click the map to add a vertex, drag to move, click a marker to remove.
+      </p>
+      <BoundaryPicker polygon={boundary} onChange={(pts) => setEdit('boundary', pts)} center={center} />
+      <div className="form-grid mt">
+        <div className="field"><label>Latitude</label>
+          <input type="number" value={(edit.latitude !== undefined ? edit.latitude : row.latitude) ?? ''} onChange={(e) => setEdit('latitude', e.target.value)} />
+        </div>
+        <div className="field"><label>Longitude</label>
+          <input type="number" value={(edit.longitude !== undefined ? edit.longitude : row.longitude) ?? ''} onChange={(e) => setEdit('longitude', e.target.value)} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Line route + tower coordinate editor.
+function LineGeometryEditor({ row, edit, setEdit }) {
+  const route = edit.route !== undefined ? edit.route : (row.route || []);
+  const towers = edit.towers !== undefined ? edit.towers : (row.towers || []);
+  const center = route.length ? [route[0][0], route[0][1]] : undefined;
+
+  function setTower(i, key, value) {
+    const next = towers.map((tw, j) => (j === i ? { ...tw, [key]: value } : tw));
+    setEdit('towers', next);
+  }
+
+  return (
+    <div>
+      <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+        {route.length} route waypoint(s), {towers.length} tower(s) (red dots). Click the map to add waypoints.
+      </p>
+      <RoutePathEditor route={route} towers={towers} onChange={(pts) => setEdit('route', pts)} center={center} />
+      {towers.length > 0 && (
+        <div className="tbl-wrap mt" style={{ maxHeight: 220, overflowY: 'auto' }}>
+          <table>
+            <thead><tr><th>Tower</th><th>Latitude</th><th>Longitude</th></tr></thead>
+            <tbody>
+              {towers.map((tw, i) => (
+                <tr key={i}>
+                  <td className="mono">{tw.tower_id || tw.tower_number || i + 1}</td>
+                  <td><input type="number" className="inline-edit" value={tw.latitude ?? ''} onChange={(e) => setTower(i, 'latitude', e.target.value)} /></td>
+                  <td><input type="number" className="inline-edit" value={tw.longitude ?? ''} onChange={(e) => setTower(i, 'longitude', e.target.value)} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 

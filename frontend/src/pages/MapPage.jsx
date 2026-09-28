@@ -249,7 +249,7 @@ export default function MapPage() {
       return b == null ? true : bands.has(b);
     };
     const statusOk = (st) => statusFilter === 'ALL' || (statusFilter === 'ENERGIZED' ? isEnergized(st) : !isEnergized(st));
-    const regionOk = (rid) => regionFilter === 'ALL' || String(rid) === regionFilter;
+    const regionOk = (rid) => regionFilter === 'ALL' || (rid != null && String(rid) === String(regionFilter));
     const lineRegion = new Map((data.lines || []).map((l) => [l.id, l.region_id]));
     const subRegion = new Map((data.substations || []).map((s) => [s.id, s.region_id]));
     const HEAVY = new Set(['towers', 'assets']);
@@ -500,6 +500,41 @@ export default function MapPage() {
   }
 
   useEffect(() => { if (data) applyVisibility(); }, [hidden, data]);
+
+  // When the user picks a region, move the map to that region's ground so a
+  // filter change is visible immediately instead of leaving the viewport
+  // elsewhere (which reads as "nothing selected").
+  const regionZoomRef = useRef(false);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !data) return;
+    if (regionFilter === 'ALL') { regionZoomRef.current = false; return; }
+    const region = (data.regions || []).find((r) => String(r.id) === String(regionFilter));
+    if (!region) return;
+    const hasBoundary = Array.isArray(region.boundary_json) && region.boundary_json.length >= 3;
+    const pts = hasBoundary
+      ? region.boundary_json
+      : circleCorners(region.center[0], region.center[1], (Number(region.boundary) || 0) * 111320);
+    if (pts.length > 1) flyToPoints(map, pts, { maxZoom: 11, padding: [48, 48], singleZoom: 11 });
+    else if (Array.isArray(region.center)) map.flyTo(region.center, 10, { duration: 0.7 });
+    regionZoomRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [regionFilter, data]);
+
+  // How many mapped features each region actually carries, so a region that is
+  // still empty (no imported infrastructure) is obvious before selecting it.
+  const regionFeatureCount = useMemo(() => {
+    if (!data) return {};
+    const counts = {};
+    const bump = (rid) => { if (rid == null) return; const k = String(rid); counts[k] = (counts[k] || 0) + 1; };
+    (data.substations || []).forEach((s) => bump(s.region_id));
+    (data.lines || []).forEach((l) => bump(l.region_id));
+    (data.towers || []).forEach((t) => bump(t.region_id));
+    (data.assets || []).forEach((a) => bump(a.region_id));
+    (data.open_tasks || []).forEach((t) => bump(t.region_id));
+    (data.geofences || []).forEach((g) => bump(g.region_id));
+    return counts;
+  }, [data]);
 
   const searchIndex = useMemo(() => {
     if (!data) return [];
@@ -754,8 +789,17 @@ export default function MapPage() {
           </select>
           <select className="map-select" value={regionFilter} onChange={(e) => setRegionFilter(e.target.value)} aria-label={t('mapFilters')}>
             <option value="ALL">{t('mapAllRegions')}</option>
-            {(data?.regions || []).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            {(data?.regions || []).map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}{regionFeatureCount[String(r.id)] ? ` (${regionFeatureCount[String(r.id)]})` : ' (0)'}
+              </option>
+            ))}
           </select>
+          {regionFilter !== 'ALL' && !regionFeatureCount[String(regionFilter)] && (
+            <div className="muted" style={{ fontSize: 12, padding: '2px 2px 0' }}>
+              {t('mapRegionEmpty')}
+            </div>
+          )}
         </Panel>
 
         <Panel

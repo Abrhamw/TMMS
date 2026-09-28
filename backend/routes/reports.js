@@ -5,7 +5,7 @@ const { taskVisible, canViewCrew, commandScope } = require('../authority');
 const { listForTask } = require('./attachments');
 const { taskProgress } = require('../taskProgress');
 const { computeRegionValuation, mergeValuations } = require('./register');
-const { maintenanceCostForRegions, currencyCode } = require('../maintenanceCost');
+const { maintenanceCostForRegions, currencyCode, assetRegion } = require('../maintenanceCost');
 const { deriveCrewStatus } = require('../crewStatus');
 const { taskReadiness, crewReadiness, personPerformanceRows } = require('../readiness');
 const { targetHeadline, resolveTarget } = require('../target');
@@ -306,6 +306,70 @@ function compute(reportType, params, user) {
           expired: certsIn.filter((c) => c.status === 'EXPIRED').length,
         }];
       }
+      // Missed certifications: expired already, or expiring within the next 90
+      // days. The stored `status` can be stale, so validity is decided from the
+      // expiry date (matching dispatch.certIsValid) rather than trusting status.
+      const nowMs = Date.now();
+      const certHorizonMs = nowMs + 90 * 864e5;
+      const personInReportRegion = (personId) => {
+        if (scope.global && !regionId) return true;
+        if (!scope.global) return scope.memberIds.has(personId);
+        return db.prepare('SELECT 1 FROM region_personnel WHERE person_id = ? AND region_id = ? LIMIT 1').get(personId, regionId) != null
+          || db.prepare(
+            'SELECT 1 FROM crew c JOIN crew_member m ON m.crew_id = c.id WHERE m.person_id = ? AND c.region_id = ? LIMIT 1'
+          ).get(personId, regionId) != null;
+      };
+      const missed_certifications = list('certification')
+        .filter((c) => c.person_id && personInReportRegion(c.person_id))
+        .map((c) => ({ ...c, expires_ms: c.expires_at ? new Date(c.expires_at).getTime() : null }))
+        .filter((c) => c.expires_ms != null && c.expires_ms <= certHorizonMs)
+        .sort((a, b) => a.expires_ms - b.expires_ms)
+        .map((c) => ({
+          id: c.id,
+          person_id: c.person_id,
+          person_name: personLabel(c.person_id),
+          cert_type: c.cert_type,
+          issuing_body: c.issuing_body || null,
+          expires_at: c.expires_at,
+          status: c.expires_ms < nowMs ? 'EXPIRED' : 'EXPIRING',
+          days: Math.round((c.expires_ms - nowMs) / 864e5),
+        }));
+
+      // Missed equipment: in-service assets with no dated next maintenance (or a
+      // date already passed) and active schedules whose next due date is behind.
+      const regionOk = (a) => {
+        if (!regionId) return true;
+        return assetRegion(a) === regionId;
+      };
+      const inService = (a) => !['RETIRED', 'DECOMMISSIONED', 'DISPOSED'].includes(String(a.lifecycle_status || '').toUpperCase());
+      const missed_equipment_all = []
+        .concat(scopeAssets(user, scope, list('asset'))
+          .filter(inService)
+          .filter((a) => !a.next_maintenance_at || new Date(a.next_maintenance_at).getTime() < nowMs)
+          .filter(regionOk)
+          .map((a) => ({
+            kind: 'ASSET',
+            id: a.id,
+            asset_pk: a.id,
+            label: a.name || a.asset_id,
+            asset_type: a.asset_type || null,
+            due: a.next_maintenance_at || null,
+            detail: a.next_maintenance_at ? 'Maintenance overdue' : 'No maintenance date set',
+          })))
+        .concat(scopeSchedules(user, scope, list('maintenance_schedule'))
+          .filter((s) => s.is_active && (!regionId || s.region_id === regionId))
+          .filter((s) => s.next_due_date && new Date(s.next_due_date).getTime() < nowMs)
+          .map((s) => ({
+            kind: 'SCHEDULE',
+            id: s.id,
+            label: s.schedule_name,
+            asset_type: s.asset_type || s.scope_type || null,
+            due: s.next_due_date,
+            detail: `Schedule overdue (${s.frequency})`,
+          })))
+        .sort((a, b) => new Date(a.due || 0) - new Date(b.due || 0));
+      const missed_equipment = missed_equipment_all.slice(0, 200);
+
       return {
         title: 'Compliance / Audit Report',
         checklist_compliance: totalItems ? `${Math.round((passedItems / totalItems) * 100)}%` : 'N/A',
@@ -314,6 +378,13 @@ function compute(reportType, params, user) {
         total_certs: regionCerts.reduce((s, r) => s + r.total, 0),
         region_cert_status: regionCerts,
         execution_summary: execRows,
+        missed_certifications,
+        missed_equipment,
+        missed_equipment_total: missed_equipment_all.length,
+        missed_equipment_by_kind: {
+          assets: missed_equipment_all.filter((m) => m.kind === 'ASSET').length,
+          schedules: missed_equipment_all.filter((m) => m.kind === 'SCHEDULE').length,
+        },
       };
     }
     case 'OVERDUE_TASK': {

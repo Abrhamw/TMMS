@@ -52,6 +52,22 @@ export default function ExecutiveSummary() {
               <div className="tbl-wrap"><table><thead><tr><th>Status</th><th>Tasks</th></tr></thead><tbody>
                 {Object.entries(summary.tasks.by_status).map(([status, count]) => <tr key={status}><td><Pill value={status} /></td><td>{count}</td></tr>)}
               </tbody></table></div>
+              <h3>Task numbering</h3>
+              <div className="exec-stat-grid">
+                <ExecStat label="Tasks issued (all time)" value={summary.tasks.total ?? 0} />
+                {Object.entries(summary.tasks.by_number_year || {}).sort(([a], [b]) => b.localeCompare(a)).map(([year, count]) => (
+                  <ExecStat key={year} label={year === 'Unnumbered' ? year : `Issued ${year}`} value={count} />
+                ))}
+              </div>
+              <div className="tbl-wrap"><table><thead><tr><th>Task type</th><th>All</th><th>Open</th></tr></thead><tbody>
+                {Object.keys(summary.tasks.by_type_all || summary.tasks.by_type || {}).map((type) => (
+                  <tr key={type}>
+                    <td>{type.replace(/_/g, ' ')}</td>
+                    <td>{(summary.tasks.by_type_all || {})[type] ?? '—'}</td>
+                    <td>{(summary.tasks.by_type || {})[type] ?? 0}</td>
+                  </tr>
+                ))}
+              </tbody></table></div>
             </section>
             <section className="exec-panel">
               <h2>Management recommendations</h2>
@@ -82,8 +98,18 @@ export default function ExecutiveSummary() {
               {summary.owner_mix.map((row, index) => <tr key={`${row.owner}-${row.asset_type}-${index}`}><td>{row.owner}</td><td>{row.asset_type.replace(/_/g, ' ')}</td><td>{row.count}</td><td>{fmtMoney(row.rcn, currency)}</td><td>{fmtMoney(row.current, currency)}</td><td>{row.unpriced_count}</td></tr>)}
             </tbody></table></div><div className="muted mt">Assets without a recorded substation owner are identified separately.</div></section>
           </div>
-          <section className="exec-panel mt"><h2>Valuation by asset class</h2><div className="tbl-wrap"><table><thead><tr><th>Class</th><th>Population</th><th>Replacement cost</th><th>Current value</th></tr></thead><tbody>
-            {summary.valuation.by_type.map((row) => <tr key={row.asset_type}><td>{row.label}</td><td>{row.count}</td><td>{fmtMoney(row.rcn, currency)}</td><td><b>{fmtMoney(row.current, currency)}</b></td></tr>)}
+          <section className="exec-panel mt"><h2>Total asset costing</h2>
+            <div className="exec-stat-grid">
+              <ExecStat label="Assets valued" value={summary.valuation.count ?? 0} />
+              <ExecStat label="Replacement cost" value={fmtMoney(summary.valuation.rcn, currency)} />
+              <ExecStat label="Current value" value={fmtMoney(summary.valuation.current, currency)} />
+              <ExecStat label="Unpriced assets" value={summary.valuation.unpriced_count ?? 0} />
+              <ExecStat label="Avg condition" value={summary.valuation.avg_condition != null ? `${Number(summary.valuation.avg_condition).toFixed(1)}/10` : '—'} />
+            </div>
+            <h3>Valuation by asset class</h3>
+            <div className="tbl-wrap"><table><thead><tr><th>Class</th><th>Population</th><th>Replacement cost</th><th>Current value</th></tr></thead><tbody>
+            {(summary.valuation.by_type || []).map((row) => <tr key={row.asset_type}><td>{row.label}</td><td>{row.count}</td><td>{fmtMoney(row.rcn, currency)}</td><td><b>{fmtMoney(row.current, currency)}</b></td></tr>)}
+            {!(summary.valuation.by_type || []).length && <tr><td colSpan={4} className="muted">No priced assets to value.</td></tr>}
           </tbody></table></div></section>
         </div>
       )}
@@ -127,6 +153,20 @@ export default function ExecutiveSummary() {
             <ExecStat label="Missed checks" value={summary.equipment.missed} />
             <ExecStat label="Open tasks with gaps" value={summary.equipment.tasks_with_gaps} />
           </div><p className="muted">Unchecked recommended items remain visible as missed until an assignment-stage availability check is saved.</p></section>
+          <div className="executive-grid mt">
+            <section className="exec-panel"><h2>Workforce by title / role</h2><div className="tbl-wrap"><table><thead><tr><th>Title / role</th><th>People</th></tr></thead><tbody>
+              {Object.entries(summary.workforce.by_role || {}).sort((a, b) => b[1] - a[1]).map(([role, count]) => (
+                <tr key={role}><td>{role}</td><td>{count}</td></tr>
+              ))}
+              {!Object.keys(summary.workforce.by_role || {}).length && <tr><td colSpan={2} className="muted">No personnel on record.</td></tr>}
+            </tbody></table></div></section>
+            <section className="exec-panel"><h2>Certifications by type</h2><div className="tbl-wrap"><table><thead><tr><th>Type</th><th>Total</th><th>Valid</th><th>Expiring</th><th>Expired</th></tr></thead><tbody>
+              {(summary.workforce.by_type || []).map((row) => (
+                <tr key={row.cert_type}><td>{row.cert_type.replace(/_/g, ' ')}</td><td>{row.total}</td><td>{row.valid}</td><td>{row.expiring}</td><td className={row.expired ? 'bad' : undefined}>{row.expired}</td></tr>
+              ))}
+              {!(summary.workforce.by_type || []).length && <tr><td colSpan={5} className="muted">No certifications on record.</td></tr>}
+            </tbody></table></div></section>
+          </div>
         </div>
       )}
     </Page>

@@ -35,6 +35,20 @@ function scheduleDetail(s) {
   out.recurrence_summary = rule ? recurrence.describe(rule) : '';
   out.occurrences_generated = s.occurrences_generated || 0;
   out.targets = expandTargets(s);
+  out.target_count = out.targets.length;
+  const lead = Math.max(0, Number(s.lead_time_days) || 0);
+  out.lead_time_days = lead;
+  const dueMs = s.next_due_date ? new Date(s.next_due_date).getTime() : NaN;
+  if (!Number.isNaN(dueMs)) {
+    out.generate_by = new Date(dueMs - lead * 86400000).toISOString();
+    out.days_until_due = Math.ceil((dueMs - Date.now()) / 86400000);
+    out.due_state = s.is_active === 0
+      ? 'ENDED'
+      : dueMs < Date.now()
+        ? 'OVERDUE'
+        : dueMs - lead * 86400000 <= Date.now() ? 'GENERATING' : 'SCHEDULED';
+    out.next_occurrences = rule ? recurrence.preview(s.next_due_date, rule, 3) : [];
+  }
   const open = db.prepare(
     `SELECT COUNT(*) c FROM task WHERE schedule_id = ? AND status IN (${OPEN_STATUSES.map(() => '?').join(',')})`
   ).get(s.id, ...OPEN_STATUSES).c;
@@ -94,6 +108,123 @@ router.get('/schedules', (req, res) => {
   if (is_active !== undefined) rows = rows.filter((s) => s.is_active === Number(is_active));
   if (q) rows = rows.filter((s) => s.schedule_name.toLowerCase().includes(q.toLowerCase()));
   res.json(rows.map(scheduleDetail));
+});
+
+// Calendar/timeline feed: every active schedule's upcoming occurrences inside a
+// window, tagged with the lead-time "generate by" date so planners can see when
+// the next task batch will materialise (not just when it is due).
+router.get('/schedules/upcoming', (req, res) => {
+  const days = Math.max(1, Math.min(365, Number(req.query.days) || 45));
+  const nowMs = Date.now();
+  const horizonMs = nowMs + days * 86400000;
+  const scope = commandScope(req.user);
+  const schedules = list('maintenance_schedule').filter((s) => scope.global || scope.scheduleIds.has(s.id));
+  const occurrences = [];
+  for (const s of schedules) {
+    if (s.is_active !== 1 || !s.next_due_date) continue;
+    let rule = null;
+    try { rule = recurrence.ruleFromSchedule(s); } catch { rule = null; }
+    if (!rule) continue;
+    const targets = expandTargets(s);
+    const crew = s.responsible_crew_id ? get('crew', s.responsible_crew_id) : null;
+    const lead = Math.max(0, Number(s.lead_time_days) || 0);
+    let cursor = s.next_due_date;
+    for (let guard = 0; cursor && guard < 60; guard++) {
+      const dueMs = new Date(cursor).getTime();
+      if (Number.isNaN(dueMs) || dueMs > horizonMs) break;
+      const generateByMs = dueMs - lead * 86400000;
+      occurrences.push({
+        schedule_id: s.id,
+        schedule_code: s.schedule_code,
+        schedule_name: s.schedule_name,
+        scope_type: s.scope_type,
+        asset_type: s.asset_type || null,
+        task_type: resolveTaskType(s),
+        priority: s.priority,
+        due_date: cursor,
+        lead_time_days: lead,
+        generate_by: new Date(generateByMs).toISOString(),
+        generate_now: generateByMs <= nowMs,
+        overdue: dueMs < nowMs,
+        target_count: targets.length,
+        crew_name: crew ? crew.name : null,
+        region_id: s.region_id,
+      });
+      cursor = recurrence.nextAfter(cursor, rule);
+    }
+  }
+  occurrences.sort((a, b) => a.due_date.localeCompare(b.due_date));
+  res.json({
+    days,
+    from: new Date(nowMs).toISOString(),
+    to: new Date(horizonMs).toISOString(),
+    count: occurrences.length,
+    overdue_count: occurrences.filter((o) => o.overdue).length,
+    generate_now_count: occurrences.filter((o) => o.generate_now).length,
+    occurrences,
+  });
+});
+
+// Adherence: how faithfully the generated work matched the plan over a window.
+// For every schedule we compare tasks whose due date landed in the window with
+// how many were completed (and completed on time) plus what is still overdue.
+router.get('/schedules/adherence', (req, res) => {
+  const days = Math.max(7, Math.min(365, Number(req.query.days) || 90));
+  const until = new Date().toISOString();
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const openPlaceholders = OPEN_STATUSES.map(() => '?').join(',');
+  const scope = commandScope(req.user);
+  const schedules = list('maintenance_schedule').filter((s) => scope.global || scope.scheduleIds.has(s.id));
+  const rows = [];
+  const totals = { due: 0, completed: 0, on_time: 0, overdue_open: 0, pending: 0 };
+  for (const s of schedules) {
+    const due = db.prepare(
+      "SELECT COUNT(*) c FROM task WHERE schedule_id = ? AND due_date >= ? AND due_date <= ? AND status != 'CANCELLED'"
+    ).get(s.id, since, until).c;
+    const completed = db.prepare(
+      "SELECT COUNT(*) c FROM task WHERE schedule_id = ? AND due_date >= ? AND due_date <= ? AND status = 'COMPLETED'"
+    ).get(s.id, since, until).c;
+    const onTime = db.prepare(
+      "SELECT COUNT(*) c FROM task WHERE schedule_id = ? AND due_date >= ? AND due_date <= ? AND status = 'COMPLETED' AND actual_end IS NOT NULL AND actual_end <= due_date"
+    ).get(s.id, since, until).c;
+    const overdueOpen = db.prepare(
+      `SELECT COUNT(*) c FROM task WHERE schedule_id = ? AND due_date < ? AND status IN (${openPlaceholders})`
+    ).get(s.id, until, ...OPEN_STATUSES).c;
+    const generated = db.prepare('SELECT COUNT(*) c FROM task WHERE schedule_id = ? AND created_at >= ?').get(s.id, since).c;
+    const pending = Math.max(0, due - completed - overdueOpen);
+    totals.due += due; totals.completed += completed; totals.on_time += onTime;
+    totals.overdue_open += overdueOpen; totals.pending += pending;
+    rows.push({
+      schedule_id: s.id,
+      schedule_code: s.schedule_code,
+      schedule_name: s.schedule_name,
+      scope_type: s.scope_type,
+      is_active: s.is_active,
+      next_due_date: s.next_due_date,
+      generated,
+      due,
+      completed,
+      on_time: onTime,
+      overdue_open: overdueOpen,
+      pending,
+      completion_rate: due ? Math.round((completed / due) * 100) : null,
+      on_time_rate: due ? Math.round((onTime / due) * 100) : null,
+    });
+  }
+  rows.sort((a, b) => (a.completion_rate ?? 101) - (b.completion_rate ?? 101));
+  const pct = (n, d) => (d ? Math.round((n / d) * 100) : null);
+  res.json({
+    days,
+    from: since,
+    to: until,
+    totals: {
+      ...totals,
+      schedules: rows.length,
+      completion_rate: pct(totals.completed, totals.due),
+      on_time_rate: pct(totals.on_time, totals.due),
+    },
+    rows,
+  });
 });
 
 router.get('/schedules/:id', (req, res) => {
@@ -193,11 +324,15 @@ router.post('/schedules/run', (req, res) => {
     schedules = schedules.filter((s) => s.id === onlyId);
   }
   const now = new Date().toISOString();
-  const today = new Date().toISOString();
+  const nowMs = Date.now();
 
   for (const s of schedules) {
     try {
-      if (s.next_due_date > today) { results.not_due++; continue; }
+      // Lead-time generation: a schedule can materialise its next task batch up
+      // to `lead_time_days` before the due date so crews get advance notice.
+      const dueMs = s.next_due_date ? new Date(s.next_due_date).getTime() : NaN;
+      const leadMs = Math.max(0, Number(s.lead_time_days) || 0) * 86400000;
+      if (Number.isNaN(dueMs) || dueMs - leadMs > nowMs) { results.not_due++; continue; }
       if (s.responsible_crew_id && !canAssignCrew(req.user, s.responsible_crew_id)) {
         results.errors.push({ schedule_id: s.id, error: 'responsible crew is outside your authority' });
         continue;

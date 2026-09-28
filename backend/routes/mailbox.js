@@ -7,6 +7,19 @@ const router = express.Router();
 const OPEN = new Set(['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION']);
 const CLOSED = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
 
+// Short, at-a-glance chips for a task thread (status, type, urgency, overdue).
+function taskTags(task, nowIso) {
+  const tags = [task.status, task.task_type].filter(Boolean);
+  if (['HIGH', 'CRITICAL'].includes(task.priority)) tags.push(task.priority);
+  if (OPEN.has(task.status) && task.due_date && task.due_date < nowIso) tags.push('OVERDUE');
+  return [...new Set(tags)];
+}
+
+function reportTags(report) {
+  return [report.report_type, report.status].filter(Boolean);
+}
+
+
 function taskRows(user) {
   return db.prepare('SELECT * FROM task ORDER BY updated_at DESC, id DESC').all()
     .filter((task) => taskVisible(user, task));
@@ -66,6 +79,7 @@ function threadSummary(task, user) {
   const unreadCount = taskMessageRows(task, user).filter((message) => message.unread).length;
   return {
     id: task.id,
+    kind: 'TASK',
     task_number: task.task_number,
     title: task.title,
     status: task.status,
@@ -75,6 +89,8 @@ function threadSummary(task, user) {
     updated_at: task.updated_at,
     line_name: line ? line.name : null,
     crew_name: crew ? crew.name : null,
+    tags: taskTags(task, new Date().toISOString()),
+    link: `/tasks/${task.id}`,
     message_count: comments + history,
     latest: last,
     unread: unreadCount > 0,
@@ -112,6 +128,8 @@ function taskMessageRows(task, user) {
     actor: [row.first_name, row.last_name].filter(Boolean).join(' ') || row.username,
     actor_key: row.username,
     body: row.body,
+    tags: taskTags(task, new Date().toISOString()),
+    link: `/tasks/${task.id}`,
   }));
   const events = db.prepare(
     `SELECT id, actor, action, detail, created_at
@@ -132,6 +150,8 @@ function taskMessageRows(task, user) {
       actor: row.actor,
       actor_key: row.actor,
       body: `Task workflow: ${String(action).replace(/_/g, ' ').toLowerCase()}`,
+      tags: taskTags(task, new Date().toISOString()),
+      link: `/tasks/${task.id}`,
     };
   });
   return [...comments, ...events].map((message) => messageRow(user, message));
@@ -164,16 +184,48 @@ function messagesFor(user, tasks) {
       actor_key: actor,
       body: `${report.report_type.replace(/_/g, ' ')} report · ${report.period_start.slice(0, 10)} to ${report.period_end.slice(0, 10)}`,
       status: report.status,
+      tags: reportTags(report),
+      link: `/reports?report=${report.id}`,
     });
     return message;
   });
   return [...messages, ...reports].sort((a, b) => b.at.localeCompare(a.at));
 }
 
+function messageKeyVisible(user, key) {
+  let m = /^report-(\d+)$/.exec(key);
+  if (m) {
+    const report = get('report', Number(m[1]));
+    if (!report) return false;
+    return isGlobal(user) || !report.scope_region_id || report.scope_region_id === user.region_id;
+  }
+  m = /^comment-(\d+)$/.exec(key);
+  if (m) {
+    const c = db.prepare('SELECT entity_type, entity_id FROM comment WHERE id = ?').get(Number(m[1]));
+    if (!c || c.entity_type !== 'task') return false;
+    const task = get('task', c.entity_id);
+    return !!task && taskVisible(user, task);
+  }
+  m = /^event-(\d+)$/.exec(key);
+  if (m) {
+    const a = db.prepare('SELECT entity, entity_id FROM audit_log WHERE id = ?').get(Number(m[1]));
+    if (!a || a.entity !== 'task') return false;
+    const task = get('task', a.entity_id);
+    return !!task && taskVisible(user, task);
+  }
+  return false;
+}
+
 router.get('/mailbox', (req, res) => {
   const user = req.user;
   const tasks = taskRows(user);
-  const inbox = tasks.filter((task) => OPEN.has(task.status) && (isGlobal(user) || taskInvolvement(user, task)));
+  // The inbox is everything open that reaches this account: `taskRows` already
+  // applies the chain-of-command visibility (a crew sees its crew's work, a
+  // department manager sees their department's work, a director the region), so
+  // re-filtering by personal involvement wrongly hid work assigned to a
+  // manager's crews. The extra involvement filter stays on History, which is
+  // the record of work this account personally took part in.
+  const inbox = tasks.filter((task) => OPEN.has(task.status));
   const sent = tasks.filter((task) => user.person_id && task.created_by === user.person_id);
   const history = tasks.filter((task) => CLOSED.has(task.status) && taskInvolvement(user, task));
   const messages = messagesFor(user, tasks);
@@ -186,6 +238,25 @@ router.get('/mailbox', (req, res) => {
     messages,
     unread_messages: unreadMessages,
     unread_count: unreadMessages.length,
+  });
+});
+
+router.get('/mailbox/summary', (req, res) => {
+  const user = req.user;
+  const tasks = taskRows(user);
+  const messages = messagesFor(user, tasks);
+  const unread = messages.filter((message) => message.unread);
+  const byKind = {};
+  for (const message of messages) byKind[message.kind] = (byKind[message.kind] || 0) + 1;
+  const unreadByKind = {};
+  for (const message of unread) unreadByKind[message.kind] = (unreadByKind[message.kind] || 0) + 1;
+  res.json({
+    unread_count: unread.length,
+    inbox_count: tasks.filter((task) => OPEN.has(task.status)).length,
+    message_count: messages.length,
+    report_count: messages.filter((message) => message.kind === 'REPORT').length,
+    by_kind: byKind,
+    unread_by_kind: unreadByKind,
   });
 });
 
@@ -206,6 +277,9 @@ router.get('/mailbox/:taskId', (req, res) => {
     actor: [row.first_name, row.last_name].filter(Boolean).join(' ') || row.username,
     role: row.role,
     body: row.body,
+    task_id: task.id,
+    task_number: task.task_number,
+    link: `/tasks/${task.id}`,
   }));
   const events = db.prepare(
     `SELECT id, actor, action, detail, created_at
@@ -221,6 +295,9 @@ router.get('/mailbox/:taskId', (req, res) => {
       actor: row.actor,
       action,
       body: `Task workflow: ${String(action).replace(/_/g, ' ').toLowerCase()}`,
+      task_id: task.id,
+      task_number: task.task_number,
+      link: `/tasks/${task.id}`,
     };
   });
   const timeline = [...comments, ...events].sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
@@ -244,8 +321,7 @@ router.put('/mailbox/:taskId/read', (req, res) => {
 
 router.put('/mailbox/message/:messageKey/read', (req, res) => {
   const key = String(req.params.messageKey || '');
-  const message = messagesFor(req.user, taskRows(req.user)).find((item) => item.key === key);
-  if (!message) return res.status(404).json({ error: 'Mailbox message not found' });
+  if (!messageKeyVisible(req.user, key)) return res.status(404).json({ error: 'Mailbox message not found' });
   const readAt = new Date().toISOString();
   db.prepare(
     `INSERT INTO mailbox_message_read (user_id, message_key, read_at) VALUES (?, ?, ?)

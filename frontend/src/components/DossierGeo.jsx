@@ -94,7 +94,7 @@ function buildLine(d) {
   addSub(out, d.from_substation);
   addSub(out, d.to_substation);
   (d.towers || []).forEach((t) => addTower(out, t, d.line, { cap: 400 }));
-  out.focus = out.polylines.length ? out.polylines.flatMap((p) => p.points) : out.fit;
+  out.focus = out.polylines.length ? [...out.polylines.flatMap((p) => p.points), ...out.fit] : out.fit;
   return out;
 }
 
@@ -111,7 +111,7 @@ function buildTask(d) {
   addTower(out, t.tower, t.line, { primary: true });
   const voltage = lineKv(t.line) ?? subKv(t.substation);
   const assetPos = t.asset ? addAssetPoint(out, t.asset, { voltage }) : null;
-  out.focus = assetPos ? [assetPos] : (out.polylines.length ? out.polylines.flatMap((p) => p.points) : out.fit);
+  out.focus = assetPos ? [assetPos] : (out.polylines.length ? [...out.polylines.flatMap((p) => p.points), ...out.fit] : out.fit);
   return out;
 }
 
@@ -128,8 +128,22 @@ export default function DossierGeo({ dossier, title = 'Location map' }) {
   if (!geo) return null;
   const hasGeometry = geo.markers.length > 0 || geo.polylines.length > 0 || geo.circles.length > 0 || geo.polygons.length > 0;
   if (!hasGeometry) return null;
+  // A short, human description of what is drawn. This is what makes the printed
+  // map self-explanatory: the reader knows the whole route is shown end to end
+  // rather than a cropped zoom.
+  const kind = { ASSET: 'Asset', LINE: 'Transmission line', TASK: 'Work target' }[dossier.entity] || 'Location';
+  const name = dossier.entity_name || dossier.asset?.name || dossier.line?.name || dossier.target?.name;
+  const towers = geo.markers.filter((m) => m.legendLabel === 'Tower').length;
+  const subs = geo.markers.filter((m) => m.legendLabel && m.legendLabel.startsWith('Substation')).length;
+  const routePts = geo.polylines.reduce((n, l) => n + l.points.length, 0);
+  const bits = [
+    routePts >= 2 ? `route drawn end to end (${routePts} points)` : null,
+    towers ? `${towers} tower${towers === 1 ? '' : 's'}` : null,
+    subs ? `${subs} substation${subs === 1 ? '' : 's'}` : null,
+    geo.circles.length || geo.polygons.length ? 'perimeter shown' : null,
+  ].filter(Boolean);
   return (
-    <div className="mt">
+    <div className="target-map">
       <h4 className="section-title">{title}</h4>
       <StaticMap
         width={640}
@@ -141,6 +155,10 @@ export default function DossierGeo({ dossier, title = 'Location map' }) {
         focus={geo.focus && geo.focus.length ? geo.focus : null}
         ariaLabel={`Location map for ${dossier.entity_name || dossier.entity}`}
       />
+      <div className="target-map-caption">
+        <div><b>{kind}{name ? `: ${name}` : ''}</b>{dossier.entity_number ? ` (${dossier.entity_number})` : ''}</div>
+        <div className="muted">{bits.join(' · ') || 'Location recorded'}</div>
+      </div>
     </div>
   );
 }

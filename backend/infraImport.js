@@ -112,14 +112,62 @@ function num(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-// "lat lng; lat lng", "lat,lng;lat,lng" (and newline or wkt-ish separators).
-function parseCoordPairs(str) {
-  const out = [];
-  for (const seg of String(str || '').split(/[;\n]+/)) {
-    const m = seg.trim().match(/^(-?\d+(?:\.\d+)?)[\s,]+(-?\d+(?:\.\d+)?)$/);
-    if (m) out.push([Number(m[1]), Number(m[2])]);
+// WKT vertices are "lng lat" so they are flipped to the app's [lat, lng].
+function coordsFromWkt(text) {
+  const body = String(text).replace(/^\s*[A-Za-z]+\s*/, '');
+  const nums = body.replace(/[()]/g, ' ').trim().split(/[\s,]+/).map(Number).filter(Number.isFinite);
+  const pts = [];
+  for (let i = 0; i + 1 < nums.length; i += 2) pts.push([nums[i + 1], nums[i]]);
+  return pts.filter(([lat, lng]) => validCoord(lat, lng));
+}
+
+// GeoJSON geometry / bare coordinate arrays. GeoJSON is "lng lat".
+function coordsFromJson(text) {
+  let g;
+  try { g = JSON.parse(text); } catch (_) { return null; }
+  const geom = g && g.type === 'Feature' ? g.geometry : (g && g.type ? g : null);
+  const toLatLng = (c) => (Array.isArray(c) && c.length >= 2
+    ? [Number(c[1]), Number(c[0])]
+    : (Array.isArray(c) && c.length === 2 ? [Number(c[0]), Number(c[1])] : null));
+  let list = null;
+  if (geom) {
+    if (geom.type === 'Point') list = [toLatLng(geom.coordinates)];
+    else if (geom.type === 'LineString' || geom.type === 'MultiPoint') list = (geom.coordinates || []).map(toLatLng);
+    else if (geom.type === 'Polygon' || geom.type === 'MultiLineString') list = (geom.coordinates || []).flat().map(toLatLng);
+  } else if (Array.isArray(g)) {
+    list = g.map((c) => (Array.isArray(c) && c.length >= 2 ? [Number(c[0]), Number(c[1])] : null));
   }
-  return out;
+  if (!list) return null;
+  return list.filter((p) => p && validCoord(p[0], p[1]));
+}
+
+// "lat lng; lat lng", "lat,lng;lat,lng", WKT ("POINT(lng lat)", "LINESTRING(...)",
+// "POLYGON((...))") or a GeoJSON geometry/coordinate array. Plain pairs are
+// auto-detected: when the first value cannot be a latitude but the second can,
+// the pair is flipped so "lng,lat" input still lands correctly.
+function parseCoordPairs(str) {
+  const text = String(str == null ? '' : str).trim();
+  if (!text) return [];
+  if (/^(POINT|LINESTRING|POLYGON|MULTIPOINT|MULTILINESTRING|MULTIPOLYGON|GEOMETRYCOLLECTION)\b/i.test(text)) {
+    return coordsFromWkt(text);
+  }
+  if (text[0] === '{' || text[0] === '[') {
+    const pts = coordsFromJson(text);
+    if (pts && pts.length) return pts;
+  }
+  const raw = [];
+  for (const seg of text.split(/[;\n]+/)) {
+    const m = seg.trim().match(/^(-?\d+(?:\.\d+)?)[\s,]+(-?\d+(?:\.\d+)?)$/);
+    if (m) raw.push([Number(m[1]), Number(m[2])]);
+  }
+  if (!raw.length) return [];
+  const allFirstLat = raw.every(([a]) => Math.abs(a) <= 90);
+  const anySecondOverLat = raw.some(([, b]) => Math.abs(b) > 90);
+  if (allFirstLat && anySecondOverLat) return raw;
+  const anyFirstOverLat = raw.some(([a]) => Math.abs(a) > 90);
+  const allSecondLat = raw.every(([, b]) => Math.abs(b) <= 90);
+  if (anyFirstOverLat && allSecondLat) return raw.map(([a, b]) => [b, a]);
+  return raw;
 }
 
 function validCoord(lat, lng) {

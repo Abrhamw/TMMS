@@ -68,6 +68,7 @@ export default function LineWorkspaceMap({
   tracePoints = EMPTY,
   coveredPaths = EMPTY,
   inspectedIds = null,
+  autoFocusTarget = true,
 }) {
   const elRef = useRef(null);
   const mapRef = useRef(null);
@@ -223,10 +224,12 @@ export default function LineWorkspaceMap({
   }, [route, towers, selectedId, targetTowerId, flashRoute, bulkSelected, routeMode, bulkMode, tracePoints, coveredPaths, inspectedIds, lineInfo]);
 
   // Animate a perfect-fit zoom to the selected or target tower with its line.
+  // Execution views disable this so the whole line route stays in frame while
+  // the target tower is merely highlighted.
   useEffect(() => {
     const map = mapRef.current;
     const activeId = selectedId != null ? selectedId : targetTowerId;
-    if (!map || routeMode) return;
+    if (!map || routeMode || !autoFocusTarget) return;
     if (activeId == null) { flownTarget.current = null; return; }
     if (flownTarget.current === activeId) return;
     const sel = (data.current.towers || []).find((t) => t.id === activeId);
@@ -235,7 +238,7 @@ export default function LineWorkspaceMap({
     flownTarget.current = activeId;
     pendingRef.current = () => flyToPoints(map, [[sel.lat, sel.lng], ...seg], { maxZoom: 16, padding: [60, 60], singleZoom: 16 });
     flushRef.current();
-  }, [selectedId, targetTowerId, routeMode, towers, route]);
+  }, [selectedId, targetTowerId, routeMode, towers, route, autoFocusTarget]);
 
   // Click on the map: append a route waypoint (route mode) or stage a new tower.
   useEffect(() => {

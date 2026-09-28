@@ -75,4 +75,4 @@ function maintenanceCostForRegions(regionIds, { from, to, limit = 25 } = {}) {
   };
 }
 
-module.exports = { maintenanceCostForRegions, currencyCode };
+module.exports = { maintenanceCostForRegions, currencyCode, assetRegion };

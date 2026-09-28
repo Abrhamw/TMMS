@@ -468,6 +468,57 @@ function normalizeLineGroups(groups, ctx) {
   });
 }
 
+// Merge a reviewer's inline edit into a raw substation record before
+// re-normalization. Only fields that can be safely corrected online are applied;
+// region/FK resolution still runs through the normal validator afterwards.
+function applySubstationEdit(rec, edit) {
+  if (!edit || typeof edit !== 'object') return rec;
+  const props = { ...(rec.props || {}) };
+  if (edit.name !== undefined) props.name = edit.name;
+  if (edit.substation_id !== undefined) { props.substation_id = edit.substation_id; props.substation_code = edit.substation_id; }
+  if (edit.region_code !== undefined) props.region_code = edit.region_code;
+  if (edit.voltage_levels !== undefined) {
+    props.voltage_levels = Array.isArray(edit.voltage_levels) ? edit.voltage_levels.join(';') : String(edit.voltage_levels);
+  }
+  if (edit.substation_type !== undefined) props.substation_type = edit.substation_type;
+  if (edit.operational_status !== undefined) props.operational_status = edit.operational_status;
+  if (edit.boundary !== undefined) props.boundary = JSON.stringify(edit.boundary);
+  const lat = edit.latitude !== undefined ? num(edit.latitude) : rec.lat;
+  const lng = edit.longitude !== undefined ? num(edit.longitude) : rec.lng;
+  return { ...rec, props, lat, lng };
+}
+
+// Merge a reviewer's edit into a line group (header + route + tower coordinates)
+// before re-normalization.
+function applyLineEdit(g, edit) {
+  if (!edit || typeof edit !== 'object') return g;
+  const header = { ...(g.header || {}) };
+  if (edit.name !== undefined) header.name = edit.name;
+  if (edit.line_id !== undefined) { header.line_id = edit.line_id; header.line_code = edit.line_id; }
+  if (edit.line_type !== undefined) header.line_type = edit.line_type;
+  if (edit.conductor_type !== undefined) header.conductor_type = edit.conductor_type;
+  if (edit.circuit_count !== undefined) header.circuit_count = edit.circuit_count;
+  if (edit.operational_status !== undefined) header.operational_status = edit.operational_status;
+  if (edit.commissioned_date !== undefined) header.commissioned_date = edit.commissioned_date;
+  if (edit.voltage_kv !== undefined) { header.voltage_kv = edit.voltage_kv; header.voltage = edit.voltage_kv; }
+  if (edit.region_code !== undefined) header.region_code = edit.region_code;
+  let route = Array.isArray(g.route) ? g.route : [];
+  if (Array.isArray(edit.route)) route = edit.route.filter((p) => Array.isArray(p) && validCoord(p[0], p[1]));
+  let towers = Array.isArray(g.towers) ? g.towers : [];
+  if (Array.isArray(edit.towers)) {
+    towers = towers.map((t, i) => {
+      const e = edit.towers[i];
+      if (!e) return t;
+      return {
+        ...t,
+        lat: e.latitude !== undefined ? num(e.latitude) : t.lat,
+        lng: e.longitude !== undefined ? num(e.longitude) : t.lng,
+      };
+    });
+  }
+  return { ...g, header, route, towers };
+}
+
 router.get('/infrastructure/templates/:kind', (req, res) => {
   const kind = req.params.kind === 'line-routes' ? 'lines' : req.params.kind;
   if (!TEMPLATES[kind]) return res.status(404).json({ error: 'Unknown template (use substations or lines)' });
@@ -489,19 +540,28 @@ router.post('/infrastructure/import/substations/preview', (req, res) => {
   if (!records.length) return res.status(400).json({ error: 'No substation records found (each needs a Point or a row with latitude/longitude)' });
   const candidates = normalizeSubstations(records, ctx);
   const token = `imp${importSeq++}-${Date.now()}`;
-  pendingImports.set(token, { at: Date.now(), kind: 'substations', candidates });
+  pendingImports.set(token, { at: Date.now(), kind: 'substations', candidates, records, default_region_id: ctx.defaultRegionId });
   res.json({
     token,
     kind: 'substations',
     count: candidates.length,
     will_create: candidates.filter((c) => !c.will_skip).length,
     will_skip: candidates.filter((c) => c.will_skip).length,
-    candidates: candidates.map((c) => ({
-      substation_id: c.substation_id, name: c.name, region_code: c.region_code,
-      latitude: c.latitude, longitude: c.longitude,
-      voltage_levels: c.data ? JSON.parse(c.data.voltage_levels) : [],
-      will_skip: c.will_skip, reason: c.reason,
-    })),
+    candidates: candidates.map((c, i) => {
+      const props = (records[i] && records[i].props) || {};
+      let boundary = [];
+      try { boundary = parseCoordPairs(pick(props, ['boundary', 'boundary_coords', 'fence', 'polygon'])); } catch (_) { boundary = []; }
+      return {
+        index: i,
+        substation_id: c.substation_id, name: c.name, region_code: c.region_code,
+        latitude: c.latitude, longitude: c.longitude,
+        voltage_levels: c.data ? JSON.parse(c.data.voltage_levels) : normalizeVoltageLevels(pick(props, ['voltage_levels', 'voltage', 'voltages', 'voltage_kv'])),
+        substation_type: c.data ? c.data.substation_type : (pick(props, ['substation_type', 'type']) || null),
+        operational_status: c.data ? c.data.operational_status : (pick(props, ['operational_status', 'status']) || null),
+        boundary: boundary.length >= 3 ? boundary : [],
+        will_skip: c.will_skip, reason: c.reason,
+      };
+    }),
   });
 });
 
@@ -510,12 +570,22 @@ router.post('/infrastructure/import/substations/commit', (req, res) => {
   const pv = pendingImports.get(req.body && req.body.token);
   if (!pv || pv.kind !== 'substations') return res.status(400).json({ error: 'Preview token missing or expired - run the preview again' });
   pendingImports.delete(req.body.token);
+  // Reviewers may correct candidates inline before committing. When edits are
+  // supplied the raw records are patched and re-validated so a fixed coordinate
+  // or region can turn a would-skip row into a created one.
+  const edits = req.body && req.body.edits && typeof req.body.edits === 'object' ? req.body.edits : null;
+  let candidates = pv.candidates;
+  if (edits && Array.isArray(pv.records)) {
+    const ctx = importContext(commandScope(req.user), pv.default_region_id);
+    const records = pv.records.map((rec, i) => applySubstationEdit(rec, edits[i]));
+    candidates = normalizeSubstations(records, ctx);
+  }
   const created = [];
   const skipped = [];
   // One transaction for the whole batch: without it every insert autocommits
   // (one WAL fsync each) and a large substation file crawls.
   withTx(() => {
-    for (const c of pv.candidates) {
+    for (const c of candidates) {
       if (c.will_skip) { skipped.push({ substation_id: c.substation_id, reason: c.reason }); continue; }
       try {
         const id = insertRow('substation', c.data);
@@ -526,7 +596,7 @@ router.post('/infrastructure/import/substations/commit', (req, res) => {
       }
     }
   });
-  audit(req.user, 'IMPORT_SUBSTATIONS', 'substation', null, { attempted: pv.candidates.length, created: created.length, skipped: skipped.length });
+  audit(req.user, 'IMPORT_SUBSTATIONS', 'substation', null, { attempted: candidates.length, created: created.length, skipped: skipped.length });
   res.status(201).json({ created: created.length, skipped, substations: created });
 });
 
@@ -542,18 +612,33 @@ router.post('/infrastructure/import/lines/preview', (req, res) => {
   if (!groups.length) return res.status(400).json({ error: 'No line records found (need rows with line_id or LineString features)' });
   const candidates = normalizeLineGroups(groups, ctx);
   const token = `imp${importSeq++}-${Date.now()}`;
-  pendingImports.set(token, { at: Date.now(), kind: 'lines', candidates });
+  pendingImports.set(token, { at: Date.now(), kind: 'lines', candidates, groups, default_region_id: ctx.defaultRegionId });
   res.json({
     token,
     kind: 'lines',
     count: candidates.length,
     will_create: candidates.filter((c) => !c.will_skip).length,
     will_skip: candidates.filter((c) => c.will_skip).length,
-    candidates: candidates.map((c) => ({
-      line_id: c.line_id, name: c.name, region_code: c.region_code, voltage_kv: c.voltage_kv,
-      from: c.from, to: c.to, tower_count: c.tower_count, route_points: c.route_points,
-      will_skip: c.will_skip, reason: c.reason,
-    })),
+    candidates: candidates.map((c, i) => {
+      const g = groups[i] || { header: {}, route: [], towers: [] };
+      const normalizedTowers = c.data ? c.data.towers : [];
+      return {
+        index: i,
+        line_id: c.line_id, name: c.name, region_code: c.region_code, voltage_kv: c.voltage_kv,
+        from: c.from, to: c.to, tower_count: c.tower_count, route_points: c.route_points,
+        line_type: c.data ? c.data.line_type : null,
+        operational_status: c.data ? c.data.operational_status : null,
+        route: (g.route || []).map((p) => [p[0], p[1]]),
+        towers: (g.towers || []).map((t, ti) => ({
+          index: ti,
+          tower_id: normalizedTowers[ti] ? normalizedTowers[ti].tower_id : (pick(t.props, ['tower_id', 'tower_code']) || ''),
+          tower_number: pick(t.props, ['tower_number', 'tower_seq', 'sequence', 'seq']) || String(ti + 1),
+          latitude: t.lat,
+          longitude: t.lng,
+        })),
+        will_skip: c.will_skip, reason: c.reason,
+      };
+    }),
   });
 });
 
@@ -563,10 +648,19 @@ router.post('/infrastructure/import/lines/commit', (req, res) => {
   const pv = pendingImports.get(req.body && req.body.token);
   if (!pv || pv.kind !== 'lines') return res.status(400).json({ error: 'Preview token missing or expired - run the preview again' });
   pendingImports.delete(req.body.token);
+  // Apply any inline reviewer edits to the raw groups and re-validate before
+  // writing, so corrected geometry or metadata is what actually lands.
+  const edits = req.body && req.body.edits && typeof req.body.edits === 'object' ? req.body.edits : null;
+  let candidates = pv.candidates;
+  if (edits && Array.isArray(pv.groups)) {
+    const ctx = importContext(commandScope(req.user), pv.default_region_id);
+    const groups = pv.groups.map((g, i) => applyLineEdit(g, edits[i]));
+    candidates = normalizeLineGroups(groups, ctx);
+  }
   const created = [];
   const skipped = [];
   let towersCreated = 0;
-  for (const c of pv.candidates) {
+  for (const c of candidates) {
     if (c.will_skip) { skipped.push({ line_id: c.line_id, reason: c.reason }); continue; }
     const d = c.data;
     const route = d.route.map((p) => [p[0], p[1]]);
@@ -628,7 +722,7 @@ router.post('/infrastructure/import/lines/commit', (req, res) => {
       skipped.push({ line_id: c.line_id, reason: e.message });
     }
   }
-  audit(req.user, 'IMPORT_LINES', 'transmission_line', null, { attempted: pv.candidates.length, created: created.length, towers: towersCreated, skipped: skipped.length });
+  audit(req.user, 'IMPORT_LINES', 'transmission_line', null, { attempted: candidates.length, created: created.length, towers: towersCreated, skipped: skipped.length });
   res.status(201).json({ created: created.length, towers_created: towersCreated, skipped, lines: created });
 });
 

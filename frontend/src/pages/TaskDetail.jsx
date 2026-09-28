@@ -420,6 +420,7 @@ export default function TaskDetail() {
             lineInfo={t.line}
             targetTowerId={t.tower_id || null}
             flashRoute={!t.tower_id}
+            autoFocusTarget={false}
             height={260}
           />
           {trace && trace.coverage && (

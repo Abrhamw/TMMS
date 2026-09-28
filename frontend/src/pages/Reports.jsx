@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api, fmtDate, fmtMoney } from '../api';
 import { Page, Pill, Modal, ErrorNote, Loading, PrintButton, MoneyCard, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
@@ -22,6 +23,7 @@ export default function Reports() {
   const [perfErr, setPerfErr] = useState(null);
   const [dossiers, setDossiers] = useState([]);
   const { query, setQuery, results: reportRows } = useSearchFilter(reports);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Click-through drill-down: push an entity dossier onto the stack and fetch
   // its read-only detail (scoped to the caller). Clicking an entity inside a
@@ -55,6 +57,21 @@ export default function Reports() {
     api.get(`/performance?scope=${perfScope}`).then((r) => setPerf(r.rows)).catch((e) => setPerfErr(e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perfScope, canPerf]);
+
+  // Deep link from the mailbox: /reports?report=<id> opens the saved report in
+  // the reader. The query param is cleared afterwards so the URL stays clean.
+  useEffect(() => {
+    const rid = searchParams.get('report');
+    if (!rid) return;
+    let alive = true;
+    setDossiers([]);
+    api.get(`/reports/${encodeURIComponent(rid)}`)
+      .then((res) => { if (alive) setView(res); })
+      .catch((e) => { if (alive) setError(e.message); });
+    setSearchParams({}, { replace: true });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   async function generate() {
     try {
@@ -258,7 +275,10 @@ function ReportView({ data, onOpenEntity }) {
       </table>
     );
   }
-  if (data.buckets) {
+  // OVERDUE_TASK also carries `buckets` (aging buckets) plus `total_overdue`.
+  // Guard so the generic bucket renderer does not swallow the richer overdue
+  // view below (aging buckets, by_status and the overdue task list).
+  if (data.buckets && data.total_overdue === undefined) {
     return (
       <div>
         <table>
@@ -316,6 +336,50 @@ function ReportView({ data, onOpenEntity }) {
                     </tr>
                   );
                 })}
+              </tbody>
+            </table>
+          </>
+        )}
+        {(data.missed_certifications || []).length > 0 && (
+          <>
+            <h3 className="section-title">Missed / expiring certifications ({data.missed_certifications.length})</h3>
+            <table>
+              <thead><tr><th>Person</th><th>Certification</th><th>Expires</th><th>Status</th><th>Days</th></tr></thead>
+              <tbody>
+                {data.missed_certifications.map((c) => (
+                  <tr key={c.id}>
+                    <td>{c.person_name || (c.person_id ? `Person #${c.person_id}` : '—')}</td>
+                    <td>{c.cert_type}{c.issuing_body ? ` · ${c.issuing_body}` : ''}</td>
+                    <td className="nowrap">{fmtDate(c.expires_at)}</td>
+                    <td><Pill value={c.status} /></td>
+                    <td className={c.days < 0 ? 'bad' : undefined}>{c.days < 0 ? `${Math.abs(c.days)} overdue` : `${c.days} left`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+        {(data.missed_equipment || []).length > 0 && (
+          <>
+            <h3 className="section-title">Missed equipment & maintenance ({data.missed_equipment_total ?? data.missed_equipment.length})</h3>
+            {data.missed_equipment_total > data.missed_equipment.length && (
+              <p className="muted" style={{ fontSize: 12 }}>
+                Showing the {data.missed_equipment.length} most overdue of {data.missed_equipment_total}
+                {data.missed_equipment_by_kind ? ` (${data.missed_equipment_by_kind.assets} assets · ${data.missed_equipment_by_kind.schedules} schedules)` : ''}.
+              </p>
+            )}
+            <table>
+              <thead><tr><th>Item</th><th>Kind</th><th>Type</th><th>Due</th><th>Detail</th></tr></thead>
+              <tbody>
+                {data.missed_equipment.map((m, i) => (
+                  <tr key={`${m.kind}-${m.id}-${i}`} {...linkRow(m.kind === 'ASSET' && m.asset_pk != null ? { type: 'ASSET_DETAIL', id: m.asset_pk, label: m.label } : null)}>
+                    <td><b>{m.label}</b></td>
+                    <td>{m.kind === 'ASSET' ? 'Asset' : 'Schedule'}</td>
+                    <td>{m.asset_type || '—'}</td>
+                    <td className="nowrap">{m.due ? fmtDate(m.due) : '—'}</td>
+                    <td>{m.detail}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </>
@@ -501,3 +565,8 @@ function FinancialTables({ f, onOpenEntity }) {
     </div>
   );
 }
+
+// Shared with the mailbox reader so saved reports render identically wherever
+// they are opened (the mailbox report messages use this, keeping a single
+// source of truth for every report_type layout).
+export { ReportView };

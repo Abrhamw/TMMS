@@ -89,7 +89,10 @@ export default function StaticMap({
   circleShapes.forEach((x) => x.ring.forEach((pt) => all.push(pt)));
 
   const focusPts = toList(focus);
-  const boundsPts = focusPts.length >= 2 ? focusPts : all;
+  // `focus` is a framing hint, never a hard clip: every drawn feature stays in
+  // view so a long line route, a substation perimeter or a radius ring can
+  // never be cropped off the edge of a printed report or a phone screen.
+  const boundsPts = focusPts.length >= 2 ? focusPts.concat(all) : all;
   const hasGeometry = all.length > 0;
 
   if (!hasGeometry) return null;
@@ -115,22 +118,38 @@ export default function StaticMap({
   });
 
   let labelCount = 0;
+  // Boxes already occupied by a caption. Overlapping labels are what made dense
+  // tower/substation maps unreadable, so each candidate is tried in a few spots
+  // and dropped rather than drawn on top of an existing caption.
+  const placed = [];
+  const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
   const labelFor = (m, at) => {
     const name = m.label;
     if (!name || labelCount >= maxLabels) return null;
     const primary = m.flash || m.pulse || (num(m.radius) || 0) >= 7;
     if (!primary && !m.alwaysLabel) return null;
-    labelCount += 1;
     const p = project(at);
     const text = String(name);
     const tw = Math.min(W - 8, text.length * 6.2 + 10);
+    const th = 15;
     let bx = p.x + 10;
     if (bx + tw > W - 4) bx = Math.max(4, p.x - 10 - tw);
-    const by = clamp(p.y - 9, 4, H - 18);
+    const candidates = [
+      clamp(p.y - 9, 4, H - 18),      // above, right
+      clamp(p.y + 4, 4, H - 18),      // below
+    ];
+    let chosen = null;
+    for (const by of candidates) {
+      const box = { x: bx, y: by, w: tw, h: th };
+      if (!placed.some((q) => overlaps(box, q))) { chosen = box; break; }
+    }
+    if (!chosen) return null;
+    placed.push(chosen);
+    labelCount += 1;
     return (
       <g key={`lbl-${text}-${labelCount}`}>
-        <rect x={bx} y={by} width={tw} height={15} rx="3.5" fill="#ffffff" stroke="#cbd5e1" strokeWidth="0.7" opacity="0.96" />
-        <text x={bx + 5} y={by + 11} fontSize="10" fontWeight="700" fill="#0f172a">{text}</text>
+        <rect x={chosen.x} y={chosen.y} width={tw} height={th} rx="3.5" fill="#ffffff" stroke="#cbd5e1" strokeWidth="0.7" opacity="0.96" />
+        <text x={chosen.x + 5} y={chosen.y + 11} fontSize="10" fontWeight="700" fill="#0f172a">{text}</text>
       </g>
     );
   };

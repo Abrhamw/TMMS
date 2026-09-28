@@ -13,11 +13,15 @@ function runGeneration() {
     const OPEN = ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION'];
     const schedules = d.prepare('SELECT * FROM maintenance_schedule WHERE is_active = 1').all();
     const now = new Date().toISOString();
+    const nowMs = Date.now();
     let generated = 0;
     let seq = currentTaskSeq();
     for (const s of schedules) {
       try {
-        if (s.next_due_date > now) continue;
+        // Generate within the lead window: `lead_time_days` before the due date.
+        const dueMs = s.next_due_date ? new Date(s.next_due_date).getTime() : NaN;
+        const leadMs = Math.max(0, Number(s.lead_time_days) || 0) * 86400000;
+        if (Number.isNaN(dueMs) || dueMs - leadMs > nowMs) continue;
         const existing = d.prepare(
           `SELECT COUNT(*) c FROM task WHERE schedule_id = ? AND status IN (${OPEN.map(() => '?').join(',')})`
         ).get(s.id, ...OPEN).c;

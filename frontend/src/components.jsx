@@ -53,7 +53,7 @@ export function Modal({ title, onClose, children, footer, wide, printable }) {
   );
 }
 
-export function Page({ title, crumbs, actions, children }) {
+export function Page({ title, crumbs, actions, children, fill }) {
   return (
     <div className="main">
       <div className="topbar">
@@ -63,7 +63,7 @@ export function Page({ title, crumbs, actions, children }) {
         </div>
         {actions && <div className="actions">{actions}</div>}
       </div>
-      <div className="content">{children}</div>
+      <div className={'content' + (fill ? ' content-fill' : '')}>{children}</div>
     </div>
   );
 }

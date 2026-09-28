@@ -25,8 +25,17 @@ import Login from './pages/Login';
 import GlobalSearch from './components/GlobalSearch';
 import { getStoredUser, getStoredToken, logout, can, CREW_ROLES } from './auth';
 import { t, LOCALES, getLang, setLanguage, getLocale } from './i18n';
-import { setApiLocale } from './api';
+import { api, setApiLocale } from './api';
 import './styles.css';
+
+// The signed-in person's job title when present, otherwise their role. Used in
+// the top bar so the header reflects the person, not just the access level.
+function personTitle(user) {
+  if (!user) return '';
+  const title = (user.title || '').trim();
+  if (title && title.toLowerCase() !== String(user.role || '').toLowerCase()) return title;
+  return String(user.role || '').replace(/_/g, ' ');
+}
 
 function useI18n() {
   const [lang, setLangState] = useState(getLang());
@@ -57,11 +66,37 @@ function LanguageSwitcher() {
   );
 }
 
+// A compact inbox chip in the shell top bar: live unread count next to the user
+// account, polling the lightweight mailbox summary so the badge stays current
+// without loading the whole mailbox.
+function InboxChip() {
+  const nav = useNavigate();
+  const [unread, setUnread] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    const load = () => api.get('/mailbox/summary')
+      .then((s) => { if (alive) setUnread(s.unread_count || 0); })
+      .catch(() => {});
+    load();
+    const id = setInterval(load, 30000);
+    const onFocus = () => load();
+    window.addEventListener('focus', onFocus);
+    return () => { alive = false; clearInterval(id); window.removeEventListener('focus', onFocus); };
+  }, []);
+  return (
+    <button type="button" className="inbox-chip" onClick={() => nav('/mailbox')} title={t('mailbox')} aria-label={t('mailbox')}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" />
+      </svg>
+      {unread > 0 && <span className="inbox-chip-badge">{unread > 99 ? '99+' : unread}</span>}
+    </button>
+  );
+}
+
 function UserMenu() {
   const nav = useNavigate();
   const user = getStoredUser();
-  async function signOut() {
-    await logout();
+  async function signOut() {    await logout();
     nav('/login', { replace: true });
     window.location.reload();
   }
@@ -70,7 +105,7 @@ function UserMenu() {
       <span className="avatar">{user?.first_name?.[0] || user?.username?.[0] || '?'}</span>
       <span className="um-name">
         <b>{user?.first_name ? `${user.first_name} ${user.last_name || ''}` : user?.username}</b>
-        <small>{user?.role} · {user?.region_id ? `Region #${user.region_id}` : t('allRegions')}</small>
+        <small>{personTitle(user) || user?.role} · {user?.region_id ? `Region #${user.region_id}` : t('allRegions')}</small>
       </span>
       <button className="btn btn-sm" onClick={signOut}>{t('signOut')}</button>
     </div>
@@ -107,6 +142,7 @@ function Shell() {
         <div className="shell-topbar">
           <GlobalSearch />
           <LanguageSwitcher />
+          <InboxChip />
           <UserMenu />
         </div>
         <ErrorBoundary resetKey={location.pathname}>
