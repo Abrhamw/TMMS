@@ -765,6 +765,7 @@ router.post('/infrastructure/import/lines/commit', (req, res) => {
           };
           if (t.action === 'update' && t.existing_id) {
             updateRow('tower', t.existing_id, towerFields, [], 'revision');
+            syncTowerMirror(t.existing_id);
             changed += 1;
             continue;
           }
