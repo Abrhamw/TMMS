@@ -4,9 +4,9 @@ import { api, fmtDate, fmtMoney } from '../api';
 import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, MoneyCard, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
 import { assetsInScope, linesInRegion } from '../cascade';
-import DossierReport from '../components/DossierReport';
+import DocumentReport from '../components/DocumentReport';
 
-const DOSSIER_TYPES = ['ASSET_DETAIL', 'CREW_DETAIL', 'PERSON_DETAIL', 'TASK_DETAIL', 'LINE_DETAIL'];
+const DOCUMENT_TYPES = ['ASSET_DETAIL', 'CREW_DETAIL', 'PERSON_DETAIL', 'TASK_DETAIL', 'LINE_DETAIL'];
 
 export default function Reports() {
   const canGenerate = can(getStoredUser(), 'report:write');
@@ -22,22 +22,22 @@ export default function Reports() {
   const [perfScope, setPerfScope] = useState('crew');
   const [perf, setPerf] = useState(null);
   const [perfErr, setPerfErr] = useState(null);
-  const [dossiers, setDossiers] = useState([]);
+  const [documents, setDocuments] = useState([]);
   const { query, setQuery, results: reportRows } = useSearchFilter(reports);
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Click-through drill-down: push an entity dossier onto the stack and fetch
+  // Click-through drill-down: push an entity document onto the stack and fetch
   // its read-only detail (scoped to the caller). Clicking an entity inside a
-  // dossier pushes another level so the reader can keep walking the chain.
-  function openDossier(type, id, label) {
+  // document pushes another level so the reader can keep walking the chain.
+  function openDocument(type, id, label) {
     if (!type || id == null) return;
     const key = `${Date.now()}-${Math.random()}`;
-    setDossiers((d) => [...d, { key, type, id, label, loading: true }]);
-    api.get(`/reports/dossier?type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`)
-      .then((res) => setDossiers((d) => d.map((x) => (x.key === key ? { ...x, data: res.data ?? res, loading: false } : x))))
-      .catch((e) => setDossiers((d) => d.map((x) => (x.key === key ? { ...x, error: e.message, loading: false } : x))));
+    setDocuments((d) => [...d, { key, type, id, label, loading: true }]);
+    api.get(`/reports/document?type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`)
+      .then((res) => setDocuments((d) => d.map((x) => (x.key === key ? { ...x, data: res.data ?? res, loading: false } : x))))
+      .catch((e) => setDocuments((d) => d.map((x) => (x.key === key ? { ...x, error: e.message, loading: false } : x))));
   }
-  const popDossier = () => setDossiers((d) => d.slice(0, -1));
+  const popDocument = () => setDocuments((d) => d.slice(0, -1));
 
   const load = () => {
     api.get('/report-templates').then(setTemplates).catch((e) => setError(e.message));
@@ -67,7 +67,7 @@ export default function Reports() {
     const rid = searchParams.get('report');
     if (!rid) return;
     let alive = true;
-    setDossiers([]);
+    setDocuments([]);
     api.get(`/reports/${encodeURIComponent(rid)}`)
       .then((res) => { if (alive) setView(res); })
       .catch((e) => { if (alive) setError(e.message); });
@@ -80,7 +80,7 @@ export default function Reports() {
     try {
       setBusy(true);
       const res = await api.post('/reports/generate', genForm);
-      setDossiers([]);
+      setDocuments([]);
       setView(res);
       load();
       setGenForm(null);
@@ -115,7 +115,7 @@ export default function Reports() {
                       const detailType = perfScope === 'crew' ? 'CREW_DETAIL' : 'PERSON_DETAIL';
                       return (
                         <tr key={r.id} className="row-link"
-                          onClick={() => openDossier(detailType, r.id, r.name)}
+                          onClick={() => openDocument(detailType, r.id, r.name)}
                           title={`Click to view ${perfScope} details`}>
                           <td><b>{r.name}</b></td>
                           <td>{r.tasks}</td>
@@ -167,7 +167,7 @@ export default function Reports() {
                   <td>{r.report_type}</td>
                   <td className="nowrap">{fmtDate(r.period_start)} → {fmtDate(r.period_end)}</td>
                   <td className="nowrap">{fmtDate(r.generated_at)}</td>
-                  <td><button className="btn btn-sm" onClick={() => { setDossiers([]); api.get(`/reports/${r.id}`).then(setView).catch((e) => setError(e.message)); }}>View</button></td>
+                  <td><button className="btn btn-sm" onClick={() => { setDocuments([]); api.get(`/reports/${r.id}`).then(setView).catch((e) => setError(e.message)); }}>View</button></td>
                 </tr>
               ))}
               {reportRows.length === 0 && (
@@ -189,7 +189,7 @@ export default function Reports() {
               <SearchSelect value={genForm.report_type} onChange={(e) => setGenForm({ ...genForm, report_type: e.target.value })}>
                 {templates.map((t) => <option key={t.id} value={t.report_type}>{t.name}</option>)}
               </SearchSelect></div>
-            {DOSSIER_TYPES.includes(genForm.report_type) ? (
+            {DOCUMENT_TYPES.includes(genForm.report_type) ? (
               <EntityPicker type={genForm.report_type} form={genForm} lists={entityLists} setForm={setGenForm} />
             ) : (
               <>
@@ -206,22 +206,22 @@ export default function Reports() {
         </Modal>
       )}
 
-      {(view || dossiers.length > 0) && (() => {
-        const top = dossiers[dossiers.length - 1];
+      {(view || documents.length > 0) && (() => {
+        const top = documents[documents.length - 1];
         return (
-          <Modal title={top ? (top.data?.title || top.label || 'Entity Dossier') : (view?.title || view?.data?.title || 'Report')}
-            onClose={() => (top ? popDossier() : setView(null))} wide printable
+          <Modal title={top ? (top.data?.title || top.label || 'Entity Document') : (view?.title || view?.data?.title || 'Report')}
+            onClose={() => (top ? popDocument() : setView(null))} wide printable
             footer={top ? (
               <>
-                <button className="btn" onClick={popDossier}>{dossiers.length > 1 ? 'Back' : (view ? 'Back to report' : 'Close')}</button>
+                <button className="btn" onClick={popDocument}>{documents.length > 1 ? 'Back' : (view ? 'Back to report' : 'Close')}</button>
                 <PrintButton />
               </>
             ) : (
               <><PrintButton /><button className="btn btn-primary" onClick={() => setView(null)}>Close</button></>
             )}>
             {top
-              ? (top.loading ? <Loading /> : top.error ? <ErrorNote error={top.error} /> : <DossierReport data={top.data} onOpenEntity={openDossier} />)
-              : <ReportView data={view?.data} onOpenEntity={openDossier} />}
+              ? (top.loading ? <Loading /> : top.error ? <ErrorNote error={top.error} /> : <DocumentReport data={top.data} onOpenEntity={openDocument} />)
+              : <ReportView data={view?.data} onOpenEntity={openDocument} />}
           </Modal>
         );
       })()}
@@ -243,7 +243,7 @@ function ReportView({ data, onOpenEntity }) {
     return null;
   };
   if (!data) return <div className="muted">No data</div>;
-  if (data.dossier) return <DossierReport data={data} onOpenEntity={onOpenEntity} />;
+  if (data.document) return <DocumentReport data={data} onOpenEntity={onOpenEntity} />;
   if (data.financial) return <FinancialTables f={data.financial} onOpenEntity={onOpenEntity} />;
   if (data.rows) {
     if (data.rows.length && data.rows[0] && 'label' in data.rows[0]) {

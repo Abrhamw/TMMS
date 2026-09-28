@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, fmtDate } from '../api';
 import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, Progress, ConfirmButton, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
-import Dossier from '../components/Dossier';
+import Document from '../components/Document';
 import ViewMap from '../components/ViewMap';
 
 const CREW_ROLES = ['CREW_LEADER', 'LINEMAN', 'TECHNICIAN', 'SAFETY_OFFICER', 'INSPECTOR', 'APPRENTICE'];
@@ -29,7 +29,7 @@ export default function Crews() {
   const [form, setForm] = useState(null);
   const [detail, setDetail] = useState(null);
   const [certs, setCerts] = useState(null);
-  const [dossier, setDossier] = useState(null);
+  const [document, setDocument] = useState(null);
   const [pick, setPick] = useState('');
   const { query, setQuery, results } = useSearchFilter(rows);
 
@@ -291,7 +291,7 @@ export default function Crews() {
           footer={<>
             <PrintButton />
             <button className="btn" onClick={() => setDetail(null)}>Close</button>
-            {canReport && <button className="btn btn-primary" onClick={() => setDossier({ crew_id: detail.id })}>Generate dossier</button>}
+            {canReport && <button className="btn btn-primary" onClick={() => setDocument({ crew_id: detail.id })}>Generate document</button>}
           </>}>
           {detail.region?.center_lat != null && (
             <ViewMap
@@ -365,7 +365,7 @@ export default function Crews() {
         </Modal>
       )}
 
-      {dossier && <Dossier type="CREW_DETAIL" params={dossier} title="Crew Detail Dossier" onClose={() => setDossier(null)} />}
+      {document && <Document type="CREW_DETAIL" params={document} title="Crew Detail Document" onClose={() => setDocument(null)} />}
 
       {form && (
         <Modal title={form.id ? `Edit — ${form.name}` : 'Add Crew'} onClose={() => setForm(null)} wide

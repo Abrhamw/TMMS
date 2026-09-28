@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { api, fmtDate, fmtDateTime, asArray } from '../api';
 import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, Progress } from '../components';
 import { can, getStoredUser, getStoredToken } from '../auth';
-import DossierReport from '../components/DossierReport';
+import DocumentReport from '../components/DocumentReport';
 import ExecutionDetail from '../components/ExecutionDetail';
 import { t } from '../i18n';
 import { getDevicePosition } from '../components/MapPicker';
@@ -62,7 +62,7 @@ export default function TaskDetail() {
   const [editChecklistIds, setEditChecklistIds] = useState([]);
   const [editBusy, setEditBusy] = useState(false);
   const [viewExec, setViewExec] = useState(null);
-  const [dossierBusy, setDossierBusy] = useState(false);
+  const [documentBusy, setDocumentBusy] = useState(false);
 
   const TERMINAL_STATUSES = ['COMPLETED', 'CANCELLED', 'FAILED'];
 
@@ -221,16 +221,16 @@ export default function TaskDetail() {
     finally { setReportBusy(false); }
   }
 
-  // Read-only dossier: available to anyone who can see the task, regardless of
-  // report:write. This is what the "Task dossier" section links to.
-  async function viewDossier() {
+  // Read-only document: available to anyone who can see the task, regardless of
+  // report:write. This is what the "Task document" section links to.
+  async function viewDocument() {
     try {
-      setDossierBusy(true);
+      setDocumentBusy(true);
       setReportData(null);
-      const res = await api.get(`/reports/dossier?type=TASK_DETAIL&id=${task.id}`);
+      const res = await api.get(`/reports/document?type=TASK_DETAIL&id=${task.id}`);
       setReportData(res.data ?? res);
     } catch (e) { setError(e.message); }
-    finally { setDossierBusy(false); }
+    finally { setDocumentBusy(false); }
   }
 
   async function createFollowUp(key) {
@@ -903,15 +903,15 @@ export default function TaskDetail() {
         </>
       )}
 
-      <h3 className="section-title">Task dossier</h3>
+      <h3 className="section-title">Task document</h3>
       <div className="card card-pad">
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-primary" disabled={dossierBusy} onClick={viewDossier}>
-            {dossierBusy ? 'Loading…' : 'View task dossier'}
+          <button className="btn btn-primary" disabled={documentBusy} onClick={viewDocument}>
+            {documentBusy ? 'Loading…' : 'View task document'}
           </button>
           {canReport && (
             <button className="btn" disabled={reportBusy} onClick={genTaskReport}>
-              {reportBusy ? 'Generating…' : 'Generate & save dossier'}
+              {reportBusy ? 'Generating…' : 'Generate & save document'}
             </button>
           )}
         </div>
@@ -923,8 +923,8 @@ export default function TaskDetail() {
       </div>
       {reportData && (
         <div className="card card-pad mt print-report-scope" style={{ borderTop: '3px solid var(--accent)' }}>
-          <h4 className="section-title">Task Detail Dossier</h4>
-          <DossierReport data={reportData} />
+          <h4 className="section-title">Task Detail Document</h4>
+          <DocumentReport data={reportData} />
         </div>
       )}
 

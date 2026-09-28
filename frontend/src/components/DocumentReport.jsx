@@ -3,20 +3,20 @@ import { fmtDate, fmtDateTime, STATUS_COLORS } from '../api';
 import { Pill, CondPill, Progress } from '../components';
 import { getStoredToken } from '../auth';
 import { formatChecklistResponse, formatChecklistResult } from '../checklistFormat';
-import DossierGeo from './DossierGeo';
+import DocumentGeo from './DocumentGeo';
 import TargetProfile from './TargetProfile';
 
-// Detail-dossier renderer for the entity reports (ASSET / CREW / TASK / LINE).
-// Shows the metric rows produced by the backend plus the structured dossier
+// Detail-document renderer for the entity reports (ASSET / CREW / TASK / LINE).
+// Shows the metric rows produced by the backend plus the structured document
 // sections: executions with the articulated checklist, findings, attachments,
 // GPS validations, past/future related tasks and (for lines) the tower fleet.
 // A task report carries the descriptive target/governance block, with the
 // route map beside the work-location detail, so the location and the dispatch
 // notes are read first.
-export default function DossierReport({ data, onOpenEntity }) {
+export default function DocumentReport({ data, onOpenEntity }) {
   if (!data) return <div className="muted">No data</div>;
   const metricRows = (data.rows || []).filter((r) => r && 'label' in r);
-  const dossier = data.dossier || {};
+  const document = data.document || {};
   return (
     <div>
       {metricRows.length > 0 && (
@@ -25,8 +25,8 @@ export default function DossierReport({ data, onOpenEntity }) {
           <tbody>{metricRows.map((r, i) => <tr key={i}><td>{r.label}</td><td><b>{r.value}</b></td></tr>)}</tbody>
         </table>
       )}
-      {dossier.entity !== 'TASK' && <DossierGeo dossier={dossier} />}
-      <DossierSections dossier={dossier} onOpenEntity={onOpenEntity} />
+      {document.entity !== 'TASK' && <DocumentGeo document={document} />}
+      <DocumentSections document={document} onOpenEntity={onOpenEntity} />
     </div>
   );
 }
@@ -45,15 +45,15 @@ function PillText({ value }) {
   return color ? <span style={{ fontWeight: 700, color }}>{value}</span> : <b>{value}</b>;
 }
 
-function DossierSections({ dossier, onOpenEntity }) {
-  if (!dossier) return <div className="muted">No dossier data</div>;
-  const totals = dossier.totals || {};
-  if (dossier.entity === 'ASSET') {
-    const a = dossier.asset || {};
+function DocumentSections({ document, onOpenEntity }) {
+  if (!document) return <div className="muted">No document data</div>;
+  const totals = document.totals || {};
+  if (document.entity === 'ASSET') {
+    const a = document.asset || {};
     return (
       <div className="grid grid-2">
         <div className="card card-pad">
-          <b>{dossier.entity_name}</b>
+          <b>{document.entity_name}</b>
           <div className="kv mt" style={{ gridTemplateColumns: '130px 1fr', fontSize: 13 }}>
             <span className="k">Asset ID</span><span className="mono">{a.asset_id}</span>
             <span className="k">Condition</span><span><CondPill rating={a.condition_rating} /></span>
@@ -62,36 +62,36 @@ function DossierSections({ dossier, onOpenEntity }) {
             <span className="k">Operational</span><span>{a.operational_status}</span>
             <span className="k">Criticality</span><span>{a.criticality}</span>
           </div>
-          {(dossier.tasks_future || []).length > 0 && (
-            <Section title="Upcoming work" hint={`${(dossier.tasks_future || []).length} task(s)`}>
-              <TaskRows tasks={dossier.tasks_future} onOpenEntity={onOpenEntity} />
+          {(document.tasks_future || []).length > 0 && (
+            <Section title="Upcoming work" hint={`${(document.tasks_future || []).length} task(s)`}>
+              <TaskRows tasks={document.tasks_future} onOpenEntity={onOpenEntity} />
             </Section>
           )}
-          {(dossier.tasks_past || []).length > 0 && (
-            <Section title="Historical tasks" hint={`${(dossier.tasks_past || []).length} task(s)`}>
-              <TaskRows tasks={dossier.tasks_past} onOpenEntity={onOpenEntity} />
+          {(document.tasks_past || []).length > 0 && (
+            <Section title="Historical tasks" hint={`${(document.tasks_past || []).length} task(s)`}>
+              <TaskRows tasks={document.tasks_past} onOpenEntity={onOpenEntity} />
             </Section>
           )}
-          {(dossier.gps_violations || []).length > 0 && (
-            <Section title="GPS violations" hint={`${(dossier.gps_violations || []).length} event(s)`}>
-              <GpsRows rows={dossier.gps_violations} />
+          {(document.gps_violations || []).length > 0 && (
+            <Section title="GPS violations" hint={`${(document.gps_violations || []).length} event(s)`}>
+              <GpsRows rows={document.gps_violations} />
             </Section>
           )}
-          {(dossier.components || []).length > 0 && (
+          {(document.components || []).length > 0 && (
             <Section title="Components / parts">
               <table>
                 <thead><tr><th>Part</th><th>Material</th><th>Qty</th><th>Condition</th></tr></thead>
-                <tbody>{dossier.components.map((c) => (
+                <tbody>{document.components.map((c) => (
                   <tr key={c.id}><td>{c.component_type} · {c.name}</td><td>{c.material || '—'}</td><td>{c.quantity}</td><td><CondPill rating={c.condition_rating ?? c.corrosion_rating} /></td></tr>
                 ))}</tbody>
               </table>
             </Section>
           )}
-          {(dossier.history || []).length > 0 && (
+          {(document.history || []).length > 0 && (
             <Section title="Maintenance history">
               <table>
                 <thead><tr><th>When</th><th>Event</th><th>Crew</th></tr></thead>
-                <tbody>{dossier.history.map((e) => (
+                <tbody>{document.history.map((e) => (
                   <tr key={e.id}><td>{fmtDateTime(e.performed_at)}</td><td>{e.event_type} {e.task_id ? <span className="muted">#{e.task_id}</span> : null}</td><td>{e.crew_id || '—'}</td></tr>
                 ))}</tbody>
               </table>
@@ -99,33 +99,33 @@ function DossierSections({ dossier, onOpenEntity }) {
           )}
         </div>
         <div>
-          <Section title="Checklist executions" hint={`${(dossier.executions || []).length} · ${totals.completed_tasks ?? '—'} completed task(s)`}>
-            <ExecRows rows={dossier.executions} />
+          <Section title="Checklist executions" hint={`${(document.executions || []).length} · ${totals.completed_tasks ?? '—'} completed task(s)`}>
+            <ExecRows rows={document.executions} />
           </Section>
         </div>
       </div>
     );
   }
-  if (dossier.entity === 'CREW') {
-    const c = dossier.crew || {};
+  if (document.entity === 'CREW') {
+    const c = document.crew || {};
     return (
       <div className="grid grid-2">
         <div className="card card-pad">
-          <b>{dossier.entity_name}</b>
+          <b>{document.entity_name}</b>
           <div className="kv mt" style={{ gridTemplateColumns: '130px 1fr', fontSize: 13 }}>
             <span className="k">Code</span><span className="mono">{c.crew_code}</span>
             <span className="k">Type</span><span>{c.crew_type}</span>
-            <span className="k">Leader</span><span>{dossier.members?.find((m) => m.role === 'CREW_LEADER') ? 'member roster below' : '—'}</span>
+            <span className="k">Leader</span><span>{document.members?.find((m) => m.role === 'CREW_LEADER') ? 'member roster below' : '—'}</span>
           </div>
-          <Section title="Members & certifications" hint={`${(dossier.members || []).length} member(s), ${(dossier.certs || []).length} cert(s)`}>            <table>
+          <Section title="Members & certifications" hint={`${(document.members || []).length} member(s), ${(document.certs || []).length} cert(s)`}>            <table>
               <thead><tr><th>Member</th><th>Role</th><th>Cert / expiry</th></tr></thead>
               <tbody>
-                {(dossier.members || []).map((m) => (
+                {(document.members || []).map((m) => (
                   <tr key={m.id}>
                     <td>{[m.first_name, m.last_name].filter(Boolean).join(' ')} <span className="muted">({m.title || '—'})</span></td>
                     <td>{m.role}</td>
                     <td>
-                      {(dossier.certs || []).filter((crt) => crt.person_id === m.person_id).map((crt, i) => (
+                      {(document.certs || []).filter((crt) => crt.person_id === m.person_id).map((crt, i) => (
                         <div key={i}>{crt.cert_type || crt.name} → <PillText value={crt.status} /> <span className="muted">({fmtDate(crt.expires_at)})</span></div>
                       )) || '—'}
                     </td>
@@ -134,34 +134,34 @@ function DossierSections({ dossier, onOpenEntity }) {
               </tbody>
             </table>
           </Section>
-          <Section title="Task history" hint={`${(dossier.tasks || []).length} task(s)`}>
-            <TaskRows tasks={dossier.tasks} onOpenEntity={onOpenEntity} />
+          <Section title="Task history" hint={`${(document.tasks || []).length} task(s)`}>
+            <TaskRows tasks={document.tasks} onOpenEntity={onOpenEntity} />
           </Section>
-          {dossier.readiness && <CrewReadiness readiness={dossier.readiness} onOpenEntity={onOpenEntity} />}
+          {document.readiness && <CrewReadiness readiness={document.readiness} onOpenEntity={onOpenEntity} />}
         </div>
         <div>
-          <Section title="Checklist executions" hint={`${(dossier.executions || []).length}`}>
-            <ExecRows rows={dossier.executions} />
+          <Section title="Checklist executions" hint={`${(document.executions || []).length}`}>
+            <ExecRows rows={document.executions} />
           </Section>
         </div>
       </div>
     );
   }
-  if (dossier.entity === 'TASK') {
-    const t = dossier.task || {};
-    const target = dossier.target || {};
-    const crew = dossier.crew;
+  if (document.entity === 'TASK') {
+    const t = document.task || {};
+    const target = document.target || {};
+    const crew = document.crew;
     return (
       <div className="grid grid-2">
         <div className="card card-pad">
-          <b>{dossier.entity_name}</b>
+          <b>{document.entity_name}</b>
           <div className="kv mt" style={{ gridTemplateColumns: '130px 1fr', fontSize: 13 }}>
             <span className="k">Type</span><span>{t.task_type}</span>
             <span className="k">Priority</span><span style={{ fontWeight: 700 }}>{t.priority}</span>
             <span className="k">Status</span><span><Pill value={t.status} /></span>
             <span className="k">Result</span><span>{t.result || '—'}</span>
             <span className="k">Crew</span><span>{crew ? `${crew.name} (${crew.crew_code})` : '—'}</span>
-            <span className="k">Checklist</span><span>{dossier.template?.name || '—'}</span>
+            <span className="k">Checklist</span><span>{document.template?.name || '—'}</span>
             <span className="k">Due</span><span>{fmtDateTime(t.due_date)}</span>
             <span className="k">Target</span><span>{target.substation?.name || (target.tower ? `${target.line?.name} · ${target.tower.tower_id}` : target.line?.name) || target.asset?.name || '—'}</span>
             <span className="k">Created</span><span>{fmtDateTime(t.created_at)}</span>
@@ -170,45 +170,45 @@ function DossierSections({ dossier, onOpenEntity }) {
               <span>{t.cancel_reason} · {t.cancelled_by_name || 'Unknown user'} · {fmtDateTime(t.cancelled_at)}</span>
             </>}
           </div>
-          <TargetProfile target={target} readiness={dossier.dispatch_audit} workflow={dossier.workflow} />
+          <TargetProfile target={target} readiness={document.dispatch_audit} workflow={document.workflow} />
           <p className="muted mt" style={{ fontSize: 13 }}>{t.description || 'No description.'}</p>
-          {dossier.summary && (
+          {document.summary && (
             <div className="grid grid-4 mt" style={{ gap: 8 }}>
-              <Mini label="Executions" v={dossier.summary.executions} />
-              <Mini label="Failures" v={dossier.summary.fail} warn={dossier.summary.fail > 0} />
-              <Mini label="Findings" v={dossier.summary.findings} />
-              <Mini label="Photos" v={dossier.summary.attachments} />
+              <Mini label="Executions" v={document.summary.executions} />
+              <Mini label="Failures" v={document.summary.fail} warn={document.summary.fail > 0} />
+              <Mini label="Findings" v={document.summary.findings} />
+              <Mini label="Photos" v={document.summary.attachments} />
             </div>
           )}
-          {dossier.dispatch_audit && <DispatchAudit audit={dossier.dispatch_audit} />}
-          <Section title="Findings" hint={`${(dossier.findings || []).length}`}>
-            <FindingsRows findings={dossier.findings} />
+          {document.dispatch_audit && <DispatchAudit audit={document.dispatch_audit} />}
+          <Section title="Findings" hint={`${(document.findings || []).length}`}>
+            <FindingsRows findings={document.findings} />
           </Section>
-          <Section title="Attachments / photos" hint={`${(dossier.attachments || []).length}`}>
-            <AttachmentsGrid attachments={dossier.attachments} taskId={t.id} />
+          <Section title="Attachments / photos" hint={`${(document.attachments || []).length}`}>
+            <AttachmentsGrid attachments={document.attachments} taskId={t.id} />
           </Section>
-          {(dossier.gps_validations || []).length > 0 && (
+          {(document.gps_validations || []).length > 0 && (
             <Section title="GPS validations">
-              <GpsRows rows={dossier.gps_validations} />
+              <GpsRows rows={document.gps_validations} />
             </Section>
           )}
         </div>
         <div>
-          <Section title="Checklist executions" hint={`${(dossier.executions || []).length}`}>
-            <ExecRows rows={dossier.executions} />
+          <Section title="Checklist executions" hint={`${(document.executions || []).length}`}>
+            <ExecRows rows={document.executions} />
           </Section>
         </div>
       </div>
     );
   }
-  if (dossier.entity === 'LINE') {
-    const l = dossier.line || {};
+  if (document.entity === 'LINE') {
+    const l = document.line || {};
     return (
       <div className="grid grid-2">
         <div className="card card-pad">
-          <b>{dossier.entity_name}</b>
+          <b>{document.entity_name}</b>
           <div className="kv mt" style={{ gridTemplateColumns: '130px 1fr', fontSize: 13 }}>
-            <span className="k">Route</span><span>{dossier.from_substation?.name} → {dossier.to_substation?.name}</span>
+            <span className="k">Route</span><span>{document.from_substation?.name} → {document.to_substation?.name}</span>
             <span className="k">Voltage</span><span>{l.voltage_kv} kV</span>
             <span className="k">Length</span><span>{l.length_km} km</span>
             <span className="k">Status</span><span><Pill value={l.operational_status} /></span>
@@ -221,55 +221,55 @@ function DossierSections({ dossier, onOpenEntity }) {
               <Mini label="Overdue" v={totals.overdue_tasks} warn={totals.overdue_tasks > 0} />
             </div>
           )}
-          <Section title="Related maintenance tasks" hint={`${totals.tasks ?? (dossier.tasks || []).length} · ${(dossier.tasks_past || []).length} past / ${(dossier.tasks_future || []).length} upcoming`}>
-            <TaskRows tasks={dossier.tasks} onOpenEntity={onOpenEntity} />
+          <Section title="Related maintenance tasks" hint={`${totals.tasks ?? (document.tasks || []).length} · ${(document.tasks_past || []).length} past / ${(document.tasks_future || []).length} upcoming`}>
+            <TaskRows tasks={document.tasks} onOpenEntity={onOpenEntity} />
           </Section>
-          {(dossier.gps_violations || []).length > 0 && (
+          {(document.gps_violations || []).length > 0 && (
             <Section title="GPS violations">
-              <GpsRows rows={dossier.gps_violations} />
+              <GpsRows rows={document.gps_violations} />
             </Section>
           )}
         </div>
         <div>
-          <Section title={`Tower fleet (${(dossier.towers || []).length})`}>
+          <Section title={`Tower fleet (${(document.towers || []).length})`}>
             <table>
               <thead><tr><th>Tower</th><th>Type</th><th>km</th><th>Corrosion</th><th>Parts</th></tr></thead>
-              <tbody>{(dossier.towers || []).map((tw) => (
+              <tbody>{(document.towers || []).map((tw) => (
                 <tr key={tw.id}><td className="mono">{tw.tower_id}</td><td>{tw.tower_type}</td><td>{tw.km_marker}</td><td><CondPill rating={tw.corrosion_rating} /></td><td>{tw.component_count ?? 0}</td></tr>
               ))}</tbody>
             </table>
           </Section>
-          <Section title="Line assets" hint={`${(dossier.assets || []).length}`}>
+          <Section title="Line assets" hint={`${(document.assets || []).length}`}>
             <table>
               <thead><tr><th>Asset</th><th>Type</th><th>Condition</th></tr></thead>
-              <tbody>{(dossier.assets || []).map((a) => (
+              <tbody>{(document.assets || []).map((a) => (
                 <tr key={a.id} {...(typeof onOpenEntity === 'function' ? { className: 'row-link', title: 'Click to view asset details', onClick: () => onOpenEntity('ASSET_DETAIL', a.id, a.asset_id) } : {})}>
                   <td className="mono">{a.asset_id}</td><td>{a.asset_type}{a.sub_type ? ` (${a.sub_type})` : ''}</td><td><CondPill rating={a.condition_rating} /></td>
                 </tr>
               ))}</tbody>
             </table>
           </Section>
-          {(dossier.executions || []).length > 0 && (
+          {(document.executions || []).length > 0 && (
             <Section title="Completed maintenance executions">
-              <ExecRows rows={dossier.executions} />
+              <ExecRows rows={document.executions} />
             </Section>
           )}
         </div>
       </div>
     );
   }
-  if (dossier.entity === 'PERSON') {
-    const p = dossier.person || {};
-    const perf = dossier.performance;
+  if (document.entity === 'PERSON') {
+    const p = document.person || {};
+    const perf = document.performance;
     return (
       <div className="grid grid-2">
         <div className="card card-pad">
-          <b>{dossier.entity_name}</b>
+          <b>{document.entity_name}</b>
           <div className="kv mt" style={{ gridTemplateColumns: '130px 1fr', fontSize: 13 }}>
             <span className="k">Role</span><span>{p.role || '—'}</span>
             <span className="k">Title</span><span>{p.title || '—'}</span>
-            <span className="k">Crews</span><span>{(dossier.crews || []).map((c) => `${c.name} (${c.crew_code})`).join(', ') || '—'}</span>
-            <span className="k">Leads</span><span>{(dossier.led_crews || []).map((c) => c.name).join(', ') || '—'}</span>
+            <span className="k">Crews</span><span>{(document.crews || []).map((c) => `${c.name} (${c.crew_code})`).join(', ') || '—'}</span>
+            <span className="k">Leads</span><span>{(document.led_crews || []).map((c) => c.name).join(', ') || '—'}</span>
           </div>
           {perf && (
             <div className="grid grid-4 mt" style={{ gap: 8 }}>
@@ -279,35 +279,35 @@ function DossierSections({ dossier, onOpenEntity }) {
               <Mini label="Overdue" v={perf.overdue} warn={perf.overdue > 0} />
             </div>
           )}
-          <Section title="Certifications" hint={`${(dossier.certs || []).length}`}>
+          <Section title="Certifications" hint={`${(document.certs || []).length}`}>
             <table>
               <thead><tr><th>Cert</th><th>Status</th><th>Expires</th></tr></thead>
               <tbody>
-                {(dossier.certs || []).map((c) => (
+                {(document.certs || []).map((c) => (
                   <tr key={c.id}><td>{c.cert_type}</td><td><Pill value={c.status} /></td><td>{fmtDate(c.expires_at)}</td></tr>
                 ))}
-                {(dossier.certs || []).length === 0 && <tr><td colSpan={3} className="muted">No certifications.</td></tr>}
+                {(document.certs || []).length === 0 && <tr><td colSpan={3} className="muted">No certifications.</td></tr>}
               </tbody>
             </table>
           </Section>
-          <Section title="Findings raised" hint={`${(dossier.findings || []).length}`}>
-            <FindingsRows findings={dossier.findings} />
+          <Section title="Findings raised" hint={`${(document.findings || []).length}`}>
+            <FindingsRows findings={document.findings} />
           </Section>
-          {(dossier.gps_validations || []).length > 0 && (
+          {(document.gps_validations || []).length > 0 && (
             <Section title="GPS validations">
-              <GpsRows rows={dossier.gps_validations} />
+              <GpsRows rows={document.gps_validations} />
             </Section>
           )}
         </div>
         <div>
-          <Section title="Checklist executions" hint={`${(dossier.executions || []).length}`}>
-            <ExecRows rows={dossier.executions} />
+          <Section title="Checklist executions" hint={`${(document.executions || []).length}`}>
+            <ExecRows rows={document.executions} />
           </Section>
         </div>
       </div>
     );
   }
-  return <pre className="muted" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(dossier, null, 2)}</pre>;
+  return <pre className="muted" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(document, null, 2)}</pre>;
 }
 
 function Warnings({ items }) {

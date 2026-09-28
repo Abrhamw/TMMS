@@ -4,7 +4,7 @@
 
 **Goal:** Re-align the TMMS permission model to utility best practice (admin-only master data, director/manager operational workflow incl. scheduling & generation, crew-lead vs crew-member field duties), add ad-hoc checklist findings + field picture upload/gallery, produce detailed task/line/asset reports that capture exactly who did what with violations, and enrich asset registration with an evaluation section and category counts.
 
-**Architecture:** Single Express + React app. RBAC lives in one matrix mirrored in `backend/auth.js` and `frontend/src/auth.js`. Role assignment is derived from `crew_member` membership (leader vs member). Findings/photos are append-only rows linked to a task/execution. Reports are computed server-side and rendered by a per-entity dossier viewer. All master-data writes stay ADMIN-only; every mutating action keeps `audit()`.
+**Architecture:** Single Express + React app. RBAC lives in one matrix mirrored in `backend/auth.js` and `frontend/src/auth.js`. Role assignment is derived from `crew_member` membership (leader vs member). Findings/photos are append-only rows linked to a task/execution. Reports are computed server-side and rendered by a per-entity document viewer. All master-data writes stay ADMIN-only; every mutating action keeps `audit()`.
 
 **Tech Stack:** Node >=22 (node:sqlite), Express 5, React (Vite) SPA, Leaflet. No ORM; no test framework (verify via API scripts in this repo).
 
@@ -43,14 +43,14 @@
 - `backend/seed_eep.js` or new `backend/rolesMigrate.js` invoked from `server.js` — idempotent role re-derivation + crew user provisioning.
 - `backend/routes/tasks.js` — per-role gates; record author (`executed_by` person, crew) on checklist submit; `POST /tasks/:id/findings` (lead).
 - `backend/routes/attachments.js` (new) + `server.js` static `/uploads` — photo upload/gallery.
-- `backend/routes/reports.js` + `backend/seed.js` (`ensureReportTemplates`) — TASK_DETAIL, LINE_DETAIL cases; extend ASSET_DETAIL dossier.
+- `backend/routes/reports.js` + `backend/seed.js` (`ensureReportTemplates`) — TASK_DETAIL, LINE_DETAIL cases; extend ASSET_DETAIL document.
 - `backend/routes/assets.js` — evaluation PATCH endpoint + register summary counts.
 - `backend/routes/schedules.js` — unchanged logic; permission comes from matrix.
 - `frontend/src/pages/TaskDetail.jsx` — role-aware workflow, findings composer (lead), photo upload (member/lead), per-execution gallery, "Generate task report".
 - `frontend/src/pages/Lines.jsx` — related-tasks section + "Generate line report".
 - `frontend/src/pages/Tasks.jsx` — target filters (line/tower/asset/substation) and crew filter.
-- `frontend/src/pages/Assets.jsx` — evaluation panel + per-category counts summary + dossier.
-- `frontend/src/pages/Reports.jsx` — render `data.dossier` for TASK/LINE (and reuse for ASSET/CREW) so reports are viewable from Reports page.
+- `frontend/src/pages/Assets.jsx` — evaluation panel + per-category counts summary + document.
+- `frontend/src/pages/Reports.jsx` — render `data.document` for TASK/LINE (and reuse for ASSET/CREW) so reports are viewable from Reports page.
 
 ## Task 1: Backend permission matrix + crew-user helpers
 
@@ -116,18 +116,18 @@ Rules (idempotent, applied on every boot):
 - Modify: `backend/routes/reports.js`, `backend/seed.js` `ensureReportTemplates`, `backend/db.js` seed list guard.
 
 - [x] Step 1: `compute()` cases:
-  - `TASK_DETAIL`: params `task_id`. Title `Task Dossier — <task_number>`. rows: task number/title/type/priority/status/source/created/scheduled dates/due/target (substation|line|tower|asset|none with name), region, crew (name + members), checklist template + requires_gps, assigned_by/verified_by person names, result, completion summary. dossier: `{entity:'TASK', task:taskDetailWithRels, executions:[checklistsWithItems with executed_by person + crew name], findings:[...], attachments:[...], gps:[...], violations:[fail/geofence rows], comments:[...]}`.
-  - `LINE_DETAIL`: params `line_id`. Line identity + route summary + towers + assets + related tasks (line, its towers, its assets) + their executions + GPS validations. dossier entity 'LINE'.
+  - `TASK_DETAIL`: params `task_id`. Title `Task Document — <task_number>`. rows: task number/title/type/priority/status/source/created/scheduled dates/due/target (substation|line|tower|asset|none with name), region, crew (name + members), checklist template + requires_gps, assigned_by/verified_by person names, result, completion summary. document: `{entity:'TASK', task:taskDetailWithRels, executions:[checklistsWithItems with executed_by person + crew name], findings:[...], attachments:[...], gps:[...], violations:[fail/geofence rows], comments:[...]}`.
+  - `LINE_DETAIL`: params `line_id`. Line identity + route summary + towers + assets + related tasks (line, its towers, its assets) + their executions + GPS validations. document entity 'LINE'.
   - `ASSET_DETAIL` extend: include `upcoming_tasks` (open tasks) separately from historical; add `evaluation` block (condition_rating, health_index, RUL, criticality, next_maintenance_at, evaluation_notes); include `violations` (GPS fail/geofence rows for the asset).
 - [x] Step 2: `ensureReportTemplates()` idempotently seeds TASK_DETAIL/LINE_DETAIL templates if missing.
-- [x] Step 3: API test generate TASK_DETAIL for existing task, LINE_DETAIL for line 1, ASSET_DETAIL for a tower asset → 201 and dossier payload present; cleanup generated report rows (exact ids).
+- [x] Step 3: API test generate TASK_DETAIL for existing task, LINE_DETAIL for line 1, ASSET_DETAIL for a tower asset → 201 and document payload present; cleanup generated report rows (exact ids).
 
 ## Task 8: Asset register — evaluation + counts
 
 - Modify: `backend/routes/assets.js` (POST/PUT keep ADMIN-only via `asset:write`; add `PATCH /assets/:id/evaluate` ADMIN too, recompute health_index & RUL from condition_rating + criticality + last_maintenance), Assets page.
 
 - [x] Step 1: Backend PATCH evaluate recompute: health_index = round(condition_rating/10*100); RUL = clamp heuristic (condition_rating 10→20y …1→1y); store evaluation_notes, condition_assessed_at=now, last/next maintenance untouched. Return asset.
-- [x] Step 2: Frontend Assets page: header summary cards = total assets, per asset_type counts, per lifecycle_status, per operational_status; the add/edit modal gains an "Evaluation" section (condition_rating slider/number, criticality, health/RUL readonly after evaluate, evaluation_notes); detail modal gains Evaluation panel + Evaluate button; dossier uses existing Dossier (ASSET_DETAIL) refreshed with Task 7 fields.
+- [x] Step 2: Frontend Assets page: header summary cards = total assets, per asset_type counts, per lifecycle_status, per operational_status; the add/edit modal gains an "Evaluation" section (condition_rating slider/number, criticality, health/RUL readonly after evaluate, evaluation_notes); detail modal gains Evaluation panel + Evaluate button; document uses existing Document (ASSET_DETAIL) refreshed with Task 7 fields.
 - [x] Step 3: Manual UI + API verify (asset:write admin only; manager gets 403).
 
 ## Task 9: Line & tower task surfacing + Tasks filters + frontend role gating
@@ -139,11 +139,11 @@ Rules (idempotent, applied on every boot):
 - [x] Step 2: Frontend wiring + filters. Build passes.
 - [x] Step 3: Verify each role sees correct buttons by logins list from Task 4.
 
-## Task 10: ReportView dossier rendering + Reports page linkage
+## Task 10: ReportView document rendering + Reports page linkage
 
-- Modify: `frontend/src/pages/Reports.jsx` (`ReportView` handles `data.dossier` by entity TASK/LINE/ASSET/CREW via a shared renderer) and optionally refactor `components/Dossier.jsx` to reuse.
+- Modify: `frontend/src/pages/Reports.jsx` (`ReportView` handles `data.document` by entity TASK/LINE/ASSET/CREW via a shared renderer) and optionally refactor `components/Document.jsx` to reuse.
 
-- [x] Step 1: Extract `DossierBody` from Dossier.jsx to exported renderer OR inline equivalent tables into ReportView for TASK/LINE; ensure printable.
+- [x] Step 1: Extract `DocumentBody` from Document.jsx to exported renderer OR inline equivalent tables into ReportView for TASK/LINE; ensure printable.
 - [x] Step 2: Verify by generating TASK_DETAIL/LINE_DETAIL and viewing from Reports page and from Task/Lines pages.
 
 ## Self-Review Notes

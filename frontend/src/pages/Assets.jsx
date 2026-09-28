@@ -6,7 +6,7 @@ import { linesForSubstation, linesInRegion, subsInRegion } from '../cascade';
 import MapPicker from '../components/MapPicker';
 import Comments from '../components/Comments';
 import ImportDialog from '../components/ImportDialog';
-import Dossier from '../components/Dossier';
+import Document from '../components/Document';
 import RegisterTree from '../components/RegisterTree';
 import ViewMap from '../components/ViewMap';
 import { entityColor, maxVoltageKv, isEnergized, parseVoltageLevels, voltageChip, popupRows, esc } from '../mapFocus';
@@ -198,7 +198,7 @@ export default function Assets() {
   const [error, setError] = useState(null);
   const [form, setForm] = useState(null);
   const [detail, setDetail] = useState(null);
-  const [dossier, setDossier] = useState(null);
+  const [document, setDocument] = useState(null);
   const [currency, setCurrency] = useState('USD');
   const [addEv, setAddEv] = useState(null);
   const [evalState, setEvalState] = useState(null);
@@ -448,7 +448,7 @@ export default function Assets() {
           footer={<>
             <PrintButton />
             <button className="btn" onClick={() => setDetail(null)}>Close</button>
-            <button className="btn btn-primary" onClick={() => setDossier({ asset_id: detail.id })}>Generate dossier</button>
+            <button className="btn btn-primary" onClick={() => setDocument({ asset_id: detail.id })}>Generate document</button>
           </>}>
           {(() => {
             const m = buildAssetMap(detail);
@@ -583,7 +583,7 @@ export default function Assets() {
         </Modal>
       )}
 
-      {dossier && <Dossier type="ASSET_DETAIL" params={dossier} title="Asset Detail Dossier" onClose={() => setDossier(null)} />}
+      {document && <Document type="ASSET_DETAIL" params={document} title="Asset Detail Document" onClose={() => setDocument(null)} />}
 
       {form && (() => {
         const sub = subs.find((s) => s.id === form.substation_id);

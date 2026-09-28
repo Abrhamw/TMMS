@@ -1,10 +1,10 @@
 import StaticMap from './StaticMap';
 import { entityColor, maxVoltageKv, boundaryRing } from '../mapFocus';
 
-// Renders the geographic footprint of a dossier entity: the parent line route,
+// Renders the geographic footprint of a document entity: the parent line route,
 // the substation yard/fence, tower positions and the entity point itself. Used
-// by both dossier renderers (Dossier.jsx and DossierReport.jsx) so a generated
-// dossier always carries a map when the entity has coordinates.
+// by both document renderers (Document.jsx and DocumentReport.jsx) so a generated
+// document always carries a map when the entity has coordinates.
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const pt = (lat, lng) => {
@@ -121,24 +121,24 @@ function buildTask(d) {
   return out;
 }
 
-function build(dossier) {
-  if (!dossier) return null;
-  if (dossier.entity === 'ASSET') return buildAsset(dossier);
-  if (dossier.entity === 'LINE') return buildLine(dossier);
-  if (dossier.entity === 'TASK') return buildTask(dossier);
+function build(document) {
+  if (!document) return null;
+  if (document.entity === 'ASSET') return buildAsset(document);
+  if (document.entity === 'LINE') return buildLine(document);
+  if (document.entity === 'TASK') return buildTask(document);
   return null;
 }
 
-export default function DossierGeo({ dossier, title = 'Location map' }) {
-  const geo = build(dossier);
+export default function DocumentGeo({ document, title = 'Location map' }) {
+  const geo = build(document);
   if (!geo) return null;
   const hasGeometry = geo.markers.length > 0 || geo.polylines.length > 0 || geo.circles.length > 0 || geo.polygons.length > 0;
   if (!hasGeometry) return null;
   // A short, human description of what is drawn. This is what makes the printed
   // map self-explanatory: the reader knows the whole route is shown end to end
   // rather than a cropped zoom.
-  const kind = { ASSET: 'Asset', LINE: 'Transmission line', TASK: 'Work target' }[dossier.entity] || 'Location';
-  const name = dossier.entity_name || dossier.asset?.name || dossier.line?.name || dossier.target?.name;
+  const kind = { ASSET: 'Asset', LINE: 'Transmission line', TASK: 'Work target' }[document.entity] || 'Location';
+  const name = document.entity_name || document.asset?.name || document.line?.name || document.target?.name;
   const towers = geo.markers.filter((m) => m.legendLabel === 'Tower').length;
   const subs = geo.markers.filter((m) => m.legendLabel && m.legendLabel.startsWith('Substation')).length;
   const routePts = geo.polylines.reduce((n, l) => n + l.points.length, 0);
@@ -159,10 +159,10 @@ export default function DossierGeo({ dossier, title = 'Location map' }) {
         polygons={geo.polygons}
         circles={geo.circles}
         focus={geo.focus && geo.focus.length ? geo.focus : null}
-        ariaLabel={`Location map for ${dossier.entity_name || dossier.entity}`}
+        ariaLabel={`Location map for ${document.entity_name || document.entity}`}
       />
       <div className="target-map-caption">
-        <div><b>{kind}{name ? `: ${name}` : ''}</b>{dossier.entity_number ? ` (${dossier.entity_number})` : ''}</div>
+        <div><b>{kind}{name ? `: ${name}` : ''}</b>{document.entity_number ? ` (${document.entity_number})` : ''}</div>
         <div className="muted">{bits.join(' · ') || 'Location recorded'}</div>
       </div>
     </div>

@@ -408,7 +408,7 @@ git commit -m "style(ui): redesign CRUD infrastructure screens onto hub look"
 - Work-item/finding/severity/kind chips → canonical `.kind-chip` classes where they are the four Phase A kinds (checklist/finding/gps/remediate); other severity text chips (findings severity at `:273,297`) map CRITICAL/HIGH/MEDIUM/LOW to `.bad/.warn/.ok`-text classes or keep distinct `.kind-chip`-style hues ONLY if you define them in `styles.css` under `.severity-chip` in this task — prefer reusing `.ok/.bad/.warn` text coloring on the label. Keep the exact severity words unchanged.
 - Repeating row boxes `style={{border:'1px solid var(--border)',borderRadius:8,padding:'8px 10px'}}` (`:233,294,375,455`) → `className="box"`.
 - Panel headers `.spread > <b>` (`:287,306,425,453`) → `.card-head` + `.card-title` (spec 2.2.4).
-- Non-geo `borderTop: '3px solid #2563eb'` dossier card (`:414`) → `borderTop: '3px solid var(--accent)'`.
+- Non-geo `borderTop: '3px solid #2563eb'` document card (`:414`) → `borderTop: '3px solid var(--accent)'`.
 - GPS verdict texts `:237` with `#166534/#991b1b/#92400e` → `.ok`/`.bad`/`.warn` classes on the values.
 - Inline `#dc2626` error reds → `.bad` text.
 - Do NOT change Phase A carry-over preview card, template picker, or Work items block structure/classes beyond replacing the specific inline hexes listed.

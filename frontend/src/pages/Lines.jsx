@@ -4,7 +4,7 @@ import { api, fmtDate, asArray } from '../api';
 import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, ConfirmButton, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
 import { subsInRegion } from '../cascade';
-import DossierReport from '../components/DossierReport';
+import DocumentReport from '../components/DocumentReport';
 import ImportDialog from '../components/ImportDialog';
 import ViewMap from '../components/ViewMap';
 import { KpiTile } from '../components/InfraVisuals';
@@ -384,14 +384,14 @@ export default function Lines({ embedded }) {
           {canReport && (
             <div className="mt">
               <button className="btn btn-primary" disabled={reportBusy} onClick={genLineReport}>
-                {reportBusy ? 'Generating…' : 'Generate line detail dossier'}
+                {reportBusy ? 'Generating…' : 'Generate line detail document'}
               </button>
             </div>
           )}
           {reportData && (
             <div className="card card-pad mt" style={{ borderTop: '3px solid var(--accent)' }}>
-              <div className="card-head"><h3 className="card-title">Line Detail Dossier</h3></div>
-              <DossierReport data={reportData} />
+              <div className="card-head"><h3 className="card-title">Line Detail Document</h3></div>
+              <DocumentReport data={reportData} />
             </div>
           )}
         </Modal>

@@ -1370,7 +1370,7 @@ In `frontend/src/components/RegisterTree.jsx`:
 
 In `frontend/src/pages/Assets.jsx`:
 1. Change line 2 import to `import { api, fmtDate, fmtMoney } from '../api';`.
-2. Add state next to `const [dossier, setDossier] = useState(null);`:
+2. Add state next to `const [document, setDocument] = useState(null);`:
 ```jsx
   const [currency, setCurrency] = useState('USD');
   const [addEv, setAddEv] = useState(null);
@@ -1554,7 +1554,7 @@ function FinancialTables({ f }) {
   );
 }
 ```
-3. In `ReportView` (line 167), right after the dossier branch, add:
+3. In `ReportView` (line 167), right after the document branch, add:
 ```jsx
   if (data.financial) return <FinancialTables f={data.financial} />;
 ```

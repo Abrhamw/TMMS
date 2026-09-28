@@ -140,7 +140,7 @@ export function circleCorners(lat, lng, radiusM) {
 // Normalizes a stored substation boundary into a [lat, lng][] ring, or null
 // when it is not a usable polygon. Accepts the JSON-array string the API
 // returns on nested references, a real array, or a [{lat,lng}] list. This is
-// the single source of truth so every map (dossier, site plan, line workspace,
+// the single source of truth so every map (document, site plan, line workspace,
 // interactive map) draws the same substation yard shape from its recorded
 // geometry rather than a synthetic radius circle.
 export function boundaryRing(v) {

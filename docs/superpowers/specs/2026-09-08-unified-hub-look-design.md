@@ -286,7 +286,7 @@ per 2.5 (or `Pill` if a priority pill is clearer); overdue `.overdue`; "Add Task
 .warn`/`.link` per 2.5 (kind chip colors may stay distinct hues — convert to CSS classes like
 `.kind-chip.kind-checklist` etc. defined once in styles.css). Repeating row boxes
 `{border:1px solid var(--border);…}` to a `.box` helper class. Card panel headers to
-`.card-head`. The non-geo `borderTop 3px solid #2563eb` dossier accent → `--accent`. Inline
+`.card-head`. The non-geo `borderTop 3px solid #2563eb` document accent → `--accent`. Inline
 error reds to `.bad`. Keep Phase A work-items UI intact.
 
 ### 3.5 Compliance & asset families

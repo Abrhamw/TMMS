@@ -28,10 +28,10 @@ function personLabel(id) {
 
 const OPEN_STATES = ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION'];
 
-// Drill-down dossiers: each maps to the compute() parameter that selects the
-// entity. Used by the read-only /reports/dossier endpoint so a report reader
+// Drill-down documents: each maps to the compute() parameter that selects the
+// entity. Used by the read-only /reports/document endpoint so a report reader
 // can click a row to inspect the underlying asset/task/crew/line.
-const DOSSIER_ID_FIELDS = {
+const DOCUMENT_ID_FIELDS = {
   ASSET_DETAIL: 'asset_id',
   CREW_DETAIL: 'crew_id',
   TASK_DETAIL: 'task_id',
@@ -112,7 +112,7 @@ function personVisible(user, scope, personId) {
 }
 
 // Attach the articulated checklist responses (items) recorded during each
-// execution so a dossier reader can understand the observed condition from the
+// execution so a document reader can understand the observed condition from the
 // tasks done, instead of only seeing an aggregate PASS/FAIL result.
 function checklistsWithItems(executions) {
   return executions.map((e) => {
@@ -137,7 +137,7 @@ function compute(reportType, params, user) {
   const scoped = periodFilter(tasks, start, end);
   const regionId = params.scope_region_id ? Number(params.scope_region_id) : null;
   const inRegion = (t) => !regionId || t.region_id === regionId;
-  // Scope a single entity dossier to the report's region when one is set
+  // Scope a single entity document to the report's region when one is set
   // (region roles always have one); global users may leave it open.
   const effectiveScope = () => (isGlobal(user) && !regionId ? null : regionId || user.region_id);
   const outOfScope = (rid) => {
@@ -435,7 +435,7 @@ function compute(reportType, params, user) {
     }
     case 'ASSET_DETAIL': {
       const a = get('asset', Number(params.asset_id), ['metadata']);
-      if (!a) return { title: 'Asset Detail Dossier', rows: [{ label: 'Error', value: 'Asset not found' }] };
+      if (!a) return { title: 'Asset Detail Document', rows: [{ label: 'Error', value: 'Asset not found' }] };
       const hi = a.health_index ?? (a.condition_rating ? Math.max(1, Math.min(100, Math.round(a.condition_rating * 10))) : null);
       const rul = a.remaining_useful_life_years ?? (a.condition_rating ? Math.round((a.condition_rating / 10) * 40 * 10) / 10 : null);
       const aEnriched = { ...a, health_index: hi, remaining_useful_life_years: rul };
@@ -443,8 +443,8 @@ function compute(reportType, params, user) {
       const line = a.line_id ? get('transmission_line', a.line_id, ['route_json']) : null;
       const tower = a.tower_id ? get('tower', a.tower_id) : null;
       const aRegion = sub ? sub.region_id : line ? line.region_id : tower ? (get('transmission_line', tower.line_id)?.region_id ?? null) : null;
-      if (!scope.global && !scope.assetIds.has(a.id)) return scopeError('Asset Detail Dossier');
-      if (scope.global && outOfScope(aRegion)) return scopeError('Asset Detail Dossier');
+      if (!scope.global && !scope.assetIds.has(a.id)) return scopeError('Asset Detail Document');
+      if (scope.global && outOfScope(aRegion)) return scopeError('Asset Detail Document');
       const history = db.prepare('SELECT * FROM asset_maintenance_event WHERE asset_id = ? ORDER BY performed_at DESC').all(a.id);
       const executions = checklistsWithItems(
         db.prepare(
@@ -483,7 +483,7 @@ function compute(reportType, params, user) {
         { label: 'Last maintenance', value: a.last_maintenance_at || '—' },
         { label: 'GPS validated', value: a.gps_validated ? 'Yes' : 'No' },
       ];
-      const dossier = {
+      const document = {
         entity: 'ASSET',
         entity_name: a.name || a.asset_id,
         asset: aEnriched,
@@ -508,16 +508,16 @@ function compute(reportType, params, user) {
         },
       };
       for (const key of ['tasks', 'tasks_past', 'tasks_future']) {
-        if (Array.isArray(dossier[key])) {
-          dossier[key] = dossier[key].map((t) => ({ ...t, ...taskProgress(t.id) }));
+        if (Array.isArray(document[key])) {
+          document[key] = document[key].map((t) => ({ ...t, ...taskProgress(t.id) }));
         }
       }
-      return { title: `Asset Detail Dossier — ${a.name || a.asset_id}`, rows, dossier };
+      return { title: `Asset Detail Document — ${a.name || a.asset_id}`, rows, document };
     }
     case 'TASK_DETAIL': {
       const t = get('task', Number(params.task_id));
-      if (!t) return { title: 'Task Detail Dossier', rows: [{ label: 'Error', value: 'Task not found' }] };
-      if (!taskVisible(user, t)) return scopeError('Task Detail Dossier');
+      if (!t) return { title: 'Task Detail Document', rows: [{ label: 'Error', value: 'Task not found' }] };
+      if (!taskVisible(user, t)) return scopeError('Task Detail Document');
       const crew = t.crew_id ? get('crew', t.crew_id) : null;
       const region = t.region_id ? get('region', t.region_id) : null;
       const resolved = resolveTarget({ task: t });
@@ -572,9 +572,9 @@ function compute(reportType, params, user) {
         gps_fail: gps_validations.filter((v) => v.result === 'FAIL' || v.result === 'MANUAL_REVIEW').length,
       };
       return {
-        title: `Task Detail Dossier — ${targetHeadline({ taskType: t.task_type, taskTitle: t.title, target: resolved })}`,
+        title: `Task Detail Document — ${targetHeadline({ taskType: t.task_type, taskTitle: t.title, target: resolved })}`,
         rows,
-        dossier: {
+        document: {
           entity: 'TASK',
           entity_name: targetHeadline({ taskType: t.task_type, taskTitle: t.title, target: resolved }),
           task: { ...t, ...taskProgress(t.id) },
@@ -599,9 +599,9 @@ function compute(reportType, params, user) {
     }
     case 'LINE_DETAIL': {
       const l = get('transmission_line', Number(params.line_id), ['route_json']);
-      if (!l) return { title: 'Line Detail Dossier', rows: [{ label: 'Error', value: 'Line not found' }] };
-      if (!scope.global && !scope.lineIds.has(l.id)) return scopeError('Line Detail Dossier');
-      if (scope.global && outOfScope(l.region_id)) return scopeError('Line Detail Dossier');
+      if (!l) return { title: 'Line Detail Document', rows: [{ label: 'Error', value: 'Line not found' }] };
+      if (!scope.global && !scope.lineIds.has(l.id)) return scopeError('Line Detail Document');
+      if (scope.global && outOfScope(l.region_id)) return scopeError('Line Detail Document');
       const region = l.region_id ? get('region', l.region_id) : null;
       const fromSub = l.from_substation_id ? get('substation', l.from_substation_id) : null;
       const toSub = l.to_substation_id ? get('substation', l.to_substation_id) : null;
@@ -657,7 +657,7 @@ function compute(reportType, params, user) {
         { label: 'GPS validated', value: l.gps_validated ? 'Yes' : 'No' },
         { label: 'Vegetation clearance', value: l.veg_clearance_m ? `${l.veg_clearance_m} m` : '—' },
       ];
-      const dossier = {
+      const document = {
         entity: 'LINE',
         entity_name: l.name,
         line: l,
@@ -687,16 +687,16 @@ function compute(reportType, params, user) {
         },
       };
       for (const key of ['tasks', 'tasks_past', 'tasks_future']) {
-        if (Array.isArray(dossier[key])) {
-          dossier[key] = dossier[key].map((t) => ({ ...t, ...taskProgress(t.id) }));
+        if (Array.isArray(document[key])) {
+          document[key] = document[key].map((t) => ({ ...t, ...taskProgress(t.id) }));
         }
       }
-      return { title: `Line Detail Dossier — ${l.name}`, rows, dossier };
+      return { title: `Line Detail Document — ${l.name}`, rows, document };
     }
     case 'CREW_DETAIL': {
       const c = get('crew', Number(params.crew_id));
-      if (!c) return { title: 'Crew Detail Dossier', rows: [{ label: 'Error', value: 'Crew not found' }] };
-      if (!canViewCrew(user, c)) return scopeError('Crew Detail Dossier');
+      if (!c) return { title: 'Crew Detail Document', rows: [{ label: 'Error', value: 'Crew not found' }] };
+      if (!canViewCrew(user, c)) return scopeError('Crew Detail Document');
       const leader = c.leader_person_id ? get('person', c.leader_person_id) : null;
       const members = db.prepare(
         `SELECT cm.*, p.first_name, p.last_name, p.title FROM crew_member cm JOIN person p ON p.id = cm.person_id WHERE cm.crew_id = ? AND cm.active = 1 ORDER BY cm.skill_level DESC`
@@ -734,7 +734,7 @@ function compute(reportType, params, user) {
         { label: 'Completed', value: done.length },
         { label: 'On-time rate', value: done.length ? `${Math.round((onTime / done.length) * 100)}%` : 'N/A' },
       ];
-      const dossier = {
+      const document = {
         entity: 'CREW',
         entity_name: c.name,
         crew: c,
@@ -745,16 +745,16 @@ function compute(reportType, params, user) {
         readiness: crewReadiness(c),
       };
       for (const key of ['tasks', 'tasks_past', 'tasks_future']) {
-        if (Array.isArray(dossier[key])) {
-          dossier[key] = dossier[key].map((t) => ({ ...t, ...taskProgress(t.id) }));
+        if (Array.isArray(document[key])) {
+          document[key] = document[key].map((t) => ({ ...t, ...taskProgress(t.id) }));
         }
       }
-      return { title: `Crew Detail Dossier — ${c.name}`, rows, dossier };
+      return { title: `Crew Detail Document — ${c.name}`, rows, document };
     }
     case 'PERSON_DETAIL': {
       const p = get('person', Number(params.person_id));
-      if (!p) return { title: 'Person Detail Dossier', rows: [{ label: 'Error', value: 'Person not found' }] };
-      if (!personVisible(user, scope, p.id)) return scopeError('Person Detail Dossier');
+      if (!p) return { title: 'Person Detail Document', rows: [{ label: 'Error', value: 'Person not found' }] };
+      if (!personVisible(user, scope, p.id)) return scopeError('Person Detail Document');
       const crews = db.prepare(
         `SELECT c.id, c.name, c.crew_code, c.crew_type, cm.role, cm.skill_level, cm.active
            FROM crew_member cm JOIN crew c ON c.id = cm.crew_id
@@ -794,7 +794,7 @@ function compute(reportType, params, user) {
         { label: 'Findings (evidence)', value: perf ? perf.findings : findings.length },
         { label: 'GPS violations', value: perf ? perf.gps_violations : 0 },
       ];
-      const dossier = {
+      const document = {
         entity: 'PERSON',
         entity_name: name,
         person: p,
@@ -806,7 +806,7 @@ function compute(reportType, params, user) {
         gps_validations: gps,
         performance: perf,
       };
-      return { title: `Person Detail Dossier — ${name}`, rows, dossier };
+      return { title: `Person Detail Document — ${name}`, rows, document };
     }
     case 'ASSET_VALUATION': {
       const parts = reportRegionIds().map((rid) => computeRegionValuation(rid, scope));
@@ -875,12 +875,12 @@ router.get('/reports', (req, res) => {
 });
 
 // Read-only entity drill-down for report rows. Unlike /reports/generate this
-// does not persist a report or require report:write; it just runs the dossier
+// does not persist a report or require report:write; it just runs the document
 // computation under the caller's command scope.
-router.get('/reports/dossier', (req, res) => {
+router.get('/reports/document', (req, res) => {
   const type = String(req.query.type || '');
-  const idField = DOSSIER_ID_FIELDS[type];
-  if (!idField) return res.status(400).json({ error: 'Unknown dossier type' });
+  const idField = DOCUMENT_ID_FIELDS[type];
+  if (!idField) return res.status(400).json({ error: 'Unknown document type' });
   const id = Number(req.query.id);
   if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'Invalid entity id' });
   const params = { [idField]: id };

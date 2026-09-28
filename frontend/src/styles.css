@@ -440,7 +440,7 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
   .no-print, .sidebar, .shell-topbar, .main > .topbar .actions, .tabs, .filters, .map-picker-locate, .map-picker-readout { display: none !important; }
   /* A printed report is a document, never a form: no action buttons, tabs,
      form fields or map overlays may appear on paper. This covers every print
-     surface (modals, dossiers, scoped reports), so a Close/Print button never
+     surface (modals, documents, scoped reports), so a Close/Print button never
      leaks into the sheet. */
   button, .btn, .tab, select, input, textarea, .search-select,
   .map-mini-controls, .map-mini-search, .map-mini-legend, .map-picker-radius,
@@ -479,7 +479,7 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
   a { color: #000 !important; text-decoration: none; }
 }
 
-/* Scoped printing: when the page has an active dossier/report block
+/* Scoped printing: when the page has an active document/report block
    (.print-report-scope) the Print button narrows the printout to that
    block only — nothing else from the page is included. */
 @media print {

@@ -2,9 +2,9 @@ import { useState, useEffect, Fragment } from 'react';
 import { api, fmtDate, fmtDateTime } from '../api';
 import { Modal, Loading, ErrorNote, Pill, CondPill, PrintButton } from '../components';
 import { formatChecklistResponse } from '../checklistFormat';
-import DossierGeo from './DossierGeo';
+import DocumentGeo from './DocumentGeo';
 
-export default function Dossier({ type, params, title, onClose }) {
+export default function Document({ type, params, title, onClose }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
@@ -30,8 +30,8 @@ export default function Dossier({ type, params, title, onClose }) {
               </Fragment>
             ))}
           </div>
-          <DossierGeo dossier={data.dossier} />
-          <DossierBody d={data.dossier} />
+          <DocumentGeo document={data.document} />
+          <DocumentBody d={data.document} />
         </>
       )}
     </Modal>
@@ -47,10 +47,10 @@ function Section({ title, children }) {
   );
 }
 
-function DossierBody({ d }) {
+function DocumentBody({ d }) {
   if (!d) return null;
-  if (d.entity === 'ASSET') return <AssetDossier d={d} />;
-  if (d.entity === 'CREW') return <CrewDossier d={d} />;
+  if (d.entity === 'ASSET') return <AssetDocument d={d} />;
+  if (d.entity === 'CREW') return <CrewDocument d={d} />;
   return null;
 }
 
@@ -110,7 +110,7 @@ function ExecutionList({ executions }) {
   );
 }
 
-function AssetDossier({ d }) {
+function AssetDocument({ d }) {
   return (
     <>
       <Section title="Maintenance history">
@@ -173,7 +173,7 @@ function AssetDossier({ d }) {
   );
 }
 
-function CrewDossier({ d }) {
+function CrewDocument({ d }) {
   return (
     <>
       <Section title="Members">

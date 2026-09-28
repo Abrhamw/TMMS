@@ -166,7 +166,7 @@ git commit -m "feat(auth): add task:bulk permission to management roles and plan
 - Modify: `backend/routes/tasks.js` (`taskDetail`, lines 22-35)
 
 **Interfaces:**
-- Produces: `taskProgress(taskId)` → `{ progress_pct, progress_graded, progress_passed }`. Used by Task 3 (export), Task 6 (performance import path via tasks serializer), and Task 7 (dossiers).
+- Produces: `taskProgress(taskId)` → `{ progress_pct, progress_graded, progress_passed }`. Used by Task 3 (export), Task 6 (performance import path via tasks serializer), and Task 7 (documents).
 
 - [ ] **Step 1: Write the module**
 
@@ -769,7 +769,7 @@ git commit -m "feat(performance): crew and person task-performance endpoint gate
 
 ---
 
-### Task 7: Dossier and crew-detail task rows carry progress fields
+### Task 7: Document and crew-detail task rows carry progress fields
 
 **Files:**
 - Modify: `backend/routes/reports.js`
@@ -777,14 +777,14 @@ git commit -m "feat(performance): crew and person task-performance endpoint gate
 
 **Interfaces:**
 - Consumes: `taskProgress` from `backend/taskProgress.js` (Task 2).
-- Produces: dossiers whose `tasks`, `tasks_past`, `tasks_future` arrays each carry `progress_pct/progress_graded/progress_passed`, and the crew-detail builder's assigned-work task array (`detail.tasks` on `GET /crews/:id`) likewise. Frontend Task 11 relies on these fields.
+- Produces: documents whose `tasks`, `tasks_past`, `tasks_future` arrays each carry `progress_pct/progress_graded/progress_passed`, and the crew-detail builder's assigned-work task array (`detail.tasks` on `GET /crews/:id`) likewise. Frontend Task 11 relies on these fields.
 
-- [ ] **Step 1: Find every dossier assembly point**
+- [ ] **Step 1: Find every document assembly point**
 
-Run: `cd /workspace/backend && grep -n "tasks_past\|tasks_future\|dossier\|tasks:" routes/reports.js`
+Run: `cd /workspace/backend && grep -n "tasks_past\|tasks_future\|document\|tasks:" routes/reports.js`
 Run: `cd /workspace/backend && grep -n "tasks\b\|generated\|assigned" routes/crews.js`
 
-Read the identified builders. TASK/ASSET/LINE dossiers collect task rows (with `task_number`, `status`, etc.) into arrays named `tasks`, `tasks_past`, and/or `tasks_future`. The crew detail route builds an assigned-work array of tasks on `GET /crews/:id`.
+Read the identified builders. TASK/ASSET/LINE documents collect task rows (with `task_number`, `status`, etc.) into arrays named `tasks`, `tasks_past`, and/or `tasks_future`. The crew detail route builds an assigned-work array of tasks on `GET /crews/:id`.
 
 - [ ] **Step 2: Add the require and enrich every assembled task array**
 
@@ -796,19 +796,19 @@ const { taskProgress } = require('../taskProgress');
 
 Do the same in `routes/crews.js`.
 
-For each place where a dossier object is fully assembled before being returned/resolved (usually right before `return` or inside the promise callback that produces the dossier object), insert this enrichment immediately after assembly:
+For each place where a document object is fully assembled before being returned/resolved (usually right before `return` or inside the promise callback that produces the document object), insert this enrichment immediately after assembly:
 
 ```js
 for (const key of ['tasks', 'tasks_past', 'tasks_future']) {
-  if (Array.isArray(dossier[key])) {
-    dossier[key] = dossier[key].map((t) => ({ ...t, ...taskProgress(t.id) }));
+  if (Array.isArray(document[key])) {
+    document[key] = document[key].map((t) => ({ ...t, ...taskProgress(t.id) }));
   }
 }
 ```
 
-(Where the builder uses a different local variable name than `dossier`, use that name. The snippet is safe when an array key is absent — it simply skips it. Do not add the same snippet twice for the same builder.)
+(Where the builder uses a different local variable name than `document`, use that name. The snippet is safe when an array key is absent — it simply skips it. Do not add the same snippet twice for the same builder.)
 
-For the crew detail route (`GET /crews/:id`), apply the same single-array enrichment to the assigned-work task list object after it is assembled (e.g. where `detail.tasks` is built), using that object's name in place of `dossier`:
+For the crew detail route (`GET /crews/:id`), apply the same single-array enrichment to the assigned-work task list object after it is assembled (e.g. where `detail.tasks` is built), using that object's name in place of `document`:
 
 ```js
 detail.tasks = detail.tasks.map((t) => ({ ...t, ...taskProgress(t.id) }));
@@ -824,24 +824,24 @@ Restart the verify terminal. Run:
 python3 - <<'PY'
 exec(open('/tmp/opencode/tmms_e2e.py').read())
 mgr = login('mgr.c1.tlom', 'Manager@123')
-# Pull the existing COMPLETED task ids for a TASK_DETAIL dossier target.
+# Pull the existing COMPLETED task ids for a TASK_DETAIL document target.
 st, tasks = j('GET', '/api/tasks', token=mgr)
 done = [t for t in tasks if t['status'] == 'COMPLETED']
 assert done, 'no completed task in isolated db'
 target = done[0]
 st, d = j('POST', '/api/reports/generate', token=mgr, body={'report_type': 'TASK_DETAIL', 'task_id': target['id']})
-print('dossier keys:', sorted((d.get('data') or {}).keys()) if isinstance(d, dict) else d)
+print('document keys:', sorted((d.get('data') or {}).keys()) if isinstance(d, dict) else d)
 assert st == 200
 PY
 ```
 
-Expected: 200 and dossier data present. If a TASK_DETAIL dossier renders a single task (not an array), confirm `progress_pct` is present in whatever task object the dossier embeds and, if it is missing from the array, apply the snippet to that single-task object instead (key it by the actual task key used, e.g. `dossier.task`). Repeat the run until the check passes.
+Expected: 200 and document data present. If a TASK_DETAIL document renders a single task (not an array), confirm `progress_pct` is present in whatever task object the document embeds and, if it is missing from the array, apply the snippet to that single-task object instead (key it by the actual task key used, e.g. `document.task`). Repeat the run until the check passes.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add backend/routes/reports.js backend/routes/crews.js
-git commit -m "feat(reports,crews): dossiers and crew detail carry checklist progress fields"
+git commit -m "feat(reports,crews): documents and crew detail carry checklist progress fields"
 ```
 
 ---
@@ -1221,12 +1221,12 @@ git commit -m "feat(reports): crew and person performance tables gated by report
 
 ---
 
-### Task 11: Progress chips on remaining task lists (TaskDetail, Crews, dossier TaskRows)
+### Task 11: Progress chips on remaining task lists (TaskDetail, Crews, document TaskRows)
 
 **Files:**
 - Modify: `frontend/src/pages/TaskDetail.jsx`
 - Modify: `frontend/src/pages/Crews.jsx`
-- Modify: `frontend/src/components/DossierReport.jsx`
+- Modify: `frontend/src/components/DocumentReport.jsx`
 
 **Interfaces:**
 - Consumes: `Progress` from components.jsx (Task 8), progress fields from Tasks 2 & 7.
@@ -1253,9 +1253,9 @@ Run: `grep -n "executions" frontend/src/pages/TaskDetail.jsx` and read the surro
 
 Run: `grep -n "detail.tasks.map\|assigned" frontend/src/pages/Crews.jsx` and read the assigned-work table (the one rendering `detail.tasks`). Add a `Progress` cell after the task status cell and a matching header cell.
 
-- [ ] **Step 4: DossierReport.jsx — TaskRows progress**
+- [ ] **Step 4: DocumentReport.jsx — TaskRows progress**
 
-Run: `sed -n '255,300p' frontend/src/components/DossierReport.jsx` and read the `TaskRows` component. Add a `<th>Progress</th>` header cell and, in each task row, `<td><Progress pct={t.progress_pct} graded={t.progress_graded} passed={t.progress_passed} /></td>` when the row's task object exposes `progress_graded` (guard with `t.progress_graded > 0 ? ... : <span className="muted">—</span>`).
+Run: `sed -n '255,300p' frontend/src/components/DocumentReport.jsx` and read the `TaskRows` component. Add a `<th>Progress</th>` header cell and, in each task row, `<td><Progress pct={t.progress_pct} graded={t.progress_graded} passed={t.progress_passed} /></td>` when the row's task object exposes `progress_graded` (guard with `t.progress_graded > 0 ? ... : <span className="muted">—</span>`).
 
 - [ ] **Step 5: Build check**
 
@@ -1264,8 +1264,8 @@ Run: `cd /workspace/frontend && npm run build` — clean.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add frontend/src/pages/TaskDetail.jsx frontend/src/pages/Crews.jsx frontend/src/components/DossierReport.jsx
-git commit -m "feat(tasks): surface checklist progress in task detail, crews and dossiers"
+git add frontend/src/pages/TaskDetail.jsx frontend/src/pages/Crews.jsx frontend/src/components/DocumentReport.jsx
+git commit -m "feat(tasks): surface checklist progress in task detail, crews and documents"
 ```
 
 ---
