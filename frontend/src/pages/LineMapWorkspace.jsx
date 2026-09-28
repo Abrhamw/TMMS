@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, asArray } from '../api';
-import { Page, Loading, ErrorNote, Pill, Modal, ConfirmButton, CondPill } from '../components';
+import { SearchSelect, Page, Loading, ErrorNote, Pill, Modal, ConfirmButton, CondPill } from '../components';
 import { KpiTile } from '../components/InfraVisuals';
 import LineWorkspaceMap from '../components/LineWorkspaceMap';
 import { getDevicePosition } from '../components/MapPicker';
@@ -420,10 +420,10 @@ export default function LineMapWorkspace({ embedded }) {
             <div className="lw-pop">
               <div className="field">
                 <label>Mode</label>
-                <select value={spaceMode} onChange={(e) => setSpaceMode(e.target.value)}>
+                <SearchSelect value={spaceMode} onChange={(e) => setSpaceMode(e.target.value)}>
                   <option value="count">Tower count</option>
                   <option value="spacingKm">Spacing (km)</option>
-                </select>
+                </SearchSelect>
               </div>
               <div className="field mt">
                 <label>{spaceMode === 'count' ? 'Count (>= 2)' : 'Spacing km (> 0)'}</label>
@@ -506,16 +506,16 @@ export default function LineMapWorkspace({ embedded }) {
             <b>{bulkSelected.size} selected</b>
             {bulkBlocked && <span className="muted" style={{ fontSize: 12 }}>Save or discard the pending changes before applying bulk actions.</span>}
             <button className="btn btn-sm btn-danger" onClick={bulkDelete} disabled={bulkBlocked || !bulkSelected.size || saving}>Delete</button>
-            <select value={bulkType} onChange={(e) => setBulkType(e.target.value)} disabled={bulkBlocked}>
+            <SearchSelect value={bulkType} onChange={(e) => setBulkType(e.target.value)} disabled={bulkBlocked}>
               {TOWER_TYPES.map((t) => <option key={t}>{t}</option>)}
-            </select>
+            </SearchSelect>
             <button className="btn btn-sm" onClick={() => setMany({ tower_type: bulkType }, 'type')} disabled={bulkBlocked || !bulkSelected.size || saving}>Set type</button>
-            <select value={bulkMaterial} onChange={(e) => setBulkMaterial(e.target.value)} disabled={bulkBlocked}>
+            <SearchSelect value={bulkMaterial} onChange={(e) => setBulkMaterial(e.target.value)} disabled={bulkBlocked}>
               {MATERIALS.map((m) => <option key={m}>{m}</option>)}
-            </select>
-            <select value={bulkFoundation} onChange={(e) => setBulkFoundation(e.target.value)} disabled={bulkBlocked}>
+            </SearchSelect>
+            <SearchSelect value={bulkFoundation} onChange={(e) => setBulkFoundation(e.target.value)} disabled={bulkBlocked}>
               {FOUNDATIONS.map((f) => <option key={f}>{f}</option>)}
-            </select>
+            </SearchSelect>
             <button className="btn btn-sm" onClick={() => setMany({ tower_material: bulkMaterial, foundation_type: bulkFoundation }, 'material/foundation')} disabled={bulkBlocked || !bulkSelected.size || saving}>Set material / foundation</button>
             <button className="btn btn-sm" onClick={bulkResetParts} disabled={bulkBlocked || !bulkSelected.size || saving}>Reset parts to standard</button>
             <button className="btn btn-sm" onClick={exportCsv}>Export CSV</button>
@@ -527,10 +527,10 @@ export default function LineMapWorkspace({ embedded }) {
         <aside className="card lw-rail">
           <div className="field">
             <label>Region</label>
-            <select value={rid || ''} onChange={(e) => patch({ region: e.target.value || null, line: null })}>
+            <SearchSelect value={rid || ''} onChange={(e) => patch({ region: e.target.value || null, line: null })}>
               <option value="">All regions</option>
               {(regions || []).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-            </select>
+            </SearchSelect>
           </div>
           <div className="lw-folder hub-folder">Lines ({regionLines.length})</div>
           <ul className="lw-list">
@@ -604,19 +604,19 @@ export default function LineMapWorkspace({ embedded }) {
                   <div className="field"><label>Tower ID</label><input value={selected.tower_id || ''} readOnly /></div>
                   <div className="field"><label>km marker</label><input value={selected.km_marker ?? ''} readOnly /></div>
                   <div className="field"><label>Type</label>
-                    <select value={selected.tower_type || 'SUSPENSION'} disabled={!canTower} onChange={(e) => updateTowerFields(selected.id, { tower_type: e.target.value })}>
+                    <SearchSelect value={selected.tower_type || 'SUSPENSION'} disabled={!canTower} onChange={(e) => updateTowerFields(selected.id, { tower_type: e.target.value })}>
                       {TOWER_TYPES.map((t) => <option key={t}>{t}</option>)}
-                    </select>
+                    </SearchSelect>
                   </div>
                   <div className="field"><label>Material</label>
-                    <select value={selected.tower_material || 'LATTICE_STEEL'} disabled={!canTower} onChange={(e) => updateTowerFields(selected.id, { tower_material: e.target.value })}>
+                    <SearchSelect value={selected.tower_material || 'LATTICE_STEEL'} disabled={!canTower} onChange={(e) => updateTowerFields(selected.id, { tower_material: e.target.value })}>
                       {MATERIALS.map((m) => <option key={m}>{m}</option>)}
-                    </select>
+                    </SearchSelect>
                   </div>
                   <div className="field"><label>Foundation</label>
-                    <select value={selected.foundation_type || 'PAD'} disabled={!canTower} onChange={(e) => updateTowerFields(selected.id, { foundation_type: e.target.value })}>
+                    <SearchSelect value={selected.foundation_type || 'PAD'} disabled={!canTower} onChange={(e) => updateTowerFields(selected.id, { foundation_type: e.target.value })}>
                       {FOUNDATIONS.map((f) => <option key={f}>{f}</option>)}
-                    </select>
+                    </SearchSelect>
                   </div>
                   <div className="field"><label>Height (m)</label>
                     <input type="number" step="0.5" disabled={!canTower} value={selected.height_m ?? ''} onChange={(e) => updateTowerFields(selected.id, { height_m: e.target.value === '' ? null : Number(e.target.value) })} />
@@ -761,12 +761,12 @@ function PartsTab({ tower, canWrite, setError, setNotice }) {
           </>}>
           <div className="form-grid">
             <div className="field"><label>Part type</label>
-              <select value={form.component_type} onChange={(e) => {
+              <SearchSelect value={form.component_type} onChange={(e) => {
                 const cat = catalog.find((c) => c.type === e.target.value);
                 setForm({ ...form, component_type: e.target.value, name: cat ? cat.name : form.name, material: cat ? cat.material : form.material, unit: cat ? cat.unit : form.unit, quantity: cat && cat.defaultQty ? cat.defaultQty : form.quantity });
               }}>
                 {catalog.map((c) => <option key={c.type} value={c.type}>{c.type} — {c.name}</option>)}
-              </select>
+              </SearchSelect>
             </div>
             <div className="field"><label>Name / description</label><input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             <div className="field"><label>Material</label><input value={form.material || ''} onChange={(e) => setForm({ ...form, material: e.target.value })} /></div>
@@ -774,9 +774,9 @@ function PartsTab({ tower, canWrite, setError, setNotice }) {
             <div className="field"><label>Unit</label><input value={form.unit || ''} onChange={(e) => setForm({ ...form, unit: e.target.value })} /></div>
             <div className="field"><label>Condition (0-10)</label><input type="number" min="0" max="10" value={form.condition_rating ?? ''} onChange={(e) => setForm({ ...form, condition_rating: e.target.value === '' ? 0 : Number(e.target.value) })} /></div>
             <div className="field"><label>Status</label>
-              <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+              <SearchSelect value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
                 {COMPONENT_STATUSES.map((s) => <option key={s}>{s}</option>)}
-              </select>
+              </SearchSelect>
             </div>
             <div className="field full"><label>Notes</label><input value={form.notes || ''} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
           </div>
@@ -872,7 +872,7 @@ function AssetsTab({ tower, lineId, canWrite, setError, setNotice }) {
             <div className="field"><label>Asset ID</label><input value={form.asset_id} onChange={(e) => setForm({ ...form, asset_id: e.target.value })} placeholder="AST-..." /></div>
             <div className="field"><label>Name</label><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             <div className="field full"><label>Asset type</label>
-              <select value={form.asset_type} onChange={(e) => {
+              <SearchSelect value={form.asset_type} onChange={(e) => {
                 const t = types.find((x) => x.asset_type === e.target.value);
                 setForm({ ...form, asset_type: e.target.value, sub_type: t ? t.sub_type : '' });
               }}>
@@ -881,7 +881,7 @@ function AssetsTab({ tower, lineId, canWrite, setError, setNotice }) {
                     {t.family_label} · {t.label}{t.sub_type ? ` (${t.sub_type})` : ''}
                   </option>
                 ))}
-              </select>
+              </SearchSelect>
             </div>
             <div className="field"><label>Condition (0-10)</label><input type="number" min="0" max="10" value={form.condition_rating} onChange={(e) => setForm({ ...form, condition_rating: e.target.value })} /></div>
           </div>

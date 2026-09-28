@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api, fmtDate } from '../api';
-import { Page, Pill, Modal, ErrorNote, Loading, SearchField, useSearchFilter } from '../components';
+import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
+import { assetsInScope, linesInRegion, subsInRegion, towersForLine } from '../cascade';
 import { t } from '../i18n';
 
 const SCOPE = ['ASSET', 'SUBSTATION', 'LINE', 'LINE_TOWERS', 'TOWER', 'ASSET_CLASS'];
@@ -88,6 +89,7 @@ export default function Schedules() {
   const [assets, setAssets] = useState([]);
   const [lines, setLines] = useState([]);
   const [subs, setSubs] = useState([]);
+  const [regions, setRegions] = useState([]);
   const [towers, setTowers] = useState([]);
   const [error, setError] = useState(null);
   const [form, setForm] = useState(null);
@@ -111,10 +113,25 @@ export default function Schedules() {
     api.get('/assets?brief=1').then(setAssets).catch(() => {});
     api.get('/lines').then(setLines).catch(() => {});
     api.get('/substations').then(setSubs).catch(() => {});
+    api.get('/regions').then(setRegions).catch(() => {});
     api.get('/towers?brief=1').then(setTowers).catch(() => {});
   }, []);
   useEffect(() => { if (tab === 'upcoming') loadUpcoming(); /* eslint-disable-next-line */ }, [tab, upDays]);
   useEffect(() => { if (tab === 'adherence') loadAdherence(); /* eslint-disable-next-line */ }, [tab, adhDays]);
+
+  // Region narrows every schedule scope picker; the line still narrows towers.
+  const formSubs = useMemo(() => subsInRegion(subs, form?.region_id), [subs, form?.region_id]);
+  const formLines = useMemo(() => linesInRegion(lines, form?.region_id), [lines, form?.region_id]);
+  const formAssets = useMemo(
+    () => assetsInScope(assets, { regionId: form?.region_id }, { subs, lines }),
+    [assets, form?.region_id, subs, lines]
+  );
+  const formTowers = useMemo(() => {
+    const base = form?.line_id ? towersForLine(towers, form.line_id) : towers;
+    if (!form?.region_id) return base;
+    const lineIds = new Set(linesInRegion(lines, form.region_id).map((l) => String(l.id)));
+    return base.filter((tw) => lineIds.has(String(tw.line_id)));
+  }, [towers, form?.line_id, form?.region_id, lines]);
 
   async function toggleActive(s) {
     try {
@@ -273,52 +290,57 @@ export default function Schedules() {
             <div className="field full"><label>{t('schedName')}</label><input value={form.schedule_name || ''} onChange={(e) => setForm({ ...form, schedule_name: e.target.value })} /></div>
             <div className="field"><label>{t('schedCode')}</label><input value={form.schedule_code || ''} onChange={(e) => setForm({ ...form, schedule_code: e.target.value })} /></div>
             <div className="field"><label>{t('schedScopeType')}</label>
-              <select value={form.scope_type} onChange={(e) => setForm({ ...form, scope_type: e.target.value })}>
+              <SearchSelect value={form.scope_type} onChange={(e) => setForm({ ...form, scope_type: e.target.value })}>
                 {SCOPE.map((s) => <option key={s}>{s}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>{t('schedAssetTypeHint')}</label>
-              <select value={form.asset_type || ''} onChange={(e) => setForm({ ...form, asset_type: e.target.value })}>
+              <SearchSelect value={form.asset_type || ''} onChange={(e) => setForm({ ...form, asset_type: e.target.value })}>
                 <option value="">—</option>
                 {ASSET_TYPES.map((at) => <option key={at}>{at}</option>)}
-              </select></div>
+              </SearchSelect></div>
+            <div className="field"><label>Region</label>
+              <SearchSelect value={form.region_id || ''} onChange={(e) => setForm({ ...form, region_id: e.target.value ? Number(e.target.value) : null, asset_id: null, substation_id: null, line_id: null, tower_id: null })}>
+                <option value="">—</option>
+                {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </SearchSelect></div>
             {form.scope_type === 'ASSET' && (
               <div className="field"><label>{t('schedTargetAsset')}</label>
-                <select value={form.asset_id || ''} onChange={(e) => setForm({ ...form, asset_id: e.target.value ? Number(e.target.value) : null })}>
+                <SearchSelect value={form.asset_id || ''} onChange={(e) => setForm({ ...form, asset_id: e.target.value ? Number(e.target.value) : null })}>
                   <option value="">{t('schedNoneOption')}</option>
-                  {assets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </select></div>
+                  {formAssets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </SearchSelect></div>
             )}
             {form.scope_type === 'SUBSTATION' && (
               <div className="field"><label>{t('schedTargetSubstation')}</label>
-                <select value={form.substation_id || ''} onChange={(e) => setForm({ ...form, substation_id: e.target.value ? Number(e.target.value) : null })}>
+                <SearchSelect value={form.substation_id || ''} onChange={(e) => setForm({ ...form, substation_id: e.target.value ? Number(e.target.value) : null })}>
                   <option value="">{t('schedNoneOption')}</option>
-                  {subs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select></div>
+                  {formSubs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </SearchSelect></div>
             )}
             {(form.scope_type === 'LINE' || form.scope_type === 'LINE_TOWERS') && (
               <div className="field"><label>{t('schedTargetLine')}</label>
-                <select value={form.line_id || ''} onChange={(e) => setForm({ ...form, line_id: e.target.value ? Number(e.target.value) : null, tower_id: null })}>
+                <SearchSelect value={form.line_id || ''} onChange={(e) => setForm({ ...form, line_id: e.target.value ? Number(e.target.value) : null, tower_id: null })}>
                   <option value="">{t('schedNoneOption')}</option>
-                  {lines.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-                </select></div>
+                  {formLines.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </SearchSelect></div>
             )}
             {form.scope_type === 'TOWER' && (
               <div className="field"><label>{t('schedTargetTower')}</label>
-                <select value={form.tower_id || ''} onChange={(e) => {
+                <SearchSelect value={form.tower_id || ''} onChange={(e) => {
                   const tid = e.target.value ? Number(e.target.value) : null;
                   const tw = towers.find((x) => x.id === tid);
                   setForm({ ...form, tower_id: tid, line_id: tw ? tw.line_id : form.line_id });
                 }}>
                   <option value="">{t('schedNoneOption')}</option>
-                  {(form.line_id ? towers.filter((tw) => tw.line_id === Number(form.line_id)) : towers).map((tw) => (
+                  {formTowers.map((tw) => (
                     <option key={tw.id} value={tw.id}>{tw.tower_id}</option>
                   ))}
-                </select></div>
+                </SearchSelect></div>
             )}
             <div className="field"><label>{t('schedRecurrence')}</label>
-              <select value={rule.type} onChange={(e) => setRule({ ...rule, type: e.target.value })}>
+              <SearchSelect value={rule.type} onChange={(e) => setRule({ ...rule, type: e.target.value })}>
                 {PATTERNS.map(([value, labelKey]) => <option key={value} value={value}>{t(labelKey)}</option>)}
-              </select></div>
+              </SearchSelect></div>
             {rule.type !== 'MONTHLY_NTH' && (
               <div className="field"><label>{rule.type === 'INTERVAL_DAYS' ? t('schedDaysBetween') : rule.type === 'WEEKLY' ? t('schedWeeksBetween') : t('schedMonthsBetween')}</label>
                 <input type="number" min="1" max="1000" value={rule.interval} onChange={(e) => setRule({ ...rule, interval: e.target.value })} /></div>
@@ -338,13 +360,13 @@ export default function Schedules() {
             )}
             {rule.type === 'MONTHLY_NTH' && (<>
               <div className="field"><label>{t('schedWhich')}</label>
-                <select value={rule.nth} onChange={(e) => setRule({ ...rule, nth: Number(e.target.value) })}>
+                <SearchSelect value={rule.nth} onChange={(e) => setRule({ ...rule, nth: Number(e.target.value) })}>
                   {NTH_OPTS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select></div>
+                </SearchSelect></div>
               <div className="field"><label>{t('schedWeekday')}</label>
-                <select value={rule.weekday} onChange={(e) => setRule({ ...rule, weekday: Number(e.target.value) })}>
+                <SearchSelect value={rule.weekday} onChange={(e) => setRule({ ...rule, weekday: Number(e.target.value) })}>
                   {WEEKDAY_OPTS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select></div>
+                </SearchSelect></div>
             </>)}
             <div className="field full"><label>{t('schedEnds')}</label>
               <div className="chip-row">
@@ -362,29 +384,29 @@ export default function Schedules() {
                 <input type="number" min="1" value={rule.count} onChange={(e) => setRule({ ...rule, count: e.target.value })} /></div>
             )}
             <div className="field"><label>{t('schedPriorityLabel')}</label>
-              <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
+              <SearchSelect value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
                 {['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map((p) => <option key={p}>{p}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>{t('schedTaskTypeGen')}</label>
-              <select value={form.task_type} onChange={(e) => setForm({ ...form, task_type: e.target.value })}>
+              <SearchSelect value={form.task_type} onChange={(e) => setForm({ ...form, task_type: e.target.value })}>
                 {TASK_TYPES.map((ty) => <option key={ty}>{ty}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>{t('schedNextDueDate')}</label><input type="date" value={form.next_due_date} onChange={(e) => setForm({ ...form, next_due_date: e.target.value })} /></div>
             <div className="field"><label>{t('schedLeadTime')}</label><input type="number" value={form.lead_time_days} onChange={(e) => setForm({ ...form, lead_time_days: Number(e.target.value) })} /></div>
             <div className="field"><label>{t('schedChecklistLabel')}</label>
-              <select value={form.checklist_template_id || ''} onChange={(e) => setForm({ ...form, checklist_template_id: e.target.value ? Number(e.target.value) : null })}>
+              <SearchSelect value={form.checklist_template_id || ''} onChange={(e) => setForm({ ...form, checklist_template_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">{t('schedNoneOption')}</option>
                 {checklists.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>{t('schedResponsibleCrew')}</label>
-              <select value={form.responsible_crew_id || ''} onChange={(e) => setForm({ ...form, responsible_crew_id: e.target.value ? Number(e.target.value) : null })}>
+              <SearchSelect value={form.responsible_crew_id || ''} onChange={(e) => setForm({ ...form, responsible_crew_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">{t('schedNoneOption')}</option>
                 {crews.map((c) => (
                   <option key={c.id} value={c.id} disabled={c.status === 'OFF_DUTY' || c.status === 'UNAVAILABLE'}>
                     {c.name} ({c.status}{c.open_task_count ? ` · ${c.open_task_count} active` : ''})
                   </option>
                 ))}
-              </select></div>
+              </SearchSelect></div>
             <div className="field full"><label>{t('schedInstructions')}</label><textarea value={form.instructions || ''} onChange={(e) => setForm({ ...form, instructions: e.target.value })} /></div>
           </div>
         </Modal>

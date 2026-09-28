@@ -1,7 +1,8 @@
-import { useEffect, useState, Fragment } from 'react';
+import { useEffect, useMemo, useState, Fragment } from 'react';
 import { api, fmtDate, fmtMoney } from '../api';
-import { Page, Pill, Modal, ErrorNote, Loading, CondPill, ConfirmButton, PrintButton, SearchField, useSearchFilter } from '../components';
+import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, CondPill, ConfirmButton, PrintButton, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
+import { linesForSubstation, linesInRegion, subsInRegion } from '../cascade';
 import MapPicker from '../components/MapPicker';
 import Comments from '../components/Comments';
 import Dossier from '../components/Dossier';
@@ -180,12 +181,14 @@ export default function Assets() {
   const canWrite = can(getStoredUser(), 'asset:write');
   const canEvaluate = can(getStoredUser(), 'asset:evaluate');
   const [rows, setRows] = useState(null);
+  const [regions, setRegions] = useState([]);
   const [subs, setSubs] = useState([]);
   const [lines, setLines] = useState([]);
   const [crews, setCrews] = useState([]);
   const [geo, setGeo] = useState(null);       // { format, fileName, preview, confirmToken, busy, error }
   const [typeFilter, setTypeFilter] = useState('');
   const [subFilter, setSubFilter] = useState('');
+  const [regionFilter, setRegionFilter] = useState('');
   const [viewMode, setViewMode] = useState('register');
   const [page, setPage] = useState(1);
   const [registerRegion, setRegisterRegion] = useState(null);
@@ -197,7 +200,23 @@ export default function Assets() {
   const [currency, setCurrency] = useState('USD');
   const [addEv, setAddEv] = useState(null);
   const [evalState, setEvalState] = useState(null);
-  const { query, setQuery, results: visible } = useSearchFilter(rows);
+  // Assets carry no region column, so resolve it through their substation/line
+  // parent to let a region filter narrow the register.
+  const regionRows = useMemo(() => {
+    if (!regionFilter) return rows;
+    return (rows || []).filter((a) => String(a.substation?.region_id ?? a.line?.region_id ?? '') === String(regionFilter));
+  }, [rows, regionFilter]);
+  const { query, setQuery, results: visible } = useSearchFilter(regionRows);
+
+  // Region -> substation/line cascade for the asset form. Picking a region
+  // narrows both pickers; picking a substation narrows the line picker to the
+  // circuits that terminate there.
+  const formSubs = useMemo(() => subsInRegion(subs, form?.region_id), [subs, form?.region_id]);
+  const formLines = useMemo(
+    () => (form?.substation_id ? linesForSubstation(lines, form.substation_id) : linesInRegion(lines, form?.region_id)),
+    [lines, form?.region_id, form?.substation_id]
+  );
+  const filterSubs = useMemo(() => subsInRegion(subs, regionFilter), [subs, regionFilter]);
 
   useEffect(() => {
     setPage(1);
@@ -214,6 +233,7 @@ export default function Assets() {
     setPage(1);
     load();
     api.get('/asset-catalog').then(setCatalog).catch(() => {});
+    api.get('/regions').then(setRegions).catch(() => {});
     api.get('/substations').then(setSubs).catch(() => {});
     api.get('/lines').then(setLines).catch(() => {});
     api.get('/crews').then(setCrews).catch(() => {});
@@ -303,14 +323,18 @@ export default function Assets() {
       {error && <ErrorNote error={error} />}
       <div className="filters">
         <SearchField value={query} onChange={setQuery} placeholder="Search assets…" />
-        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+        <SearchSelect value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
           <option value="">All asset types</option>
           {Array.from(new Map(flattenCatalog(catalog).filter((r) => !r.sub_type && r.family !== 'TOWER_PARTS').map((r) => [r.asset_type, r])).values()).map((r) => <option key={r.asset_type} value={r.asset_type}>{r.asset_type}</option>)}
-        </select>
-        <select value={subFilter} onChange={(e) => setSubFilter(e.target.value)}>
+        </SearchSelect>
+        <SearchSelect value={regionFilter} onChange={(e) => { setRegionFilter(e.target.value); setSubFilter(''); setPage(1); }}>
+          <option value="">All regions</option>
+          {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+        </SearchSelect>
+        <SearchSelect value={subFilter} onChange={(e) => setSubFilter(e.target.value)}>
           <option value="">All substations</option>
-          {subs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
+          {filterSubs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </SearchSelect>
         <span className="muted">{visible.length} of {rows.length} assets</span>
         <span className="grow" />
         <button className={`btn btn-sm${viewMode === 'register' ? ' btn-primary' : ''}`} onClick={() => setViewMode('register')}>Register</button>
@@ -529,9 +553,9 @@ export default function Assets() {
                     <div className="card card-pad" style={{ padding: 10 }}>
                       <div className="grid grid-2" style={{ rowGap: 6 }}>
                         <div className="field"><label>Type</label>
-                          <select value={addEv.event_type} onChange={(e) => setAddEv({ ...addEv, event_type: e.target.value })}>
+                          <SearchSelect value={addEv.event_type} onChange={(e) => setAddEv({ ...addEv, event_type: e.target.value })}>
                             {['PREVENTIVE', 'CORRECTIVE', 'INSPECTION', 'REPAIR', 'REPLACEMENT', 'TESTING'].map((x) => <option key={x} value={x}>{x}</option>)}
-                          </select></div>
+                          </SearchSelect></div>
                         <div className="field"><label>Date</label><input type="date" value={addEv.performed_at} onChange={(e) => setAddEv({ ...addEv, performed_at: e.target.value })} /></div>
                         <div className="field full"><label>Work summary</label><textarea value={addEv.work_summary} onChange={(e) => setAddEv({ ...addEv, work_summary: e.target.value })} /></div>
                         <div className="field"><label>Cost (optional)</label><input type="number" min="0" step="0.01" value={addEv.cost} onChange={(e) => setAddEv({ ...addEv, cost: e.target.value })} /></div>
@@ -577,38 +601,43 @@ export default function Assets() {
             <div className="field"><label>Asset ID</label><input value={form.asset_id || ''} onChange={(e) => setForm({ ...form, asset_id: e.target.value })} /></div>
             <div className="field"><label>Name</label><input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             <div className="field"><label>Family</label>
-              <select value={form.asset_type ? familyOf(catalog, form.asset_type) : ''} onChange={(e) => {
+              <SearchSelect value={form.asset_type ? familyOf(catalog, form.asset_type) : ''} onChange={(e) => {
                 const fam = e.target.value;
                 const first = typesForFamily(catalog, fam)[0];
                 setForm({ ...form, asset_type: first ? first.asset_type : '', sub_type: '' });
               }}>
                 <option value="">— pick family —</option>
                 {(catalog?.families || []).filter((f) => f.family !== 'TOWER_PARTS').map((f) => <option key={f.family} value={f.family}>{f.family_label}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Asset type</label>
-              <select value={form.asset_type} onChange={(e) => {
+              <SearchSelect value={form.asset_type} onChange={(e) => {
                 const t = e.target.value;
                 const withSub = typesForFamily(catalog, familyOf(catalog, t));
                 setForm({ ...form, asset_type: t, sub_type: withSub.some((r) => r.sub_type) ? (withSub.find((r) => r.sub_type)?.sub_type || '') : '' });
               }}>
                 <option value="">— pick type —</option>
                 {typesForFamily(catalog, familyOf(catalog, form.asset_type)).filter((r) => !r.sub_type).map((r) => <option key={r.asset_type} value={r.asset_type}>{r.asset_type}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Place (location type)</label>
-              <select value={form.location_type || 'OUTDOOR'} onChange={(e) => setForm({ ...form, location_type: e.target.value })}>
+              <SearchSelect value={form.location_type || 'OUTDOOR'} onChange={(e) => setForm({ ...form, location_type: e.target.value })}>
                 {['OUTDOOR', 'INDOOR', 'BUILDING', 'CELLAR', 'UNDERGROUND'].map((c) => <option key={c}>{c}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Bay / feeder bay</label><input value={form.bay || ''} onChange={(e) => setForm({ ...form, bay: e.target.value })} placeholder="e.g. Bay 2, Feeder 5" /></div>
+            <div className="field"><label>Region</label>
+              <SearchSelect value={form.region_id || ''} onChange={(e) => setForm({ ...form, region_id: e.target.value ? Number(e.target.value) : null, substation_id: null, line_id: null })}>
+                <option value="">— none —</option>
+                {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </SearchSelect></div>
             <div className="field"><label>Substation</label>
-              <select value={form.substation_id || ''} onChange={(e) => setForm({ ...form, substation_id: e.target.value ? Number(e.target.value) : null })}>
+              <SearchSelect value={form.substation_id || ''} onChange={(e) => setForm({ ...form, substation_id: e.target.value ? Number(e.target.value) : null, line_id: null })}>
                 <option value="">— none —</option>
-                {subs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select></div>
+                {formSubs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </SearchSelect></div>
             <div className="field"><label>Line</label>
-              <select value={form.line_id || ''} onChange={(e) => setForm({ ...form, line_id: e.target.value ? Number(e.target.value) : null })}>
+              <SearchSelect value={form.line_id || ''} onChange={(e) => setForm({ ...form, line_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">— none —</option>
-                {lines.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-              </select></div>
+                {formLines.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </SearchSelect></div>
             {form.line_id ? (
               <>
                 <div className="field"><label>km from</label><input type="number" step="0.01" value={form.km_from ?? ''} onChange={(e) => setForm({ ...form, km_from: e.target.value === '' ? null : Number(e.target.value) })} /></div>
@@ -621,27 +650,27 @@ export default function Assets() {
             <div className="field"><label>Installation date</label><input type="date" value={form.installation_date || ''} onChange={(e) => setForm({ ...form, installation_date: e.target.value })} /></div>
             <div className="field"><label>Condition (1–10)</label><input type="number" min="1" max="10" value={form.condition_rating ?? 7} onChange={(e) => setForm({ ...form, condition_rating: Number(e.target.value) })} /></div>
             <div className="field"><label>Criticality</label>
-              <select value={form.criticality} onChange={(e) => setForm({ ...form, criticality: e.target.value })}>
+              <SearchSelect value={form.criticality} onChange={(e) => setForm({ ...form, criticality: e.target.value })}>
                 {['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map((c) => <option key={c}>{c}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Lifecycle</label>
-              <select value={form.lifecycle_status} onChange={(e) => setForm({ ...form, lifecycle_status: e.target.value })}>
+              <SearchSelect value={form.lifecycle_status} onChange={(e) => setForm({ ...form, lifecycle_status: e.target.value })}>
                 {['IN_SERVICE', 'OUT_OF_SERVICE', 'RESERVED', 'RETIRED', 'SPARE'].map((c) => <option key={c}>{c}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Default crew</label>
-              <select value={form.default_crew_id || ''} onChange={(e) => setForm({ ...form, default_crew_id: e.target.value ? Number(e.target.value) : null })}>
+              <SearchSelect value={form.default_crew_id || ''} onChange={(e) => setForm({ ...form, default_crew_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">— none —</option>
                 {crews.map((c) => (
                   <option key={c.id} value={c.id} disabled={c.status === 'OFF_DUTY' || c.status === 'UNAVAILABLE'}>
                     {c.name} ({c.status}{c.open_task_count ? ` · ${c.open_task_count} active` : ''})
                   </option>
                 ))}
-              </select>
+              </SearchSelect>
               <p className="muted" style={{ fontSize: 11, marginTop: 2 }}>Prefills new tasks; overrides a schedule's crew at generation.</p></div>
             <div className="field"><label>Operational status</label>
-              <select value={form.operational_status} onChange={(e) => setForm({ ...form, operational_status: e.target.value })}>
+              <SearchSelect value={form.operational_status} onChange={(e) => setForm({ ...form, operational_status: e.target.value })}>
                 {['OPERATIONAL', 'MAINTENANCE', 'OUT_OF_SERVICE', 'UNDER_CONSTRUCTION', 'DECOMMISSIONED'].map((c) => <option key={c}>{c}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>{t('latitude')}</label><input type="number" step="0.0001" value={form.latitude ?? ''} onChange={(e) => setForm({ ...form, latitude: e.target.value === '' ? null : Number(e.target.value) })} /></div>
             <div className="field"><label>{t('longitude')}</label><input type="number" step="0.0001" value={form.longitude ?? ''} onChange={(e) => setForm({ ...form, longitude: e.target.value === '' ? null : Number(e.target.value) })} /></div>
             <div className="field full">

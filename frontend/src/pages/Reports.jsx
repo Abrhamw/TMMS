@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, fmtDate, fmtMoney } from '../api';
-import { Page, Pill, Modal, ErrorNote, Loading, PrintButton, MoneyCard, SearchField, useSearchFilter } from '../components';
+import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, MoneyCard, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
+import { assetsInScope, linesInRegion } from '../cascade';
 import DossierReport from '../components/DossierReport';
 
 const DOSSIER_TYPES = ['ASSET_DETAIL', 'CREW_DETAIL', 'PERSON_DETAIL', 'TASK_DETAIL', 'LINE_DETAIL'];
@@ -16,7 +17,7 @@ export default function Reports() {
   const [genForm, setGenForm] = useState(null);
   const [view, setView] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [entityLists, setEntityLists] = useState({ tasks: [], lines: [], assets: [], crews: [], people: [] });
+  const [entityLists, setEntityLists] = useState({ tasks: [], lines: [], assets: [], crews: [], people: [], regions: [], subs: [] });
   const canPerf = canGenerate;
   const [perfScope, setPerfScope] = useState('crew');
   const [perf, setPerf] = useState(null);
@@ -50,6 +51,8 @@ export default function Reports() {
     api.get('/assets?brief=1').then((r) => setEntityLists((e) => ({ ...e, assets: r }))).catch(() => {});
     api.get('/crews').then((r) => setEntityLists((e) => ({ ...e, crews: r }))).catch(() => {});
     api.get('/people').then((r) => setEntityLists((e) => ({ ...e, people: r }))).catch(() => {});
+    api.get('/regions').then((r) => setEntityLists((e) => ({ ...e, regions: r }))).catch(() => {});
+    api.get('/substations').then((r) => setEntityLists((e) => ({ ...e, subs: r }))).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -184,9 +187,9 @@ export default function Reports() {
           </>}>
           <div className="form-grid">
             <div className="field full"><label>Report type</label>
-              <select value={genForm.report_type} onChange={(e) => setGenForm({ ...genForm, report_type: e.target.value })}>
+              <SearchSelect value={genForm.report_type} onChange={(e) => setGenForm({ ...genForm, report_type: e.target.value })}>
                 {templates.map((t) => <option key={t.id} value={t.report_type}>{t.name}</option>)}
-              </select></div>
+              </SearchSelect></div>
             {DOSSIER_TYPES.includes(genForm.report_type) ? (
               <EntityPicker type={genForm.report_type} form={genForm} lists={entityLists} setForm={setGenForm} />
             ) : (
@@ -194,10 +197,10 @@ export default function Reports() {
                 <div className="field"><label>Period start</label><input type="date" value={genForm.period_start} onChange={(e) => setGenForm({ ...genForm, period_start: e.target.value })} /></div>
                 <div className="field"><label>Period end</label><input type="date" value={genForm.period_end} onChange={(e) => setGenForm({ ...genForm, period_end: e.target.value })} /></div>
                 <div className="field"><label>Region scope</label>
-                  <select value={genForm.scope_region_id || ''} onChange={(e) => setGenForm({ ...genForm, scope_region_id: e.target.value ? Number(e.target.value) : null })}>
+                  <SearchSelect value={genForm.scope_region_id || ''} onChange={(e) => setGenForm({ ...genForm, scope_region_id: e.target.value ? Number(e.target.value) : null })}>
                     <option value="">All regions</option>
                     {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                  </select></div>
+                  </SearchSelect></div>
               </>
             )}
           </div>
@@ -476,20 +479,33 @@ function ReportView({ data, onOpenEntity }) {
 function EntityPicker({ type, form, lists, setForm }) {
   const key = { ASSET_DETAIL: ['asset_id', 'assets'], CREW_DETAIL: ['crew_id', 'crews'], PERSON_DETAIL: ['person_id', 'people'], TASK_DETAIL: ['task_id', 'tasks'], LINE_DETAIL: ['line_id', 'lines'] }[type];
   const [field, listKey] = key || [];
-  const items = lists[listKey] || [];
+  const regions = lists.regions || [];
+  const regionId = form.scope_region_id || '';
+  const items = useMemo(() => {
+    const raw = lists[listKey] || [];
+    if (!regionId) return raw;
+    if (listKey === 'lines') return linesInRegion(raw, regionId);
+    if (listKey === 'assets') return assetsInScope(raw, { regionId }, { subs: lists.subs || [], lines: lists.lines || [] });
+    return raw.filter((x) => x.region_id == null || String(x.region_id) === String(regionId));
+  }, [lists, listKey, regionId]);
   const label = field === 'asset_id' ? 'Asset' : field === 'crew_id' ? 'Crew' : field === 'person_id' ? 'Person' : field === 'line_id' ? 'Line' : 'Task';
   const val = form[field];
   const selected = items.find((x) => x.id === Number(val));
   return (
     <div className="field full"><label>{label}</label>
-      <select value={val || ''} onChange={(e) => setForm({ ...form, [field]: e.target.value ? Number(e.target.value) : null })}>
+      <SearchSelect value={regionId} onChange={(e) => setForm({ ...form, scope_region_id: e.target.value ? Number(e.target.value) : null, [field]: null })}>
+        <option value="">All regions</option>
+        {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+      </SearchSelect>
+      <div className="mt" />
+      <SearchSelect value={val || ''} onChange={(e) => setForm({ ...form, [field]: e.target.value ? Number(e.target.value) : null })}>
         <option value="">Select {label.toLowerCase()}…</option>
         {items.map((x) => (
           <option key={x.id} value={x.id}>
             {field === 'task_id' ? `${x.task_number} — ${x.title}` : field === 'person_id' ? `${x.first_name} ${x.last_name}` : x.name || x.asset_id || x.line_id || x.crew_code}
           </option>
         ))}
-      </select>
+      </SearchSelect>
       {selected && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>Region scoping applied to your access.</div>}
     </div>
   );

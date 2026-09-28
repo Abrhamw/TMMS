@@ -1,3 +1,4 @@
+import { SearchSelect } from '../components';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { asLatLngs, flyToPoints, mapSizeReady, pulseIcon, flashIcon } from '../mapFocus';
@@ -329,14 +330,14 @@ export default function ViewMap({
       )}
       {controls && (
         <div className="map-mini-controls">
-          <select
+          <SearchSelect
             value={baseKey}
             onChange={(e) => setBaseKey(e.target.value)}
             aria-label={t('mapBaseMap')}
             title={t('mapBaseMap')}
           >
             {BASE_LAYERS.map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}
-          </select>
+          </SearchSelect>
           <button type="button" onClick={() => toggleFullscreen(wrapRef.current)} title={isFull ? t('mapExitFullscreen') : t('mapFullscreen')}>
             {isFull ? t('mapExitFullscreen') : t('mapFullscreen')}
           </button>

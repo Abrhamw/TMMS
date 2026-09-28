@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
-import { Page, Modal, ErrorNote, Loading, ConfirmButton, SearchField, useSearchFilter } from '../components';
+import { SearchSelect, Page, Modal, ErrorNote, Loading, ConfirmButton, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
 
 const UNIT_TYPE_LABEL = {
@@ -56,6 +56,13 @@ export default function Organization() {
   const [form, setForm] = useState(null);
   const [detail, setDetail] = useState(null);
   const { query, setQuery, results: unitRows } = useSearchFilter(flat);
+
+  // Region narrows the parent-unit picker (units with no region stay selectable).
+  const parentUnits = useMemo(() => {
+    const base = (units || []).filter((u) => u.id !== form?.id);
+    if (!form?.region_id) return base;
+    return base.filter((u) => u.region_id == null || String(u.region_id) === String(form.region_id));
+  }, [units, form?.id, form?.region_id]);
 
   const load = () => {
     Promise.all([
@@ -279,24 +286,24 @@ export default function Organization() {
             <div className="field"><label>Unit code</label><input value={form.unit_code || ''} onChange={(e) => setForm({ ...form, unit_code: e.target.value })} /></div>
             <div className="field"><label>Name</label><input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             <div className="field"><label>Type</label>
-              <select value={form.unit_type} onChange={(e) => setForm({ ...form, unit_type: e.target.value })}>
+              <SearchSelect value={form.unit_type} onChange={(e) => setForm({ ...form, unit_type: e.target.value })}>
                 {Object.entries(UNIT_TYPE_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Parent unit</label>
-              <select value={form.parent_id || ''} onChange={(e) => setForm({ ...form, parent_id: e.target.value ? Number(e.target.value) : null })}>
+              <SearchSelect value={form.parent_id || ''} onChange={(e) => setForm({ ...form, parent_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">— top level —</option>
-                {(units || []).filter((u) => u.id !== form.id).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-              </select></div>
+                {parentUnits.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </SearchSelect></div>
             <div className="field"><label>Region</label>
-              <select value={form.region_id || ''} onChange={(e) => setForm({ ...form, region_id: e.target.value ? Number(e.target.value) : null })}>
+              <SearchSelect value={form.region_id || ''} onChange={(e) => setForm({ ...form, region_id: e.target.value ? Number(e.target.value) : null, parent_id: null })}>
                 <option value="">— none —</option>
                 {regions.map((r) => <option key={r.id} value={r.id}>{r.code} — {r.name}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Manager</label>
-              <select value={form.manager_person_id || ''} onChange={(e) => setForm({ ...form, manager_person_id: e.target.value ? Number(e.target.value) : null })}>
+              <SearchSelect value={form.manager_person_id || ''} onChange={(e) => setForm({ ...form, manager_person_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">— none —</option>
                 {people.map((p) => <option key={p.id} value={p.id}>{p.first_name} {p.last_name}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Sort order</label><input type="number" value={form.sort_order ?? 0} onChange={(e) => setForm({ ...form, sort_order: Number(e.target.value) })} /></div>
             <div className="field full"><label>Notes</label><input value={form.notes || ''} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
           </div>

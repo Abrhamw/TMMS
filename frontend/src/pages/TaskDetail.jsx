@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api, fmtDate, fmtDateTime, asArray } from '../api';
-import { Page, Pill, Modal, ErrorNote, Loading, PrintButton, Progress } from '../components';
+import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, Progress } from '../components';
 import { can, getStoredUser, getStoredToken } from '../auth';
 import DossierReport from '../components/DossierReport';
 import ExecutionDetail from '../components/ExecutionDetail';
@@ -569,9 +569,9 @@ export default function TaskDetail() {
               )}
               {canVerify && <>
                 <div className="field"><label>Result</label>
-                  <select value={verifyForm.result} onChange={(e) => setVerifyForm({ ...verifyForm, result: e.target.value })}>
+                  <SearchSelect value={verifyForm.result} onChange={(e) => setVerifyForm({ ...verifyForm, result: e.target.value })}>
                     <option value="PASS">PASS</option><option value="FAIL">FAIL</option><option value="PARTIAL">PARTIAL</option><option value="DEFERRED">DEFERRED</option>
-                  </select></div>
+                  </SearchSelect></div>
                 <div className="field"><label>Completion summary</label><textarea value={verifyForm.summary} onChange={(e) => setVerifyForm({ ...verifyForm, summary: e.target.value })} /></div>
                 <div className="field"><label>Cost (optional)</label><input type="number" min="0" step="0.01" value={verifyForm.cost ?? ''} onChange={(e) => setVerifyForm({ ...verifyForm, cost: e.target.value })} /></div>
                 <button className="btn btn-primary" onClick={verify}>Verify &amp; complete</button>
@@ -633,11 +633,11 @@ export default function TaskDetail() {
           {canManage && (
             <div className="grid grid-2 mt" style={{ gap: 12 }}>
               <div className="field"><label>Crew</label>
-                <select value={editCrewId} onChange={(e) => setEditCrewId(e.target.value)}>
+                <SearchSelect value={editCrewId} onChange={(e) => setEditCrewId(e.target.value)}>
                   <option value="">— none —</option>
                   {(assignOptions?.candidates || []).map((c) => <option key={c.id} value={c.id}>{c.name} ({c.crew_code})</option>)}
                   {t.crew && !(assignOptions?.candidates || []).some((c) => c.id === t.crew_id) ? <option value={t.crew_id}>{t.crew.name}</option> : null}
-                </select>
+                </SearchSelect>
               </div>
               <div className="field"><label>Checklist templates</label>
                 <div style={{ maxHeight: 140, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 6, padding: '6px 8px' }}>
@@ -794,9 +794,9 @@ export default function TaskDetail() {
           <div className="form-grid">
             <div className="field full"><label>Title</label><input value={findingForm.title} onChange={(e) => setFindingForm({ ...findingForm, title: e.target.value })} placeholder="e.g. Loose vibration damper" /></div>
             <div className="field full"><label>Severity</label>
-              <select value={findingForm.severity} onChange={(e) => setFindingForm({ ...findingForm, severity: e.target.value })}>
+              <SearchSelect value={findingForm.severity} onChange={(e) => setFindingForm({ ...findingForm, severity: e.target.value })}>
                 {['INFO', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].map((s) => <option key={s}>{s}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field full"><label>Detail</label><textarea value={findingForm.detail || ''} onChange={(e) => setFindingForm({ ...findingForm, detail: e.target.value })} /></div>
           </div>
         </Modal>
@@ -984,7 +984,7 @@ export default function TaskDetail() {
                     {(plan.carry_checklist_template_id || plan.carry_count > 0) && (
                       <div className="field" style={{ margin: '6px 0' }}>
                         <label>Checklist templates</label>
-                        <select
+                        <SearchSelect
                           style={{ width: '100%' }}
                           value={fuTemplate[plan.key] ?? ''}
                           onChange={(e) => setFuTemplate({ ...fuTemplate, [plan.key]: e.target.value })}
@@ -994,7 +994,7 @@ export default function TaskDetail() {
                             <option key={c.id} value={String(c.id)}>{c.name}</option>
                           ))}
                           <option value="__none__">— no checklist —</option>
-                        </select>
+                        </SearchSelect>
                       </div>
                     )}
                     <button className="btn btn-sm btn-primary mt" disabled={fuBusyKey === plan.key} onClick={() => createFollowUp(plan.key)}>
@@ -1023,11 +1023,11 @@ function ItemInput({ item, state, setState, target }) {
 
   if (item.response_type === 'PASS_FAIL' || item.response_type === 'YES_NO') {
     return (
-      <select value={state.value ?? ''} onChange={(e) => set(e.target.value === 'true' ? true : e.target.value === 'false' ? false : null)}>
+      <SearchSelect value={state.value ?? ''} onChange={(e) => set(e.target.value === 'true' ? true : e.target.value === 'false' ? false : null)}>
         <option value="">Select…</option>
         <option value="true">Pass / Yes</option>
         <option value="false">Fail / No</option>
-      </select>
+      </SearchSelect>
     );
   }
   if (item.response_type === 'NUMERIC') {
@@ -1042,10 +1042,10 @@ function ItemInput({ item, state, setState, target }) {
   if (item.response_type === 'SELECT') {
     const opts = item.pass_criteria?.options || [];
     return (
-      <select value={state.value ?? ''} onChange={(e) => set(e.target.value)}>
+      <SearchSelect value={state.value ?? ''} onChange={(e) => set(e.target.value)}>
         <option value="">Select…</option>
         {opts.map((o) => <option key={o} value={o}>{o}</option>)}
-      </select>
+      </SearchSelect>
     );
   }
   if (item.response_type === 'GPS_POINT') {

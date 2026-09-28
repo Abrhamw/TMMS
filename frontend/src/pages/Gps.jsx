@@ -1,14 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api, fmtDate, asArray } from '../api';
-import { Page, Pill, Modal, ErrorNote, Loading, StatCard, ConfirmButton, SearchField, useSearchFilter } from '../components';
+import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, StatCard, ConfirmButton, SearchField, useSearchFilter } from '../components';
 import { can, isGlobal, getStoredUser } from '../auth';
+import { assetsInScope, linesInRegion, subsInRegion, towersForLine } from '../cascade';
 import MapPicker, { getDevicePosition } from '../components/MapPicker';
 import PolygonEditor from '../components/PolygonEditor';
 import Comments from '../components/Comments';
 import { t } from '../i18n';
 
 const blankVal = {
-  target_type: 'SUBSTATION', target_id: '', expected_lat: null, expected_lng: null,
+  target_type: 'SUBSTATION', target_id: '', region_id: '', expected_lat: null, expected_lng: null,
   measured_lat: null, measured_lng: null, accuracy_m: 5, validation_method: 'GPS_DEVICE', notes: '',
 };
 
@@ -211,17 +212,23 @@ export default function Gps() {
     return o ? o.name : `#${id}`;
   };
 
-  const optionsFor = (t) => {
-    if (t === 'SUBSTATION') return subs.map((s) => ({ id: s.id, name: s.name, lat: s.latitude, lng: s.longitude }));
-    if (t === 'ASSET') return assets.filter((a) => a.latitude !== null && a.latitude !== undefined).map((a) => ({ id: a.id, name: a.name, lat: a.latitude, lng: a.longitude }));
-    if (t === 'TOWER') return towers.map((x) => ({ id: x.id, name: x.tower_id, lat: x.latitude, lng: x.longitude }));
-    if (t === 'LINE') return lines.map((l) => {
+  const optionsFor = (t, regionId) => {
+    if (t === 'SUBSTATION') return subsInRegion(subs, regionId).map((s) => ({ id: s.id, name: s.name, lat: s.latitude, lng: s.longitude }));
+    if (t === 'ASSET') return assetsInScope(assets, { regionId }, { subs, lines }).filter((a) => a.latitude !== null && a.latitude !== undefined).map((a) => ({ id: a.id, name: a.name, lat: a.latitude, lng: a.longitude }));
+    if (t === 'TOWER') {
+      if (!regionId) return towers.map((x) => ({ id: x.id, name: x.tower_id, lat: x.latitude, lng: x.longitude }));
+      const lineIds = new Set(linesInRegion(lines, regionId).map((l) => String(l.id)));
+      return towers.filter((x) => lineIds.has(String(x.line_id))).map((x) => ({ id: x.id, name: x.tower_id, lat: x.latitude, lng: x.longitude }));
+    }
+    if (t === 'LINE') return linesInRegion(lines, regionId).map((l) => {
       const route = asArray(l.route_json);
       const mid = route.length ? route[Math.floor(route.length / 2)] : (l.from_substation ? [l.from_substation.latitude, l.from_substation.longitude] : null);
       return { id: l.id, name: l.name, lat: mid ? mid[0] : null, lng: mid ? mid[1] : null };
     }).filter((x) => x.lat !== null && x.lat !== undefined);
     return [];
   };
+  const formTargets = useMemo(() => optionsFor(form?.target_type, form?.region_id), [form?.target_type, form?.region_id, subs, assets, lines, towers]);
+  const fenceTargets = useMemo(() => optionsFor(fenceForm?.target_type, fenceForm?.region_id), [fenceForm?.target_type, fenceForm?.region_id, subs, assets, lines, towers]);
 
   async function captureDevice() {
     setGpsBusy(true);
@@ -279,13 +286,13 @@ export default function Gps() {
       <h3 className="section-title">Violations <span className="muted">— never-missed GPS violations surfaced for review</span></h3>
       <div className="filters">
         <SearchField value={qViol} onChange={setQViol} placeholder="Search violations…" />
-        <select value={vFilter} onChange={(e) => setVFilter(e.target.value)}>
+        <SearchSelect value={vFilter} onChange={(e) => setVFilter(e.target.value)}>
           <option value="">All review states</option>
           <option value="OPEN">Open</option>
           <option value="ACKNOWLEDGED">Acknowledged</option>
           <option value="RESOLVED">Resolved</option>
           <option value="REJECTED">Rejected</option>
-        </select>
+        </SearchSelect>
         <span className="muted" style={{ fontSize: 12 }}>{violRows.length} of {violations.length}</span>
       </div>
       <div className="card">
@@ -315,12 +322,12 @@ export default function Gps() {
       <h3 className="section-title">Validation Records</h3>
       <div className="filters">
         <SearchField value={qRec} onChange={setQRec} placeholder="Search validation records…" />
-        <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+        <SearchSelect value={filter} onChange={(e) => setFilter(e.target.value)}>
           <option value="">All results</option>
           <option value="PASS">PASS</option>
           <option value="FAIL">FAIL</option>
           <option value="MANUAL_REVIEW">MANUAL_REVIEW</option>
-        </select>
+        </SearchSelect>
         <span className="muted" style={{ fontSize: 12 }}>{recRows.length} of {rows.length}</span>
       </div>
       <div className="card">
@@ -390,25 +397,30 @@ export default function Gps() {
           </>}>
           <div className="form-grid">
             <div className="field"><label>Target type</label>
-              <select value={form.target_type} onChange={(e) => setForm({ ...form, target_type: e.target.value })}>
+              <SearchSelect value={form.target_type} onChange={(e) => setForm({ ...form, target_type: e.target.value, target_id: '' })}>
                 {['SUBSTATION', 'ASSET', 'TOWER', 'LINE'].map((t) => <option key={t}>{t}</option>)}
-              </select></div>
+              </SearchSelect></div>
+            <div className="field"><label>Region</label>
+              <SearchSelect value={form.region_id ?? ''} onChange={(e) => setForm({ ...form, region_id: e.target.value, target_id: '' })}>
+                <option value="">All regions</option>
+                {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </SearchSelect></div>
             <div className="field"><label>Target</label>
-              <select value={form.target_id} onChange={(e) => {
-                const o = optionsFor(form.target_type).find((x) => x.id === Number(e.target.value));
+              <SearchSelect value={form.target_id} onChange={(e) => {
+                const o = formTargets.find((x) => x.id === Number(e.target.value));
                 setForm({ ...form, target_id: Number(e.target.value), expected_lat: o?.lat || form.expected_lat, expected_lng: o?.lng || form.expected_lng });
               }}>
-                {optionsFor(form.target_type).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-              </select></div>
+                {formTargets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </SearchSelect></div>
             <div className="field"><label>Expected lat</label><input type="number" step="0.0001" value={form.expected_lat ?? ''} onChange={(e) => setForm({ ...form, expected_lat: e.target.value === '' ? null : Number(e.target.value) })} /></div>
             <div className="field"><label>Expected lng</label><input type="number" step="0.0001" value={form.expected_lng ?? ''} onChange={(e) => setForm({ ...form, expected_lng: e.target.value === '' ? null : Number(e.target.value) })} /></div>
             <div className="field"><label>Measured lat</label><input type="number" step="0.0001" value={form.measured_lat ?? ''} onChange={(e) => setForm({ ...form, measured_lat: e.target.value === '' ? null : Number(e.target.value) })} /></div>
             <div className="field"><label>Measured lng</label><input type="number" step="0.0001" value={form.measured_lng ?? ''} onChange={(e) => setForm({ ...form, measured_lng: e.target.value === '' ? null : Number(e.target.value) })} /></div>
             <div className="field"><label>Accuracy (m)</label><input type="number" value={form.accuracy_m} onChange={(e) => setForm({ ...form, accuracy_m: Number(e.target.value) })} /></div>
             <div className="field"><label>Method</label>
-              <select value={form.validation_method} onChange={(e) => setForm({ ...form, validation_method: e.target.value })}>
+              <SearchSelect value={form.validation_method} onChange={(e) => setForm({ ...form, validation_method: e.target.value })}>
                 {['GPS_DEVICE', 'SURVEY', 'APP_CAPTURE', 'AERIAL_SURVEY', 'MANUAL_ENTRY'].map((m) => <option key={m}>{m}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field full">
               <label>Capture measured point from map or device</label>
               <MapPicker
@@ -504,32 +516,32 @@ export default function Gps() {
           <div className="form-grid">
             <div className="field"><label>Name</label><input value={fenceForm.name} onChange={(e) => setFenceForm({ ...fenceForm, name: e.target.value })} placeholder="Yard perimeter" /></div>
             <div className="field"><label>Applies to target type</label>
-              <select value={fenceForm.target_type} onChange={(e) => setFenceForm({ ...fenceForm, target_type: e.target.value, target_id: '' })}>
+              <SearchSelect value={fenceForm.target_type} onChange={(e) => setFenceForm({ ...fenceForm, target_type: e.target.value, target_id: '' })}>
                 {GEOFENCE_TARGETS.map((x) => <option key={x} value={x}>{x}{x === 'REGION' ? ' (all targets in region)' : ''}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Region</label>
-              <select value={fenceForm.region_id ?? ''} onChange={(e) => setFenceForm({ ...fenceForm, region_id: e.target.value })}>
+              <SearchSelect value={fenceForm.region_id ?? ''} onChange={(e) => setFenceForm({ ...fenceForm, region_id: e.target.value, target_id: '' })}>
                 {globalUser && <option value="">All regions</option>}
                 {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select></div>
+              </SearchSelect></div>
             {fenceForm.target_type !== 'REGION' && (
               <div className="field"><label>Specific target (optional)</label>
-                <select value={fenceForm.target_id ?? ''} onChange={(e) => setFenceForm({ ...fenceForm, target_id: e.target.value })}>
+                <SearchSelect value={fenceForm.target_id ?? ''} onChange={(e) => setFenceForm({ ...fenceForm, target_id: e.target.value })}>
                   <option value="">All {fenceForm.target_type} in region</option>
-                  {optionsFor(fenceForm.target_type).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-                </select></div>
+                  {fenceTargets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </SearchSelect></div>
             )}
             <div className="field"><label>Boundary shape</label>
-              <select value={fenceMode} onChange={(e) => setFenceMode(e.target.value)}>
+              <SearchSelect value={fenceMode} onChange={(e) => setFenceMode(e.target.value)}>
                 <option value="circle">{fenceForm.target_type === 'LINE' ? 'Route corridor (radius)' : 'Circle (center + radius)'}</option>
                 <option value="polygon">Polygon</option>
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Tolerance (m)</label><input type="number" min="0" value={fenceForm.tolerance_m ?? ''} onChange={(e) => setFenceForm({ ...fenceForm, tolerance_m: e.target.value })} /></div>
             <div className="field"><label>Active</label>
-              <select value={fenceForm.is_active ? '1' : '0'} onChange={(e) => setFenceForm({ ...fenceForm, is_active: e.target.value === '1' })}>
+              <SearchSelect value={fenceForm.is_active ? '1' : '0'} onChange={(e) => setFenceForm({ ...fenceForm, is_active: e.target.value === '1' })}>
                 <option value="1">Active</option>
                 <option value="0">Inactive</option>
-              </select></div>
+              </SearchSelect></div>
             {fenceMode === 'circle' ? (
               <>
                 <div className="field"><label>{fenceForm.target_type === 'LINE' && fenceForm.target_id === '' ? 'Corridor width (m, half-width)' : 'Radius (m)'}</label>

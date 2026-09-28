@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, fmtDate } from '../api';
-import { Page, Pill, Modal, ErrorNote, Loading, CondPill, PrintButton, ConfirmButton, SearchField, useSearchFilter } from '../components';
+import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, CondPill, PrintButton, ConfirmButton, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
 import MapPicker from '../components/MapPicker';
 import BoundaryPicker from '../components/BoundaryPicker';
@@ -108,10 +108,10 @@ export default function Substations({ embedded }) {
       )}
       <div className="filters">
         <SearchField value={query} onChange={setQuery} placeholder="Search substations…" />
-        <select value={regionFilter} onChange={(e) => setRegionFilter(e.target.value)}>
+        <SearchSelect value={regionFilter} onChange={(e) => setRegionFilter(e.target.value)}>
           <option value="">All regions</option>
           {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-        </select>
+        </SearchSelect>
         <span className="muted" style={{ fontSize: 12 }}>{results.length} of {rows.length}</span>
       </div>
       <div className="card">
@@ -250,21 +250,21 @@ export default function Substations({ embedded }) {
             <div className="field"><label>Substation ID</label><input value={form.substation_id || ''} onChange={(e) => setForm({ ...form, substation_id: e.target.value })} /></div>
             <div className="field"><label>Name</label><input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             <div className="field"><label>Region</label>
-              <select value={form.region_id || ''} onChange={(e) => setForm({ ...form, region_id: Number(e.target.value) })}>
+              <SearchSelect value={form.region_id || ''} onChange={(e) => setForm({ ...form, region_id: Number(e.target.value) })}>
                 {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Voltage levels (comma-separated)</label><input value={form.voltage_levels || ''} onChange={(e) => setForm({ ...form, voltage_levels: e.target.value })} placeholder="220kV, 138kV" /></div>
             <div className="field"><label>{t('latitude')}</label><input type="number" step="0.0001" value={form.latitude ?? ''} onChange={(e) => setForm({ ...form, latitude: e.target.value === '' ? null : Number(e.target.value) })} /></div>
             <div className="field"><label>{t('longitude')}</label><input type="number" step="0.0001" value={form.longitude ?? ''} onChange={(e) => setForm({ ...form, longitude: e.target.value === '' ? null : Number(e.target.value) })} /></div>
             <div className="field"><label>Elevation (m)</label><input type="number" value={form.elevation_m ?? ''} onChange={(e) => setForm({ ...form, elevation_m: e.target.value === '' ? null : Number(e.target.value) })} /></div>
             <div className="field"><label>Type</label>
-              <select value={form.substation_type} onChange={(e) => setForm({ ...form, substation_type: e.target.value })}>
+              <SearchSelect value={form.substation_type} onChange={(e) => setForm({ ...form, substation_type: e.target.value })}>
                 {['TRANSFORMER', 'SWITCHING', 'TRANSFORMER_SWITCHING', 'GAS_INSULATED', 'HVDC_CONVERTER'].map((t) => <option key={t}>{t}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Status</label>
-              <select value={form.operational_status} onChange={(e) => setForm({ ...form, operational_status: e.target.value })}>
+              <SearchSelect value={form.operational_status} onChange={(e) => setForm({ ...form, operational_status: e.target.value })}>
                 {['OPERATIONAL', 'MAINTENANCE', 'OUT_OF_SERVICE', 'UNDER_CONSTRUCTION', 'DECOMMISSIONED'].map((s) => <option key={s}>{s}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Commissioned Date</label><input type="date" value={form.commissioned_date || ''} onChange={(e) => setForm({ ...form, commissioned_date: e.target.value })} /></div>
             <div className="field"><label>Fence radius (m) — yard geofence</label><input type="number" value={form.fence_radius_m ?? 220} onChange={(e) => setForm({ ...form, fence_radius_m: Number(e.target.value) })} /></div>
             <div className="field full">

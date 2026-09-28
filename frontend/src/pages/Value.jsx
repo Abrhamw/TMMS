@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, fmtMoney, fmtDate } from '../api';
-import { Page, MoneyCard, Loading, ErrorNote } from '../components';
+import { SearchSelect, Page, MoneyCard, Loading, ErrorNote } from '../components';
 import { BarRow } from '../components/InfraVisuals';
 import { can, getStoredUser } from '../auth';
 
@@ -58,10 +58,10 @@ export default function Value() {
         <button className={`btn btn-sm${tab === 'prices' ? ' btn-primary' : ''}`} onClick={() => setTab('prices')}>Prices</button>
         <span className="grow" />
         <span className="muted" style={{ fontSize: 12 }}>{currency}</span>
-        <select value={regionId ?? ''} onChange={(e) => setRegionId(e.target.value ? Number(e.target.value) : null)}>
+        <SearchSelect value={regionId ?? ''} onChange={(e) => setRegionId(e.target.value ? Number(e.target.value) : null)}>
           <option value="">All regions (my scope)</option>
           {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-        </select>
+        </SearchSelect>
       </div>
 
       {tab === 'valuation' && (

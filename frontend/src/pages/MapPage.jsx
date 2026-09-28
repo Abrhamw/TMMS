@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { api } from '../api';
-import { Page, Loading, ErrorNote } from '../components';
+import { SearchSelect, Page, Loading, ErrorNote } from '../components';
 import { getDevicePosition } from '../components/MapPicker';
 import {
   flyToPoints, boundsOf, circleCorners, relatedSegment, flashIcon, isEnergized,
@@ -725,9 +725,9 @@ export default function MapPage() {
           <MapSearchBox items={searchIndex} onSelect={revealItem} placeholder={t('mapSearch')} />
           <div className="map-basemap">
             <label>{t('mapBaseMap')}</label>
-            <select value={baseKey} onChange={(e) => setBaseKey(e.target.value)} aria-label={t('mapBaseMap')}>
+            <SearchSelect value={baseKey} onChange={(e) => setBaseKey(e.target.value)} aria-label={t('mapBaseMap')}>
               {BASE_LAYERS.map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}
-            </select>
+            </SearchSelect>
             <button type="button" className="map-btn" onClick={() => toggleFullscreen(shellRef.current)} title={isFull ? t('mapExitFullscreen') : t('mapFullscreen')}>
               {isFull ? t('mapExitFullscreen') : t('mapFullscreen')}
             </button>
@@ -782,19 +782,19 @@ export default function MapPage() {
               );
             })}
           </div>
-          <select className="map-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label={t('mapFilters')}>
+          <SearchSelect className="map-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label={t('mapFilters')}>
             <option value="ALL">{t('mapAllStatuses')}</option>
             <option value="ENERGIZED">{t('mapEnergized')}</option>
             <option value="NOT_ENERGIZED">{t('mapNotEnergized')}</option>
-          </select>
-          <select className="map-select" value={regionFilter} onChange={(e) => setRegionFilter(e.target.value)} aria-label={t('mapFilters')}>
+          </SearchSelect>
+          <SearchSelect className="map-select" value={regionFilter} onChange={(e) => setRegionFilter(e.target.value)} aria-label={t('mapFilters')}>
             <option value="ALL">{t('mapAllRegions')}</option>
             {(data?.regions || []).map((r) => (
               <option key={r.id} value={r.id}>
                 {r.name}{regionFeatureCount[String(r.id)] ? ` (${regionFeatureCount[String(r.id)]})` : ' (0)'}
               </option>
             ))}
-          </select>
+          </SearchSelect>
           {regionFilter !== 'ALL' && !regionFeatureCount[String(regionFilter)] && (
             <div className="muted" style={{ fontSize: 12, padding: '2px 2px 0' }}>
               {t('mapRegionEmpty')}

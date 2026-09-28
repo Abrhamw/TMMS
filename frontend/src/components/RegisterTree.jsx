@@ -1,3 +1,4 @@
+import { SearchSelect } from '../components';
 import { useEffect, useState } from 'react';
 import { api, fmtNum, fmtMoney, condColor } from '../api';
 
@@ -166,10 +167,10 @@ export default function RegisterTree({ canWrite, regionId, onChangeRegion, onSel
     <div className="card card-pad">
       {tree.regions.length > 1 && (
         <div className="filters" style={{ marginBottom: 8 }}>
-          <select value={regionId ?? ''} onChange={(e) => onChangeRegion(e.target.value ? Number(e.target.value) : null)}>
+          <SearchSelect value={regionId ?? ''} onChange={(e) => onChangeRegion(e.target.value ? Number(e.target.value) : null)}>
             <option value="">All regions</option>
             {tree.regions.map((r) => <option key={r.region.id} value={r.region.id}>{r.region.name}</option>)}
-          </select>
+          </SearchSelect>
         </div>
       )}
       {val && (

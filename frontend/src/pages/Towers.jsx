@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, asArray } from '../api';
-import { Page, Modal, ErrorNote, Loading, CondPill, PrintButton, ConfirmButton, SearchField, useSearchFilter } from '../components';
+import { SearchSelect, Page, Modal, ErrorNote, Loading, CondPill, PrintButton, ConfirmButton, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
+import { linesInRegion } from '../cascade';
 import MapPicker from '../components/MapPicker';
 import ViewMap from '../components/ViewMap';
 import { relatedSegment, entityColor, isEnergized, voltageChip, popupRows } from '../mapFocus';
@@ -43,6 +44,8 @@ export default function Towers({ embedded }) {
   const canWrite = can(getStoredUser(), 'tower:write');
   const [rows, setRows] = useState(null);
   const [lines, setLines] = useState([]);
+  const [regions, setRegions] = useState([]);
+  const [regionFilter, setRegionFilter] = useState('');
   const [lineFilter, setLineFilter] = useState('');
   const [page, setPage] = useState(1);
   const [viewMode, setViewMode] = useState('table');
@@ -60,6 +63,12 @@ export default function Towers({ embedded }) {
   const [importError, setImportError] = useState(null);
   const fileRef = useRef(null);
   const { query, setQuery, results: visibleRows } = useSearchFilter(rows);
+  const filterLines = useMemo(() => linesInRegion(lines, regionFilter), [lines, regionFilter]);
+  const regionLineIds = useMemo(() => new Set(filterLines.map((l) => String(l.id))), [filterLines]);
+  const allRows = useMemo(
+    () => (regionFilter ? visibleRows.filter((t) => regionLineIds.has(String(t.line_id))) : visibleRows),
+    [visibleRows, regionFilter, regionLineIds]
+  );
 
   useEffect(() => {
     setPage(1);
@@ -72,6 +81,7 @@ export default function Towers({ embedded }) {
   useEffect(() => {
     setPage(1);
     api.get('/lines').then((r) => setLines(r)).catch(() => {});
+    api.get('/regions').then((r) => setRegions(r)).catch(() => {});
     api.get('/tower-component-types').then((r) => setCatalog(r)).catch(() => {});
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -210,7 +220,6 @@ export default function Towers({ embedded }) {
   }
 
   const PAGE_SIZE = 200;
-  const allRows = visibleRows;
   const pageCount = Math.max(1, Math.ceil(allRows.length / PAGE_SIZE));
   const curPage = Math.min(page, pageCount);
   const pageRows = allRows.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
@@ -236,10 +245,14 @@ export default function Towers({ embedded }) {
       )}
       <div className="filters">
         <SearchField value={query} onChange={setQuery} placeholder="Search towers…" />
-        <select value={lineFilter} onChange={(e) => setLineFilter(e.target.value)}>
+        <SearchSelect value={regionFilter} onChange={(e) => { setRegionFilter(e.target.value); setLineFilter(''); }}>
+          <option value="">All regions</option>
+          {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+        </SearchSelect>
+        <SearchSelect value={lineFilter} onChange={(e) => setLineFilter(e.target.value)}>
           <option value="">All lines</option>
-          {lines.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-        </select>
+          {filterLines.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+        </SearchSelect>
         <span className="muted">{allRows.length} towers</span>
         <span className="grow" />
         <button className={`btn btn-sm${viewMode === 'table' ? ' btn-primary' : ''}`} onClick={() => setViewMode('table')}>Table</button>
@@ -345,28 +358,28 @@ export default function Towers({ embedded }) {
           <div className="form-grid">
             <div className="field"><label>Tower ID</label><input value={form.tower_id || ''} onChange={(e) => setForm({ ...form, tower_id: e.target.value })} /></div>
             <div className="field"><label>Line</label>
-              <select value={form.line_id || ''} onChange={(e) => {
+              <SearchSelect value={form.line_id || ''} onChange={(e) => {
                 const lid = Number(e.target.value);
                 setForm({ ...form, line_id: lid, tower_id: suggestId(lid), tower_number: String(suggestId(lid)).split('-').pop() });
               }}>
                 <option value="">Select line</option>
                 {lines.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Number</label><input value={form.tower_number || ''} onChange={(e) => setForm({ ...form, tower_number: e.target.value })} /></div>
             <div className="field"><label>km marker</label><input type="number" step="0.1" value={form.km_marker ?? ''} onChange={(e) => setForm({ ...form, km_marker: e.target.value === '' ? 0 : Number(e.target.value) })} /></div>
             <div className="field"><label>Height (m)</label><input type="number" step="0.5" value={form.height_m ?? ''} onChange={(e) => setForm({ ...form, height_m: e.target.value === '' ? 0 : Number(e.target.value) })} /></div>
             <div className="field"><label>Type</label>
-              <select value={form.tower_type} onChange={(e) => setForm({ ...form, tower_type: e.target.value })}>
+              <SearchSelect value={form.tower_type} onChange={(e) => setForm({ ...form, tower_type: e.target.value })}>
                 {TYPES.map((x) => <option key={x}>{x}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Material</label>
-              <select value={form.tower_material} onChange={(e) => setForm({ ...form, tower_material: e.target.value })}>
+              <SearchSelect value={form.tower_material} onChange={(e) => setForm({ ...form, tower_material: e.target.value })}>
                 {MATERIALS.map((x) => <option key={x}>{x}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Foundation</label>
-              <select value={form.foundation_type || 'PAD'} onChange={(e) => setForm({ ...form, foundation_type: e.target.value })}>
+              <SearchSelect value={form.foundation_type || 'PAD'} onChange={(e) => setForm({ ...form, foundation_type: e.target.value })}>
                 {FOUNDATIONS.map((x) => <option key={x}>{x}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Corrosion rating (0-10)</label>
               <input type="number" min="0" max="10" value={form.corrosion_rating ?? ''} onChange={(e) => setForm({ ...form, corrosion_rating: e.target.value === '' ? 0 : Number(e.target.value) })} /></div>
             <div className="field"><label>{t('latitude')}</label><input type="number" step="0.0001" value={form.latitude ?? ''} onChange={(e) => setForm({ ...form, latitude: e.target.value === '' ? null : Number(e.target.value) })} /></div>
@@ -502,12 +515,12 @@ export default function Towers({ embedded }) {
           </>}>
           <div className="form-grid">
             <div className="field"><label>Part type</label>
-              <select value={compForm.component_type} onChange={(e) => {
+              <SearchSelect value={compForm.component_type} onChange={(e) => {
                 const cat = catalog.find((c) => c.type === e.target.value);
                 setCompForm({ ...compForm, component_type: e.target.value, name: cat ? cat.name : compForm.name });
               }}>
                 {catalog.map((c) => <option key={c.type} value={c.type}>{c.type} — {c.name}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Name / description</label><input value={compForm.name || ''} onChange={(e) => setCompForm({ ...compForm, name: e.target.value })} /></div>
             <div className="field"><label>Material</label><input value={compForm.material || ''} onChange={(e) => setCompForm({ ...compForm, material: e.target.value })} /></div>
             <div className="field"><label>Quantity</label><input type="number" min="0" value={compForm.quantity ?? ''} onChange={(e) => setCompForm({ ...compForm, quantity: e.target.value === '' ? 0 : Number(e.target.value) })} /></div>
@@ -515,9 +528,9 @@ export default function Towers({ embedded }) {
             <div className="field"><label>Condition (0-10)</label>
               <input type="number" min="0" max="10" value={compForm.condition_rating ?? ''} onChange={(e) => setCompForm({ ...compForm, condition_rating: e.target.value === '' ? 0 : Number(e.target.value) })} /></div>
             <div className="field"><label>Status</label>
-              <select value={compForm.status} onChange={(e) => setCompForm({ ...compForm, status: e.target.value })}>
+              <SearchSelect value={compForm.status} onChange={(e) => setCompForm({ ...compForm, status: e.target.value })}>
                 {COMPONENT_STATUSES.map((s) => <option key={s}>{s}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field full"><label>Notes</label><input value={compForm.notes || ''} onChange={(e) => setCompForm({ ...compForm, notes: e.target.value })} /></div>
           </div>
         </Modal>

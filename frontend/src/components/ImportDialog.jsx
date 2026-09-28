@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api } from '../api';
-import { Modal, ErrorNote } from '../components';
+import { SearchSelect, Modal, ErrorNote } from '../components';
 import BoundaryPicker from './BoundaryPicker';
 import RoutePathEditor from './RoutePathEditor';
 import { t } from '../i18n';
@@ -196,10 +196,10 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
             </div>
             {regions && regions.length > 0 && (
               <div className="field"><label>{t('importDefaultRegion')}</label>
-                <select value={defaultRegionId} onChange={(e) => { setDefaultRegionId(e.target.value); setPreview(null); setEdits({}); }}>
+                <SearchSelect value={defaultRegionId} onChange={(e) => { setDefaultRegionId(e.target.value); setPreview(null); setEdits({}); }}>
                   <option value="">—</option>
                   {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                </select>
+                </SearchSelect>
               </div>
             )}
             {supportsUpdate && (

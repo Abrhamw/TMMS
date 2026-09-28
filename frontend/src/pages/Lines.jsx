@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { api, fmtDate, asArray } from '../api';
-import { Page, Pill, Modal, ErrorNote, Loading, PrintButton, ConfirmButton, SearchField, useSearchFilter } from '../components';
+import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, ConfirmButton, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
+import { subsInRegion } from '../cascade';
 import DossierReport from '../components/DossierReport';
 import ImportDialog from '../components/ImportDialog';
 import ViewMap from '../components/ViewMap';
@@ -92,6 +93,11 @@ export default function Lines({ embedded }) {
   const [importLines, setImportLines] = useState([]);
   const [lineValidation, setLineValidation] = useState(null);
   const { query, setQuery, results } = useSearchFilter(rows);
+
+  // Region narrows the substation pickers, both in the edit form and in the
+  // route import dialog.
+  const formSubs = useMemo(() => subsInRegion(subs, form?.region_id), [subs, form?.region_id]);
+  const routeSubs = useMemo(() => subsInRegion(subs, routeImport?.region_id), [subs, routeImport?.region_id]);
   const detailRoute = asArray(detail && detail.route_json);
 
   const load = () => api.get('/lines').then(setRows).catch((e) => setError(e.message));
@@ -406,26 +412,26 @@ export default function Lines({ embedded }) {
             <div className="field"><label>Line ID</label><input value={form.line_id || ''} onChange={(e) => setForm({ ...form, line_id: e.target.value })} /></div>
             <div className="field"><label>Name</label><input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             <div className="field"><label>Region</label>
-              <select value={form.region_id || ''} onChange={(e) => setForm({ ...form, region_id: Number(e.target.value) })}>
+              <SearchSelect value={form.region_id || ''} onChange={(e) => setForm({ ...form, region_id: Number(e.target.value), from_substation_id: null, to_substation_id: null })}>
                 {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>From substation</label>
-              <select value={form.from_substation_id || ''} onChange={(e) => setForm({ ...form, from_substation_id: Number(e.target.value) })}>
-                {subs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select></div>
+              <SearchSelect value={form.from_substation_id || ''} onChange={(e) => setForm({ ...form, from_substation_id: Number(e.target.value) })}>
+                {formSubs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </SearchSelect></div>
             <div className="field"><label>To substation</label>
-              <select value={form.to_substation_id || ''} onChange={(e) => setForm({ ...form, to_substation_id: Number(e.target.value) })}>
-                {subs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select></div>
+              <SearchSelect value={form.to_substation_id || ''} onChange={(e) => setForm({ ...form, to_substation_id: Number(e.target.value) })}>
+                {formSubs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </SearchSelect></div>
             <div className="field"><label>Voltage (kV)</label><input type="number" value={form.voltage_kv} onChange={(e) => setForm({ ...form, voltage_kv: Number(e.target.value) })} /></div>
             <div className="field"><label>Type</label>
-              <select value={form.line_type} onChange={(e) => setForm({ ...form, line_type: e.target.value })}>
+              <SearchSelect value={form.line_type} onChange={(e) => setForm({ ...form, line_type: e.target.value })}>
                 {['OVERHEAD', 'UNDERGROUND', 'MIXED'].map((t) => <option key={t}>{t}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Status</label>
-              <select value={form.operational_status} onChange={(e) => setForm({ ...form, operational_status: e.target.value })}>
+              <SearchSelect value={form.operational_status} onChange={(e) => setForm({ ...form, operational_status: e.target.value })}>
                 {['ENERGIZED', 'DE_ENERGIZED', 'UNDER_MAINTENANCE', 'UNDER_CONSTRUCTION', 'RETIRED'].map((s) => <option key={s}>{s}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Length (km)</label><input type="number" value={form.length_km ?? ''} onChange={(e) => setForm({ ...form, length_km: Number(e.target.value) })} /></div>
             <div className="field"><label>Conductor</label><input value={form.conductor_type || ''} onChange={(e) => setForm({ ...form, conductor_type: e.target.value })} /></div>
             <div className="field"><label>Circuits</label><input type="number" value={form.circuit_count} onChange={(e) => setForm({ ...form, circuit_count: Number(e.target.value) })} /></div>
@@ -487,42 +493,42 @@ export default function Lines({ embedded }) {
           {routeImport.error && <ErrorNote error={routeImport.error} />}
           <div className="form-grid">
             <div className="field"><label>Mode</label>
-              <select value={routeImport.mode} onChange={(e) => setRouteImport({ ...routeImport, mode: e.target.value })}>
+              <SearchSelect value={routeImport.mode} onChange={(e) => setRouteImport({ ...routeImport, mode: e.target.value })}>
                 <option value="create">Create a new line</option>
                 <option value="update">Update an existing line's route</option>
-              </select></div>
+              </SearchSelect></div>
             {routeImport.mode === 'create' && (
               <>
                 <div className="field"><label>Name</label><input value={routeImport.name || ''} onChange={(e) => setRouteImport({ ...routeImport, name: e.target.value })} /></div>
                 <div className="field"><label>Region</label>
-                  <select value={routeImport.region_id || ''} onChange={(e) => setRouteImport({ ...routeImport, region_id: Number(e.target.value) })}>
+                  <SearchSelect value={routeImport.region_id || ''} onChange={(e) => setRouteImport({ ...routeImport, region_id: Number(e.target.value), from_substation_id: null, to_substation_id: null })}>
                     {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                  </select></div>
+                  </SearchSelect></div>
                 <div className="field"><label>Voltage (kV)</label>
-                  <select value={routeImport.voltage_kv || 230} onChange={(e) => setRouteImport({ ...routeImport, voltage_kv: Number(e.target.value) })}>
+                  <SearchSelect value={routeImport.voltage_kv || 230} onChange={(e) => setRouteImport({ ...routeImport, voltage_kv: Number(e.target.value) })}>
                     {[66, 132, 230, 400, 500].map((kv) => <option key={kv} value={kv}>{kv}</option>)}
-                  </select></div>
+                  </SearchSelect></div>
                 <div className="field"><label>From substation</label>
-                  <select value={routeImport.from_substation_id || ''} onChange={(e) => setRouteImport({ ...routeImport, from_substation_id: Number(e.target.value) })}>
-                    {subs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select></div>
+                  <SearchSelect value={routeImport.from_substation_id || ''} onChange={(e) => setRouteImport({ ...routeImport, from_substation_id: Number(e.target.value) })}>
+                    {routeSubs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </SearchSelect></div>
                 <div className="field"><label>To substation</label>
-                  <select value={routeImport.to_substation_id || ''} onChange={(e) => setRouteImport({ ...routeImport, to_substation_id: Number(e.target.value) })}>
-                    {subs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select></div>
+                  <SearchSelect value={routeImport.to_substation_id || ''} onChange={(e) => setRouteImport({ ...routeImport, to_substation_id: Number(e.target.value) })}>
+                    {routeSubs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </SearchSelect></div>
               </>
             )}
             {routeImport.mode === 'update' && (
               <div className="field full"><label>Line to update</label>
-                <select value={routeImport.lineName || ''} onChange={(e) => setRouteImport({ ...routeImport, lineName: e.target.value })}>
+                <SearchSelect value={routeImport.lineName || ''} onChange={(e) => setRouteImport({ ...routeImport, lineName: e.target.value })}>
                   <option value="">Choose line…</option>
                   {importLines.map((l) => <option key={l.id} value={l.name}>{l.name}</option>)}
-                </select></div>
+                </SearchSelect></div>
             )}
             <div className="field full"><label>Format</label>
-              <select value={routeImport.format} onChange={(e) => setRouteImport({ ...routeImport, format: e.target.value })}>
+              <SearchSelect value={routeImport.format} onChange={(e) => setRouteImport({ ...routeImport, format: e.target.value })}>
                 {['geojson', 'kml', 'kmz', 'wkt', 'csv'].map((f) => <option key={f} value={f}>{f.toUpperCase()}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field full"><label>Content ({routeImport.format === 'kmz' ? 'base64-encoded KMZ zip' : routeImport.format === 'csv' ? 'lng,lat per line' : routeImport.format === 'wkt' ? 'LINESTRING(lng lat, …)' : 'GeoJSON/KML text'})</label>
               <textarea rows={8} value={routeImport.content} onChange={(e) => setRouteImport({ ...routeImport, content: e.target.value })}
                 placeholder={routeImport.format === 'csv' ? '38.0,9.0\n38.5,9.2' : 'Paste file content here…'} /></div>

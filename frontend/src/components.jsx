@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { STATUS_COLORS } from './api';
 import { codeLabel } from './labels';
 
@@ -151,6 +151,163 @@ export function SearchField({ value, onChange, placeholder = 'Search…', classN
       ) : null}
     </span>
   );
+}
+
+// A drop-in replacement for <select> that adds type-to-filter search. It keeps
+// the same option markup and `value`/`onChange` contract as a native select, so
+// swapping one in is a two-token change. The trigger carries the caller's
+// className so existing select styling (.map-select, .lang-select, …) still
+// applies.
+export function SearchSelect({
+  value,
+  defaultValue = '',
+  onChange,
+  children,
+  className = '',
+  disabled = false,
+  id,
+  name,
+  placeholder = 'Search…',
+  style,
+  title,
+  'aria-label': ariaLabel,
+}) {
+  const options = useMemo(() => collectOptions(children), [children]);
+  const uncontrolled = value === undefined;
+  const [innerValue, setInnerValue] = useState(defaultValue);
+  const current = uncontrolled ? innerValue : value;
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const rootRef = useRef(null);
+  const searchRef = useRef(null);
+
+  const filtered = useMemo(() => {
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!terms.length) return options;
+    return options.filter((o) => {
+      const hay = `${o.label} ${o.value}`.toLowerCase();
+      return terms.every((term) => hay.includes(term));
+    });
+  }, [options, query]);
+
+  const currentStr = String(current ?? '');
+  const selected = options.find((o) => String(o.value) === currentStr);
+  // Registers hold >10k assets/towers; render a window and let typing narrow it.
+  const RENDER_CAP = 300;
+  const shown = filtered.slice(0, RENDER_CAP);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDocClick = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    setQuery('');
+    const raf = requestAnimationFrame(() => searchRef.current?.focus());
+    return () => cancelAnimationFrame(raf);
+  }, [open]);
+
+  const commit = (next) => {
+    if (uncontrolled) setInnerValue(next);
+    const value = String(next ?? '');
+    if (onChange) onChange({ target: { value, name }, currentTarget: { value, name } });
+    setOpen(false);
+  };
+
+  const onSearchKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (filtered[0]) commit(filtered[0].value);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setOpen(false);
+    }
+  };
+
+  return (
+    <span ref={rootRef} className="search-select" style={style} title={title}>
+      <button
+        type="button"
+        id={id}
+        name={name}
+        className={'ss-trigger' + (className ? ` ${className}` : '')}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+        onClick={() => !disabled && setOpen((v) => !v)}
+      >
+        <span className="ss-value">{selected ? selected.label : placeholder}</span>
+        <span className="ss-caret" aria-hidden>▾</span>
+      </button>
+      {open && (
+        <div className="ss-pop" role="listbox">
+          <div className="ss-search">
+            <input
+              ref={searchRef}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={onSearchKeyDown}
+              placeholder={placeholder}
+              aria-label={placeholder}
+            />
+          </div>
+          <div className="ss-options">
+            {filtered.length === 0 && <div className="ss-empty">No matches</div>}
+            {shown.map((o, i) => (
+              <button
+                type="button"
+                key={`${o.value}-${i}`}
+                role="option"
+                aria-selected={String(o.value) === currentStr}
+                className={'ss-option' + (String(o.value) === currentStr ? ' is-active' : '')}
+                disabled={o.disabled}
+                onClick={() => commit(o.value)}
+              >
+                {o.label}
+              </button>
+            ))}
+            {filtered.length > RENDER_CAP && (
+              <div className="ss-empty">Showing {RENDER_CAP} of {filtered.length} — keep typing to narrow</div>
+            )}
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
+
+function nodeText(node) {
+  if (node == null || node === false || node === true) return '';
+  if (Array.isArray(node)) return node.map(nodeText).join('');
+  if (typeof node === 'object') return node.props ? nodeText(node.props.children) : '';
+  return String(node);
+}
+
+function collectOptions(children, out = []) {
+  if (children == null || children === false || children === true) return out;
+  if (Array.isArray(children)) {
+    children.forEach((child) => collectOptions(child, out));
+    return out;
+  }
+  if (typeof children !== 'object' || !children.type) return out;
+  if (children.type === 'option') {
+    const { value, disabled } = children.props;
+    out.push({
+      value: value !== undefined ? value : nodeText(children.props.children),
+      label: nodeText(children.props.children),
+      disabled: !!disabled,
+    });
+    return out;
+  }
+  if (children.props && children.props.children) collectOptions(children.props.children, out);
+  return out;
 }
 
 const SEARCH_CACHE = new WeakMap();

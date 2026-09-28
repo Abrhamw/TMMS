@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import { Page, Pill, Modal, ErrorNote, Loading, PrintButton, ConfirmButton, SearchField, useSearchFilter } from '../components';
+import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, ConfirmButton, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
 import MapPicker from '../components/MapPicker';
 import BoundaryPicker from '../components/BoundaryPicker';
@@ -169,13 +169,13 @@ export default function Regions({ embedded }) {
             <div className="field"><label>Code</label><input value={form.code || ''} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="NE" /></div>
             <div className="field"><label>Name</label><input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             <div className="field"><label>Type</label>
-              <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+              <SearchSelect value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
                 {['NORTHERN', 'SOUTHERN', 'EASTERN', 'WESTERN', 'CENTRAL', 'CUSTOM'].map((t) => <option key={t}>{t}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Status</label>
-              <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+              <SearchSelect value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
                 {['ACTIVE', 'INACTIVE', 'PLANNING'].map((s) => <option key={s}>{s}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>{t('latitude')}</label><input type="number" step="0.0001" value={form.center_lat ?? ''} onChange={(e) => setForm({ ...form, center_lat: e.target.value === '' ? null : Number(e.target.value) })} /></div>
             <div className="field"><label>{t('longitude')}</label><input type="number" step="0.0001" value={form.center_lng ?? ''} onChange={(e) => setForm({ ...form, center_lng: e.target.value === '' ? null : Number(e.target.value) })} /></div>
             <div className="field full">

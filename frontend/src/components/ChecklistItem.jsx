@@ -1,3 +1,4 @@
+import { SearchSelect } from '../components';
 import { getDevicePosition } from './MapPicker';
 
 // One checklist step input, shared by every execution surface so PASS/FAIL,
@@ -8,9 +9,9 @@ export default function ChecklistItem({ item, state, setState }) {
 
   if (item.response_type === 'PASS_FAIL' || item.response_type === 'YES_NO') {
     return (
-      <select value={state.value ?? ''} onChange={(e) => set(e.target.value === 'true' ? true : e.target.value === 'false' ? false : null)}>
+      <SearchSelect value={state.value ?? ''} onChange={(e) => set(e.target.value === 'true' ? true : e.target.value === 'false' ? false : null)}>
         <option value="">Select…</option><option value="true">Pass / Yes</option><option value="false">Fail / No</option>
-      </select>
+      </SearchSelect>
     );
   }
   if (item.response_type === 'NUMERIC') {
@@ -25,10 +26,10 @@ export default function ChecklistItem({ item, state, setState }) {
   if (item.response_type === 'SELECT') {
     const opts = item.pass_criteria?.options || [];
     return (
-      <select value={state.value ?? ''} onChange={(e) => set(e.target.value)}>
+      <SearchSelect value={state.value ?? ''} onChange={(e) => set(e.target.value)}>
         <option value="">Select…</option>
         {opts.map((o) => <option key={o} value={o}>{o}</option>)}
-      </select>
+      </SearchSelect>
     );
   }
   if (item.response_type === 'GPS_POINT') {

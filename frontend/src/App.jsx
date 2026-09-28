@@ -1,3 +1,4 @@
+import { SearchSelect } from './components';
 import { useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Outlet, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import Landing from './pages/Landing';
@@ -49,7 +50,7 @@ function useI18n() {
 function LanguageSwitcher() {
   const lang = getLang();
   return (
-    <select
+    <SearchSelect
       className="lang-select"
       value={lang}
       onChange={(e) => {
@@ -62,7 +63,7 @@ function LanguageSwitcher() {
       {Object.entries(LOCALES).map(([code, l]) => (
         <option key={code} value={code}>{l.label}</option>
       ))}
-    </select>
+    </SearchSelect>
   );
 }
 

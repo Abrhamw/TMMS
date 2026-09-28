@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, fmtDate, fmtDateTime } from '../api';
-import { Pill, Loading, ErrorNote, Modal } from '../components';
+import { SearchSelect, Pill, Loading, ErrorNote, Modal } from '../components';
 import { can, getStoredUser } from '../auth';
 import ChecklistItem from './ChecklistItem';
 import ExecutionDetail from './ExecutionDetail';
@@ -137,10 +137,10 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
           {t.status === 'DRAFT' && (canAssign || canManage) && <button className="btn btn-primary" onClick={() => act('schedule')}>Schedule task</button>}
           {t.status === 'SCHEDULED' || (t.status === 'ASSIGNED' && !t.crew_id) ? canAssign && (
             <div className="flex">
-              <select value={crewPick} onChange={(e) => setCrewPick(e.target.value)}>
+              <SearchSelect value={crewPick} onChange={(e) => setCrewPick(e.target.value)}>
                 <option value="">Choose crew…</option>
                 {assignableCrews.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              </SearchSelect>
               <button className="btn btn-primary" disabled={!crewPick} onClick={() => act('assign', { crew_id: Number(crewPick) })}>Assign</button>
             </div>
           ) : null}
@@ -163,9 +163,9 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
           {t.status === 'PENDING_VERIFICATION' && canVerify && (
             <>
               <div className="field"><label>Result</label>
-                <select value={verifyForm.result} onChange={(e) => setVerifyForm({ ...verifyForm, result: e.target.value })}>
+                <SearchSelect value={verifyForm.result} onChange={(e) => setVerifyForm({ ...verifyForm, result: e.target.value })}>
                   <option>PASS</option><option>FAIL</option><option>PARTIAL</option><option>DEFERRED</option>
-                </select>
+                </SearchSelect>
               </div>
               <div className="field"><label>Completion summary</label><textarea value={verifyForm.summary} onChange={(e) => setVerifyForm({ ...verifyForm, summary: e.target.value })} /></div>
               <div className="field"><label>Cost (optional)</label><input type="number" min="0" step="0.01" value={verifyForm.cost ?? ''} onChange={(e) => setVerifyForm({ ...verifyForm, cost: e.target.value })} /></div>

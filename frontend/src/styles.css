@@ -442,7 +442,7 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
      form fields or map overlays may appear on paper. This covers every print
      surface (modals, dossiers, scoped reports), so a Close/Print button never
      leaks into the sheet. */
-  button, .btn, .tab, select, input, textarea,
+  button, .btn, .tab, select, input, textarea, .search-select,
   .map-mini-controls, .map-mini-search, .map-mini-legend, .map-picker-radius,
   .map-picker-err, .leaflet-control-container { display: none !important; }
   .app-shell { display: block !important; height: auto !important; overflow: visible !important; }
@@ -772,6 +772,51 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
 }
 .search-clear:hover { background: #e2e8f0; color: var(--text); }
 .search-empty { padding: 18px; text-align: center; color: var(--muted); }
+
+/* ---- Searchable <select> replacement ---- */
+.search-select { position: relative; display: inline-block; max-width: 100%; vertical-align: middle; }
+.ss-trigger {
+  display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--text);
+  font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+}
+.ss-trigger:disabled { opacity: .55; cursor: not-allowed; }
+.ss-trigger:focus-visible { outline: 2px solid #bbf7d0; border-color: var(--primary); }
+.ss-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-caret { flex: none; color: var(--muted); font-size: 10px; line-height: 1; }
+.ss-pop {
+  position: absolute; z-index: 1400; top: calc(100% + 4px); left: 0;
+  width: max(100%, 220px); max-width: min(360px, 92vw);
+  background: #fff; border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 14px 34px rgba(15, 23, 42, .18); overflow: hidden;
+}
+.ss-search { padding: 8px; border-bottom: 1px solid var(--border); }
+.ss-search input {
+  width: 100%; padding: 6px 9px; border: 1px solid var(--border); border-radius: 8px;
+  font: inherit; font-size: 13px; color: var(--text); outline: none;
+}
+.ss-search input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(187, 247, 208, .45); }
+.ss-options { max-height: 264px; overflow: auto; padding: 4px; }
+.ss-option {
+  display: block; width: 100%; padding: 7px 9px; border: 0; border-radius: 7px; background: none;
+  color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ss-option:hover { background: #f1f5f9; }
+.ss-option.is-active { background: #ecfdf5; color: var(--primary); font-weight: 600; }
+.ss-option:disabled { opacity: .5; cursor: not-allowed; }
+.ss-empty { padding: 14px; text-align: center; color: var(--muted); font-size: 12px; }
+.field .search-select, .grid2 .search-select { width: 100%; }
+.field .ss-trigger, .grid2 .ss-trigger { padding: 8px 10px; }
+.filters .search-select { flex: 1 1 150px; }
+.filters .ss-trigger { padding: 7px 10px; }
+.map-basemap .search-select { flex: 1; min-width: 90px; }
+.map-basemap .ss-trigger { padding: 4px 6px; font-size: 12px; }
+.map-mini-controls .search-select { max-width: 110px; }
+.map-mini-controls .ss-trigger { padding: 3px 6px; font-size: 11px; }
+.map-mini-controls .ss-pop { left: auto; right: 0; }
+.search-select:has(> .map-select) { width: 100%; }
+.search-select .ss-trigger.map-select { margin-top: 6px; }
 
 /* Task mailbox */
 .mailbox-layout { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); flex: 1; min-height: 0; border: 1px solid var(--border); background: var(--panel); overflow: hidden; }
