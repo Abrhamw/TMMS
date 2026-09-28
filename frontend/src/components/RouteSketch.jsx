@@ -88,6 +88,11 @@ export default function RouteSketch({ target }) {
   let fromXY;
   let toXY;
   let pinXY;
+  // Which terminal name sits on which drawn end. Defaults to route order, but
+  // when the stored route runs "backwards" relative to from/to the two names
+  // are swapped so each end is still labelled with the substation it is near.
+  let startName = from ? from.name : null;
+  let endName = to ? to.name : null;
   if (geo.length >= 2) {
     // Always north-up: latitude is the vertical axis and longitude the
     // horizontal one, scaled by the local cos(latitude) so the shape keeps its
@@ -117,6 +122,19 @@ export default function RouteSketch({ target }) {
     fromXY = pts[0];
     toXY = pts[pts.length - 1];
     pinXY = pinPos ? project(pinPos) : midOf(pts);
+    if (fromPos && toPos) {
+      const pf = project(fromPos);
+      const pt2 = project(toPos);
+      const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+      const first = pts[0];
+      const last = pts[pts.length - 1];
+      const same = d(first, pf) + d(last, pt2);
+      const swap = d(first, pt2) + d(last, pf);
+      if (swap < same) {
+        startName = to ? to.name : null;
+        endName = from ? from.name : null;
+      }
+    }
   } else {
     pts = [{ x: W / 2, y: PAD }, { x: W / 2, y: H - PAD }];
     fromXY = pts[0];
@@ -167,8 +185,8 @@ export default function RouteSketch({ target }) {
 
         <circle cx={fromXY.x} cy={fromXY.y} r="6.5" fill="#ffffff" stroke={color} strokeWidth="2.6" />
         <circle cx={toXY.x} cy={toXY.y} r="6.5" fill="#ffffff" stroke={color} strokeWidth="2.6" />
-        {endLabel(fromXY, from && from.name, fromXY.y <= toXY.y ? 'top' : 'bottom')}
-        {endLabel(toXY, to && to.name, toXY.y <= fromXY.y ? 'top' : 'bottom')}
+        {endLabel(fromXY, startName, fromXY.y <= toXY.y ? 'top' : 'bottom')}
+        {endLabel(toXY, endName, toXY.y <= fromXY.y ? 'top' : 'bottom')}
 
         {pinName && (
           <g>
