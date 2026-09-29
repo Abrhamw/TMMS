@@ -178,6 +178,10 @@ export function SearchSelect({
   const current = uncontrolled ? innerValue : value;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  // Anchor side of the popup. A narrow trigger sitting near the right edge of a
+  // phone/14-inch window would otherwise push its ≥220px menu off-screen, so we
+  // flip to right-aligned when the left-anchored menu would not fit.
+  const [alignRight, setAlignRight] = useState(false);
   const rootRef = useRef(null);
   const searchRef = useRef(null);
 
@@ -210,6 +214,23 @@ export function SearchSelect({
     setQuery('');
     const raf = requestAnimationFrame(() => searchRef.current?.focus());
     return () => cancelAnimationFrame(raf);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const place = () => {
+      const el = rootRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const vw = window.innerWidth || document.documentElement.clientWidth;
+      const popWidth = Math.min(360, Math.max(rect.width, 220), vw * 0.92);
+      const overflowRight = rect.left + popWidth > vw - 8;
+      const fitsRight = rect.right - popWidth >= 8;
+      setAlignRight(overflowRight && fitsRight);
+    };
+    place();
+    window.addEventListener('resize', place);
+    return () => window.removeEventListener('resize', place);
   }, [open]);
 
   const commit = (next) => {
@@ -246,7 +267,7 @@ export function SearchSelect({
         <span className="ss-caret" aria-hidden>▾</span>
       </button>
       {open && (
-        <div className="ss-pop" role="listbox">
+        <div className={'ss-pop' + (alignRight ? ' ss-pop-right' : '')} role="listbox">
           <div className="ss-search">
             <input
               ref={searchRef}

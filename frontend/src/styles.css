@@ -801,10 +801,13 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
 .ss-caret { flex: none; color: var(--muted); font-size: 10px; line-height: 1; }
 .ss-pop {
   position: absolute; z-index: 1400; top: calc(100% + 4px); left: 0;
-  width: max(100%, 220px); max-width: min(360px, 92vw);
+  width: max(100%, min(220px, 92vw)); max-width: min(360px, calc(100vw - 16px));
   background: #fff; border: 1px solid var(--border); border-radius: 10px;
   box-shadow: 0 14px 34px rgba(15, 23, 42, .18); overflow: hidden;
 }
+/* Right-aligned variant, used when a left-anchored menu would spill off the
+   right edge of a narrow (mobile / 14-inch) viewport. */
+.ss-pop-right { left: auto; right: 0; }
 .ss-search { padding: 8px; border-bottom: 1px solid var(--border); }
 .ss-search input {
   width: 100%; padding: 6px 9px; border: 1px solid var(--border); border-radius: 8px;
