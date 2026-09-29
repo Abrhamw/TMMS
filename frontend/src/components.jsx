@@ -38,11 +38,11 @@ export function MoneyCard({ label, value, sub, color }) {
   );
 }
 
-export function Modal({ title, onClose, children, footer, wide, printable }) {
+export function Modal({ title, onClose, children, footer, wide, printable, hideHeaderOnPrint }) {
   return (
     <div className={'modal-backdrop' + (printable ? ' print-area print-report-scope' : '')} onClick={onClose}>
       <div className="modal" style={wide ? { maxWidth: 900 } : undefined} onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
+        <div className={'modal-header' + (hideHeaderOnPrint ? ' no-print' : '')}>
           <h3>{title}</h3>
           <button className="btn btn-ghost no-print" onClick={onClose}>✕</button>
         </div>

@@ -321,6 +321,7 @@ export default function Mailbox() {
                 onArchive={() => withReload(() => api.put(`/mailbox/messages/${mailMessage.id}/archive`, {}))}
                 onUnarchive={() => withReload(() => api.put(`/mailbox/messages/${mailMessage.id}/unarchive`, {}))}
                 onOpenLink={() => { if (mailMessage.link) nav(mailMessage.link); }}
+                onOpenTask={(tid) => nav(`/tasks/${tid}`)}
                 onPreview={setPreview}
               />
             ) : reportDocument ? (
@@ -359,7 +360,13 @@ export default function Mailbox() {
           </section>
         </div>
       )}
-      {preview && <MailAttachmentPreview attachment={preview} onClose={() => setPreview(null)} />}
+      {preview && (
+        <MailAttachmentPreview
+          attachment={preview}
+          onClose={() => setPreview(null)}
+          onOpenTask={(tid) => { setPreview(null); nav(`/tasks/${tid}`); }}
+        />
+      )}
     </Page>
   );
 }
@@ -396,7 +403,7 @@ function TextPreview({ url }) {
 // PDF / image / text with a download), a saved report, an execution summary, or
 // any entity document. The Print button turns the previewed summary into a PDF
 // via the browser's "Save as PDF".
-function MailAttachmentPreview({ attachment, onClose }) {
+function MailAttachmentPreview({ attachment, onClose, onOpenTask }) {
   const [state, setState] = useState({ loading: true });
   const [url, setUrl] = useState(null);
 
@@ -437,14 +444,27 @@ function MailAttachmentPreview({ attachment, onClose }) {
   const isPdf = !!file && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name));
   const isImage = !!file && (file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.name));
   const isText = !!file && (file.type.startsWith('text/') || /\.(txt|csv|json|log|md)$/i.test(file.name));
+  // A task id whenever the attachment is bound to a task, so the preview can
+  // jump straight to it: the stored link, the execution's task, or a task
+  // document.
+  const linkedTaskId = (() => {
+    const fromLink = /\/tasks\/(\d+)/.exec(attachment.link || '');
+    if (fromLink) return fromLink[1];
+    if (state.execution && state.execution.task_id) return state.execution.task_id;
+    const doc = (state.document && state.document.document) || (state.report && state.report.data && state.report.data.document);
+    if (doc && doc.task && doc.task.id) return doc.task.id;
+    return null;
+  })();
 
   return (
     <Modal
-      title={`${t('mailboxAttachmentPreview')} · ${attachment.label || attachment.file_name || ''}`}
+      title={attachment.label || attachment.file_name || t('mailboxAttachments')}
       onClose={onClose}
       wide
       printable
+      hideHeaderOnPrint
       footer={<>
+        {linkedTaskId && <button type="button" className="btn btn-sm no-print" onClick={() => onOpenTask(linkedTaskId)}>{t('mailboxOpenTask')}</button>}
         {file && <button type="button" className="btn btn-sm no-print" onClick={() => api.download(`/mailbox/attachments/${attachment.id}/file`, file.name)}>{t('mailboxAttachDownload')}</button>}
         {url && <a className="btn btn-sm no-print" href={url} target="_blank" rel="noreferrer">{t('mailboxOpenInNewTab')}</a>}
         <PrintButton />
@@ -465,10 +485,14 @@ function MailAttachmentPreview({ attachment, onClose }) {
   );
 }
 
-function MailReader({ message, me, onReply, onEdit, onSend, onArchive, onUnarchive, onOpenLink, onPreview }) {
+function MailReader({ message, me, onReply, onEdit, onSend, onArchive, onUnarchive, onOpenLink, onPreview, onOpenTask }) {
   const isDraft = message.status === 'DRAFT' || message.status === 'QUEUED';
   const mineIsSender = message.sender_person_id === me.person_id;
   const attachments = message.attachments || [];
+  const linkedTaskId = (() => {
+    const m = /\/tasks\/(\d+)/.exec(message.link || '');
+    return m ? m[1] : null;
+  })();
   return (
     <>
       <header className="mail-reader-head">
@@ -481,7 +505,9 @@ function MailReader({ message, me, onReply, onEdit, onSend, onArchive, onUnarchi
             {isDraft && mineIsSender && <button type="button" className="btn btn-sm" onClick={onEdit}>{t('mailboxEditDraft')}</button>}
             {isDraft && mineIsSender && <button type="button" className="btn btn-sm btn-primary" onClick={onSend}>{t('mailboxSend')}</button>}
             {!isDraft && <button type="button" className="btn btn-sm" onClick={onReply}>{t('mailboxReply')}</button>}
-            {message.link && <button type="button" className="btn btn-sm" onClick={onOpenLink}>{t('mailboxOpenLink')}</button>}
+            {linkedTaskId
+              ? <button type="button" className="btn btn-sm" onClick={() => onOpenTask(linkedTaskId)}>{t('mailboxOpenTask')}</button>
+              : message.link && <button type="button" className="btn btn-sm" onClick={onOpenLink}>{t('mailboxOpenLink')}</button>}
             {message.archived
               ? <button type="button" className="btn btn-sm" onClick={onUnarchive}>{t('mailboxUnarchiveAction')}</button>
               : <button type="button" className="btn btn-sm" onClick={onArchive}>{t('mailboxArchiveAction')}</button>}
