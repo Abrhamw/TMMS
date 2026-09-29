@@ -300,6 +300,7 @@ export default function Mailbox() {
                 me={me}
                 onReply={() => startCompose({
                   recipient_person_id: mailMessage.outgoing ? mailMessage.recipient_person_id : mailMessage.sender_person_id,
+                  recipient_name: mailMessage.outgoing ? mailMessage.recipient : mailMessage.actor,
                   subject: /^re:/i.test(mailMessage.subject) ? mailMessage.subject : `Re: ${mailMessage.subject}`,
                   category: mailMessage.category,
                   thread_id: mailMessage.id,
@@ -307,6 +308,7 @@ export default function Mailbox() {
                 onEdit={() => startCompose({
                   editId: mailMessage.id,
                   recipient_person_id: mailMessage.recipient_person_id,
+                  recipient_name: mailMessage.recipient,
                   subject: mailMessage.subject,
                   body: mailMessage.body,
                   category: mailMessage.category,
@@ -421,7 +423,12 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
     api.get('/mailbox/recipients').then((list) => setRecipients(list || [])).catch((e) => setErr(e.message));
   }, []);
 
-  const selected = recipients.find((r) => r.person_id === Number(recipient));
+  const stored = recipients.find((r) => r.person_id === Number(recipient));
+  // A reply pre-fills the original sender, who may sit outside the addressable
+  // list; fall back to the name carried on the draft so the chip still renders.
+  const selected = stored || (initial?.recipient_person_id && initial?.recipient_name
+    ? { person_id: Number(initial.recipient_person_id), name: initial.recipient_name, role: '' }
+    : null);
   const filtered = (query.trim()
     ? recipients.filter((r) => `${r.name} ${r.username} ${r.role}`.toLowerCase().includes(query.trim().toLowerCase()))
     : recipients
@@ -466,10 +473,15 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
         <div className="field full">
           <label>{t('mailboxTo')}</label>
           {selected ? (
-            <div className="spread" style={{ alignItems: 'center', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px' }}>
-              <span><b>{selected.name}</b> <span className="muted">· {selected.role}</span></span>
-              <button type="button" className="btn btn-sm" onClick={() => setRecipient('')}>{'×'}</button>
-            </div>
+            <>
+              <div className="spread" style={{ alignItems: 'center', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px' }}>
+                <span><b>{selected.name}</b>{selected.role ? <span className="muted"> · {selected.role}</span> : null}</span>
+                <button type="button" className="btn btn-sm" title={t('mailboxChangeRecipient')} onClick={() => setRecipient('')}>{'×'}</button>
+              </div>
+              {initial?.recipient_name && (
+                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{t('mailboxReplyRecipientHint')}</div>
+              )}
+            </>
           ) : (
             <>
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('mailboxRecipientPlaceholder')} />

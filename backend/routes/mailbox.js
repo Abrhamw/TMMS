@@ -263,6 +263,29 @@ function recipientVisible(user, personId) {
   return regions.size > 0 && regions.has(user.region_id);
 }
 
+// Everyone this account has already exchanged mail with, in either direction.
+// Replying must always be able to reach the original sender even when they sit
+// outside the account's downward command scope (e.g. a global executive).
+function correspondencePersonIds(user) {
+  const ids = new Set();
+  if (!user.person_id) return ids;
+  const rows = db.prepare(
+    'SELECT sender_person_id, recipient_person_id FROM message WHERE sender_person_id = ? OR recipient_person_id = ?'
+  ).all(user.person_id, user.person_id);
+  for (const r of rows) {
+    for (const p of [r.sender_person_id, r.recipient_person_id]) {
+      if (p && Number(p) !== user.person_id) ids.add(Number(p));
+    }
+  }
+  return ids;
+}
+
+// Addressable = inside the command scope, or already a correspondent so a reply
+// to the sender is never blocked by the one-way scope rule.
+function canAddress(user, personId) {
+  return recipientVisible(user, personId) || correspondencePersonIds(user).has(Number(personId));
+}
+
 function mailStateFor(userId, messageId) {
   return db.prepare('SELECT read_at, archived_at FROM message_state WHERE user_id = ? AND message_id = ?').get(userId, messageId) || null;
 }
@@ -347,8 +370,9 @@ router.get('/mailbox/recipients', (req, res) => {
       ORDER BY p.first_name, p.last_name`
   ).all();
   const seen = new Map();
+  const correspondents = correspondencePersonIds(req.user);
   for (const r of rows) {
-    if (!recipientVisible(req.user, r.person_id)) continue;
+    if (!recipientVisible(req.user, r.person_id) && !correspondents.has(Number(r.person_id))) continue;
     const name = [r.first_name, r.last_name].filter(Boolean).join(' ');
     if (q && !`${name} ${r.username} ${r.role} ${r.title || ''}`.toLowerCase().includes(q)) continue;
     if (!seen.has(r.person_id)) seen.set(r.person_id, { person_id: r.person_id, name, role: r.role, title: r.title, username: r.username });
@@ -361,7 +385,7 @@ router.post('/mailbox/messages', (req, res) => {
   const rid = Number(body.recipient_person_id || body.recipient_id);
   if (!rid) return res.status(400).json({ error: 'Recipient is required' });
   if (!get('person', rid)) return res.status(404).json({ error: 'Recipient not found' });
-  if (!recipientVisible(req.user, rid)) return res.status(403).json({ error: 'Recipient is outside your command scope' });
+    if (!canAddress(req.user, rid)) return res.status(403).json({ error: 'Recipient is outside your command scope' });
   const status = MAIL_STATUSES.has(String(body.status)) ? String(body.status) : 'SENT';
   const subject = String(body.subject || '').trim().slice(0, 200);
   const text = String(body.body || '').trim().slice(0, 20000);
@@ -402,7 +426,7 @@ router.put('/mailbox/messages/:id', (req, res) => {
   if (body.recipient_person_id !== undefined || body.recipient_id !== undefined) {
     const rid = Number(body.recipient_person_id || body.recipient_id);
     if (!rid || !get('person', rid)) return res.status(404).json({ error: 'Recipient not found' });
-    if (!recipientVisible(req.user, rid)) return res.status(403).json({ error: 'Recipient is outside your command scope' });
+  if (!canAddress(req.user, rid)) return res.status(403).json({ error: 'Recipient is outside your command scope' });
     patch.recipient_person_id = rid;
     const ru = primaryUserForPerson(rid);
     patch.recipient_user_id = ru ? ru.id : null;
