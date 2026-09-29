@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, fmtDateTime, fmtDate } from '../api';
-import { ErrorNote, Loading, Page, Pill, SearchField, SearchSelect } from '../components';
+import { ErrorNote, Loading, Modal, Page, Pill, PrintButton, SearchField, SearchSelect } from '../components';
 import Comments from '../components/Comments';
+import { ExecutionDetailBody } from '../components/ExecutionDetail';
 import { t } from '../i18n';
 import { can, getStoredUser } from '../auth';
 import { ReportView } from './Reports';
@@ -94,6 +95,7 @@ export default function Mailbox() {
   const [mailMessage, setMailMessage] = useState(null);
   const [reportDocument, setReportDocument] = useState(null);
   const [compose, setCompose] = useState(null);
+  const [preview, setPreview] = useState(null);
   const [query, setQuery] = useState('');
   const [listLimit, setListLimit] = useState(60);
   const [error, setError] = useState(null);
@@ -319,7 +321,7 @@ export default function Mailbox() {
                 onArchive={() => withReload(() => api.put(`/mailbox/messages/${mailMessage.id}/archive`, {}))}
                 onUnarchive={() => withReload(() => api.put(`/mailbox/messages/${mailMessage.id}/unarchive`, {}))}
                 onOpenLink={() => { if (mailMessage.link) nav(mailMessage.link); }}
-                onOpenAttachment={(link) => nav(link)}
+                onPreview={setPreview}
               />
             ) : reportDocument ? (
               <ReportReader report={reportDocument} onOpen={() => nav(`/reports?report=${reportDocument.id}`)} />
@@ -357,6 +359,7 @@ export default function Mailbox() {
           </section>
         </div>
       )}
+      {preview && <MailAttachmentPreview attachment={preview} onClose={() => setPreview(null)} />}
     </Page>
   );
 }
@@ -377,7 +380,92 @@ function markMailRead(data, id) {
   };
 }
 
-function MailReader({ message, me, onReply, onEdit, onSend, onArchive, onUnarchive, onOpenLink, onOpenAttachment }) {
+function TextPreview({ url }) {
+  const [text, setText] = useState('');
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    fetch(url).then((r) => r.text()).then((x) => { if (alive) setText(x); }).catch((e) => { if (alive) setErr(e.message); });
+    return () => { alive = false; };
+  }, [url]);
+  if (err) return <ErrorNote error={err} />;
+  return <div className="mail-preview-body"><pre className="mail-preview-text">{text}</pre></div>;
+}
+
+// One printable preview for any mailbox attachment: an uploaded file (inline
+// PDF / image / text with a download), a saved report, an execution summary, or
+// any entity document. The Print button turns the previewed summary into a PDF
+// via the browser's "Save as PDF".
+function MailAttachmentPreview({ attachment, onClose }) {
+  const [state, setState] = useState({ loading: true });
+  const [url, setUrl] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    let revoke = null;
+    setState({ loading: true });
+    setUrl(null);
+    (async () => {
+      try {
+        if (attachment.has_file && attachment.id != null) {
+          const blob = await api.blob(`/mailbox/attachments/${attachment.id}/file`);
+          const objectUrl = URL.createObjectURL(blob);
+          revoke = objectUrl;
+          if (!alive) { URL.revokeObjectURL(objectUrl); return; }
+          setUrl(objectUrl);
+          setState({ loading: false, file: { url: objectUrl, type: blob.type || attachment.mime || '', name: attachment.file_name || 'attachment' } });
+        } else if (attachment.kind === 'REPORT' || attachment.entity_type === 'REPORT') {
+          const res = await api.get(`/reports/${attachment.entity_id}`);
+          if (alive) setState({ loading: false, report: res });
+        } else if (attachment.entity_type === 'CHECKLIST_EXECUTION') {
+          const res = await api.get(`/checklist-executions/${attachment.entity_id}`);
+          if (alive) setState({ loading: false, execution: res });
+        } else if (attachment.entity_type && attachment.entity_id != null) {
+          const res = await api.get(`/reports/document?type=${encodeURIComponent(attachment.entity_type)}&id=${encodeURIComponent(attachment.entity_id)}`);
+          if (alive) setState({ loading: false, document: res.data ?? res });
+        } else {
+          setState({ loading: false, none: true });
+        }
+      } catch (e) {
+        if (alive) setState({ loading: false, error: e.message });
+      }
+    })();
+    return () => { alive = false; if (revoke) URL.revokeObjectURL(revoke); };
+  }, [attachment]);
+
+  const file = state.file;
+  const isPdf = !!file && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name));
+  const isImage = !!file && (file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.name));
+  const isText = !!file && (file.type.startsWith('text/') || /\.(txt|csv|json|log|md)$/i.test(file.name));
+
+  return (
+    <Modal
+      title={`${t('mailboxAttachmentPreview')} · ${attachment.label || attachment.file_name || ''}`}
+      onClose={onClose}
+      wide
+      printable
+      footer={<>
+        {file && <button type="button" className="btn btn-sm no-print" onClick={() => api.download(`/mailbox/attachments/${attachment.id}/file`, file.name)}>{t('mailboxAttachDownload')}</button>}
+        {url && <a className="btn btn-sm no-print" href={url} target="_blank" rel="noreferrer">{t('mailboxOpenInNewTab')}</a>}
+        <PrintButton />
+        <button className="btn btn-primary" onClick={onClose}>Close</button>
+      </>}
+    >
+      {state.loading && <Loading />}
+      {state.error && <ErrorNote error={state.error} />}
+      {state.report && <div className="mail-preview-body"><ReportView data={state.report.data ?? state.report} /></div>}
+      {state.execution && <div className="mail-preview-body"><ExecutionDetailBody exec={state.execution} /></div>}
+      {state.document && <ReportView data={state.document} />}
+      {file && isPdf && <iframe className="mail-preview-frame" src={file.url} title={file.name} />}
+      {file && isImage && <div className="mail-preview-body"><img className="mail-preview-img" src={file.url} alt={file.name} /></div>}
+      {file && isText && <TextPreview url={file.url} />}
+      {file && !isPdf && !isImage && !isText && <div className="empty">{t('mailboxPreviewUnavailable')}</div>}
+      {state.none && <div className="empty">{t('mailboxPreviewUnavailable')}</div>}
+    </Modal>
+  );
+}
+
+function MailReader({ message, me, onReply, onEdit, onSend, onArchive, onUnarchive, onOpenLink, onPreview }) {
   const isDraft = message.status === 'DRAFT' || message.status === 'QUEUED';
   const mineIsSender = message.sender_person_id === me.person_id;
   const attachments = message.attachments || [];
@@ -414,11 +502,8 @@ function MailReader({ message, me, onReply, onEdit, onSend, onArchive, onUnarchi
             <div className="mail-attach-chips">
               {attachments.map((a) => (
                 <button key={attachmentKey(a)} type="button" className="mail-attach-chip mail-attach-chip-btn"
-                  title={a.has_file ? t('mailboxAttachDownload') : (a.link || '')}
-                  onClick={() => {
-                    if (a.has_file && a.id != null) api.download(`/mailbox/attachments/${a.id}/file`, a.file_name || a.label || 'attachment');
-                    else if (a.link && onOpenAttachment) onOpenAttachment(a.link);
-                  }}>
+                  title={t('mailboxPreview')}
+                  onClick={() => onPreview(a)}>
                   <span className="mail-attach-chip-label">{a.label || a.file_name}</span>
                   <span className="muted mail-attach-chip-kind">{a.has_file ? t('mailboxAttachDownload') : t('mailboxAttachOpen')}</span>
                 </button>
@@ -623,8 +708,9 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
           <button type="button" className="btn btn-sm" onClick={onCancel}>{t('cancel')}</button>
         </div>
       </header>
-      {err && <ErrorNote error={err} />}
-      <div className="form-grid" style={{ padding: '0 4px' }}>
+      <div className="mail-scroll">
+        {err && <ErrorNote error={err} />}
+        <div className="form-grid" style={{ padding: '0 4px' }}>
         <div className="field full">
           <label>{t('mailboxTo')}</label>
           {selected ? (
@@ -673,8 +759,9 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
           </select>
         </div>
         <div className="field full"><label>{t('mailboxMessage')}</label><textarea value={body} onChange={(e) => setBody(e.target.value)} style={{ minHeight: 140 }} /></div>
+        </div>
       </div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 4px' }}>
+      <div className="mail-compose-actions">
         <button type="button" className="btn" disabled={busy} onClick={() => save('DRAFT')}>{t('mailboxSaveDraft')}</button>
         <button type="button" className="btn" disabled={busy} onClick={() => save('QUEUED')}>{t('mailboxQueue')}</button>
         <button type="button" className="btn btn-primary" disabled={busy} onClick={() => save('SENT')}>{t('mailboxSend')}</button>

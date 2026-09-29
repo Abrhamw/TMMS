@@ -130,6 +130,19 @@ export const api = {
     a.remove();
     URL.revokeObjectURL(url);
   },
+  // Fetch a binary attachment as a Blob (for inline PDF/image preview).
+  blob: async (path) => {
+    const token = getToken();
+    const headers = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(`${BASE}${path}`, { headers });
+    if (res.status === 401) {
+      handle401();
+      throw new Error('Session expired. Please sign in again.');
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.blob();
+  },
 };
 
 // Normalize a JSON array field (e.g. route_json, boundary_json) into an array.

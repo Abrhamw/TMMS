@@ -23,6 +23,55 @@ function personName(id) {
   return `person #${id}`;
 }
 
+const executionItemQuery = db.prepare(
+  `SELECT i.*, ci.critical_step, ci.pass_criteria, ci.test_equipment, ci.section
+     FROM checklist_execution_item i
+     LEFT JOIN checklist_item ci ON ci.id = i.template_item_id
+    WHERE i.execution_id = ? ORDER BY i.sequence, i.id`
+);
+
+// The full execution "summary": where the work happened, the dispatch readiness
+// gaps and workflow owners, plus every recorded step. Shared by the execution
+// list and the single-execution endpoint the mailbox uses to preview an
+// execution attachment.
+function enrichExecution(e) {
+  e.template = get('checklist_template', e.template_id);
+  e.task = e.task_id ? get('task', e.task_id) : null;
+  // What the field crew worked on: the execution's own asset, else the task's.
+  e.asset = get('asset', e.asset_id || (e.task ? e.task.asset_id : null)) || null;
+  const crewId = e.task ? e.task.crew_id : null;
+  e.crew = crewId ? get('crew', crewId) : null;
+  e.target = resolveTarget({ task: e.task, asset: e.asset });
+  e.task_type = e.task ? e.task.task_type : null;
+  e.task_number = e.task ? e.task.task_number : null;
+  e.task_title = e.task ? e.task.title : null;
+  e.task_description = e.task ? e.task.description : null;
+  e.task_status = e.task ? e.task.status : null;
+  e.created_by_name = e.task ? personName(e.task.created_by) : null;
+  e.assigned_by_name = e.task ? personName(e.task.assigned_by) : null;
+  e.verified_by_name = e.task ? personName(e.task.verified_by) : null;
+  e.readiness = e.task ? taskReadiness(e.task) : null;
+  e.executed_by_name = personName(e.executed_by);
+  e.crew_id = e.crew ? e.crew.id : (e.crew_id != null ? e.crew_id : null);
+  e.crew_name = e.crew ? e.crew.name : null;
+  e.crew_code = e.crew ? e.crew.crew_code : null;
+  e.template_name = e.template ? e.template.name : null;
+  e.item_results = executionItemQuery.all(e.id);
+  e.items = e.item_results;
+  e.item_count = e.item_results.length;
+  e.pass_count = e.item_results.filter((i) => i.result === 'PASS').length;
+  e.fail_count = e.item_results.filter((i) => i.result === 'FAIL').length;
+  e.critical_fail_count = e.item_results.filter((i) => i.result === 'FAIL' && i.critical_step).length;
+  return e;
+}
+
+// One execution, for the printable execution-summary preview in the mailbox.
+router.get('/checklist-executions/:id', (req, res) => {
+  const e = get('checklist_execution', Number(req.params.id));
+  if (!e || !execVisible(req.user, e)) return res.status(404).json({ error: 'Execution not found' });
+  res.json(enrichExecution(e));
+});
+
 router.get('/checklists', (req, res) => {
   let rows = list('checklist_template');
   const { status, category } = req.query;
@@ -126,40 +175,7 @@ router.get('/checklist-executions', (req, res) => {
   const { task_id, result } = req.query;
   if (task_id) rows = rows.filter((e) => e.task_id === Number(task_id));
   if (result) rows = rows.filter((e) => e.result === result);
-  const itemQ = db.prepare(
-    `SELECT i.*, ci.critical_step, ci.pass_criteria, ci.test_equipment, ci.section
-       FROM checklist_execution_item i
-       LEFT JOIN checklist_item ci ON ci.id = i.template_item_id
-      WHERE i.execution_id = ? ORDER BY i.sequence, i.id`
-  );
-  for (const e of rows) {
-    e.template = get('checklist_template', e.template_id);
-    e.task = e.task_id ? get('task', e.task_id) : null;
-    // What the field crew worked on: the execution's own asset, else the task's.
-    e.asset = get('asset', e.asset_id || (e.task ? e.task.asset_id : null)) || null;
-    const crewId = e.task ? e.task.crew_id : null;
-    e.crew = crewId ? get('crew', crewId) : null;
-    // The asset plus the infrastructure (substation / line / tower) the task
-    // names, so the printed execution states where the work happened.
-    e.target = resolveTarget({ task: e.task, asset: e.asset });
-    e.task_type = e.task ? e.task.task_type : null;
-    e.task_number = e.task ? e.task.task_number : null;
-    e.task_title = e.task ? e.task.title : null;
-    e.task_description = e.task ? e.task.description : null;
-    e.task_status = e.task ? e.task.status : null;
-    // Who owned each step of the workflow, for the printed record.
-    e.created_by_name = e.task ? personName(e.task.created_by) : null;
-    e.assigned_by_name = e.task ? personName(e.task.assigned_by) : null;
-    e.verified_by_name = e.task ? personName(e.task.verified_by) : null;
-    // Eligibility gaps at dispatch time (missed certs, equipment to secure).
-    e.readiness = e.task ? taskReadiness(e.task) : null;
-    e.executed_by_name = personName(e.executed_by);
-    e.item_results = itemQ.all(e.id);
-    e.pass_count = e.item_results.filter((i) => i.result === 'PASS').length;
-    e.fail_count = e.item_results.filter((i) => i.result === 'FAIL').length;
-    e.critical_fail_count = e.item_results.filter((i) => i.result === 'FAIL' && i.critical_step).length;
-  }
-  res.json(rows);
+  res.json(rows.map(enrichExecution));
 });
 
 module.exports = router;
