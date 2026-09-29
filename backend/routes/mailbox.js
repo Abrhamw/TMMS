@@ -630,6 +630,7 @@ router.get('/mailbox/attachments/catalog', (req, res) => {
   const limit = 50;
 
   if (type === 'REPORT') {
+    if (!hasPerm(req.user, 'report:read')) return res.json({ type, items: [] });
     const rows = db.prepare('SELECT id, report_code, title, report_type, scope_region_id FROM report ORDER BY id DESC LIMIT 500').all();
     for (const r of rows) {
       if (!isGlobal(req.user) && r.scope_region_id && r.scope_region_id !== req.user.region_id) continue;
@@ -651,7 +652,7 @@ router.get('/mailbox/attachments/catalog', (req, res) => {
   } else if (type === 'TASK') {
     const rows = taskRows(req.user);
     for (const t of rows) {
-      add({ type: 'TASK', entity_type: 'TASK', entity_id: t.id, label: `${t.task_number} - ${t.title}`, sub: t.status, link: `/tasks/${t.id}` });
+      add({ type: 'TASK', entity_type: 'TASK_DETAIL', entity_id: t.id, label: `${t.task_number} - ${t.title}`, sub: t.status, link: `/tasks/${t.id}` });
       if (out.length >= limit) break;
     }
   } else if (type === 'ASSET') {
