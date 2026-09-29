@@ -519,6 +519,8 @@ function initSchema() {
     entity_id INTEGER,
     link TEXT,
     thread_id INTEGER REFERENCES message(id),
+    parent_id INTEGER REFERENCES message(id),
+    forward_of_id INTEGER REFERENCES message(id),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     sent_at TEXT
@@ -526,6 +528,23 @@ function initSchema() {
   CREATE INDEX IF NOT EXISTS idx_message_recipient ON message(recipient_person_id, status);
   CREATE INDEX IF NOT EXISTS idx_message_sender ON message(sender_user_id, status);
   CREATE INDEX IF NOT EXISTS idx_message_thread ON message(thread_id);
+
+  -- The addressed parties of a message, one row per person per kind. A message
+  -- can now carry many To/Cc/Bcc recipients (mail was single-recipient before);
+  -- kind is TO|CC|BCC and BCC rows are only ever revealed to the sender.
+  -- read_at records the first read by any account of that person, giving the
+  -- sender a per-recipient read receipt.
+  CREATE TABLE IF NOT EXISTS message_recipient (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+    person_id INTEGER REFERENCES person(id),
+    kind TEXT NOT NULL DEFAULT 'TO',
+    read_at TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(message_id, person_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_message_recipient_person ON message_recipient(person_id, message_id);
+  CREATE INDEX IF NOT EXISTS idx_message_recipient_message ON message_recipient(message_id);
 
   -- Per-account mailbox state (read receipt, archive filing) for directed mail.
   CREATE TABLE IF NOT EXISTS message_state (
@@ -723,6 +742,8 @@ function initSchema() {
   migrate('task', 'cancelled_by', 'ALTER TABLE task ADD COLUMN cancelled_by INTEGER REFERENCES person(id)');
   migrate('task', 'cancelled_at', 'ALTER TABLE task ADD COLUMN cancelled_at TEXT');
   migrate('task', 'status_before_cancel', 'ALTER TABLE task ADD COLUMN status_before_cancel TEXT');
+  migrate('message', 'parent_id', 'ALTER TABLE message ADD COLUMN parent_id INTEGER REFERENCES message(id)');
+  migrate('message', 'forward_of_id', 'ALTER TABLE message ADD COLUMN forward_of_id INTEGER REFERENCES message(id)');
 
   // Indexes on columns that only exist after the migrate() calls above, so they
   // cannot live in the CREATE TABLE block on a fresh database.
@@ -734,6 +755,8 @@ function initSchema() {
   CREATE INDEX IF NOT EXISTS idx_checklist_exec_tower ON checklist_execution(tower_id);
   CREATE INDEX IF NOT EXISTS idx_gps_validation_review ON gps_validation(review_status);
   CREATE INDEX IF NOT EXISTS idx_geofence_target ON geofence(target_id);
+  CREATE INDEX IF NOT EXISTS idx_message_parent ON message(parent_id);
+  CREATE INDEX IF NOT EXISTS idx_message_forward_of ON message(forward_of_id);
   `);
 
   // Backfill the review queue for validations recorded before review tracking
@@ -771,6 +794,16 @@ function initSchema() {
     db.prepare(
       `INSERT OR IGNORE INTO task_checklist_template (task_id, template_id, sequence)
        SELECT id, checklist_template_id, 0 FROM task WHERE checklist_template_id IS NOT NULL`
+    ).run();
+  } catch (_) { /* non-fatal */ }
+
+  // Seed the multi-recipient join table from the legacy single-recipient column
+  // so older messages are addressable through the new model too. INSERT OR
+  // IGNORE keeps this a no-op once every message has been migrated.
+  try {
+    db.prepare(
+      `INSERT OR IGNORE INTO message_recipient (message_id, person_id, kind, created_at)
+       SELECT id, recipient_person_id, 'TO', created_at FROM message WHERE recipient_person_id IS NOT NULL`
     ).run();
   } catch (_) { /* non-fatal */ }
 

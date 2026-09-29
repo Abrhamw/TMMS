@@ -232,6 +232,42 @@ export default function Mailbox() {
     setReportDocument(null);
   }
 
+  // Reply pre-fills the sender; reply-all also carries every other To and Cc
+  // party (never the sender's own account), each editable before sending.
+  function replyCompose(message, all) {
+    const selfId = Number(me.person_id);
+    const seen = new Set();
+    const recipients = [];
+    const push = (personId, name, kind) => {
+      const pid = Number(personId);
+      if (!pid || pid === selfId || seen.has(pid)) return;
+      seen.add(pid);
+      recipients.push({ person_id: pid, name: name || `Person ${pid}`, kind });
+    };
+    push(message.sender_person_id, message.actor, 'TO');
+    if (all) {
+      (message.to || []).forEach((r) => push(r.person_id, r.name, 'TO'));
+      (message.cc || []).forEach((r) => push(r.person_id, r.name, 'CC'));
+    }
+    return {
+      recipients,
+      subject: /^re:/i.test(message.subject) ? message.subject : `Re: ${message.subject}`,
+      category: message.category,
+      thread_id: message.id,
+      parent_id: message.id,
+    };
+  }
+
+  // Forward starts a real draft server-side (subject, quote and a physical copy
+  // of the attachments), then opens it in the composer for free editing.
+  async function startForward(message) {
+    try {
+      const draft = await api.post(`/mailbox/messages/${message.id}/forward`, {});
+      await load();
+      startCompose({ editId: draft.id, ...draft, forwardHint: true });
+    } catch (e) { setError(e.message); }
+  }
+
   return (
     <Page title={t('mailboxTitle')} crumbs="TMMS / Operations / Mailbox" fill>
       {error && <ErrorNote error={error} />}
@@ -300,17 +336,12 @@ export default function Mailbox() {
               <MailReader
                 message={mailMessage}
                 me={me}
-                onReply={() => startCompose({
-                  recipient_person_id: mailMessage.outgoing ? mailMessage.recipient_person_id : mailMessage.sender_person_id,
-                  recipient_name: mailMessage.outgoing ? mailMessage.recipient : mailMessage.actor,
-                  subject: /^re:/i.test(mailMessage.subject) ? mailMessage.subject : `Re: ${mailMessage.subject}`,
-                  category: mailMessage.category,
-                  thread_id: mailMessage.id,
-                })}
+                onReply={() => startCompose(replyCompose(mailMessage, false))}
+                onReplyAll={() => startCompose(replyCompose(mailMessage, true))}
+                onForward={() => startForward(mailMessage)}
                 onEdit={() => startCompose({
                   editId: mailMessage.id,
-                  recipient_person_id: mailMessage.recipient_person_id,
-                  recipient_name: mailMessage.recipient,
+                  recipients: mailMessage.recipients,
                   subject: mailMessage.subject,
                   body: mailMessage.body,
                   category: mailMessage.category,
@@ -485,7 +516,7 @@ function MailAttachmentPreview({ attachment, onClose, onOpenTask }) {
   );
 }
 
-function MailReader({ message, me, onReply, onEdit, onSend, onArchive, onUnarchive, onOpenLink, onPreview, onOpenTask }) {
+function MailReader({ message, me, onReply, onReplyAll, onForward, onEdit, onSend, onArchive, onUnarchive, onOpenLink, onPreview, onOpenTask }) {
   const isDraft = message.status === 'DRAFT' || message.status === 'QUEUED';
   const mineIsSender = message.sender_person_id === me.person_id;
   const attachments = message.attachments || [];
@@ -493,6 +524,13 @@ function MailReader({ message, me, onReply, onEdit, onSend, onArchive, onUnarchi
     const m = /\/tasks\/(\d+)/.exec(message.link || '');
     return m ? m[1] : null;
   })();
+  const to = message.to || [];
+  const cc = message.cc || [];
+  const bcc = message.bcc || [];
+  // Reply-all is offered whenever the mail reached more than just the sender.
+  const canReplyAll = onReplyAll && (to.length + cc.length + bcc.length) > 1;
+  const receipts = mineIsSender ? (message.read_receipts || []).filter((r) => r.kind !== 'BCC') : [];
+  const receiptRead = receipts.filter((r) => r.read_at).length;
   return (
     <>
       <header className="mail-reader-head">
@@ -505,6 +543,8 @@ function MailReader({ message, me, onReply, onEdit, onSend, onArchive, onUnarchi
             {isDraft && mineIsSender && <button type="button" className="btn btn-sm" onClick={onEdit}>{t('mailboxEditDraft')}</button>}
             {isDraft && mineIsSender && <button type="button" className="btn btn-sm btn-primary" onClick={onSend}>{t('mailboxSend')}</button>}
             {!isDraft && <button type="button" className="btn btn-sm" onClick={onReply}>{t('mailboxReply')}</button>}
+            {!isDraft && canReplyAll && <button type="button" className="btn btn-sm" onClick={onReplyAll}>{t('mailboxReplyAll')}</button>}
+            {!isDraft && onForward && <button type="button" className="btn btn-sm" onClick={onForward}>{t('mailboxForward')}</button>}
             {linkedTaskId
               ? <button type="button" className="btn btn-sm" onClick={() => onOpenTask(linkedTaskId)}>{t('mailboxOpenTask')}</button>
               : message.link && <button type="button" className="btn btn-sm" onClick={onOpenLink}>{t('mailboxOpenLink')}</button>}
@@ -515,10 +555,22 @@ function MailReader({ message, me, onReply, onEdit, onSend, onArchive, onUnarchi
         </div>
         <div className="mail-task-meta">
           <span>{t('mailboxFrom')}: {message.actor}</span>
-          <span>{t('mailboxTo')}: {message.recipient}</span>
+          <span>{t('mailboxTo')}: {to.length ? to.map((r) => r.name).join(', ') : message.recipient}</span>
+          {cc.length > 0 && <span>{t('mailboxCc')}: {cc.map((r) => r.name).join(', ')}</span>}
+          {bcc.length > 0 && <span>{t('mailboxBcc')}: {bcc.map((r) => r.name).join(', ')}</span>}
           {message.sent_at && <span>{t('mailboxSentAt')} {fmtDateTime(message.sent_at)}</span>}
           <TagChips tags={message.tags} />
         </div>
+        {receipts.length > 0 && (
+          <div className="mail-receipts">
+            <span className="muted">{t('mailboxReadReceipts')}: {receiptRead}/{receipts.length}</span>
+            {receipts.map((r) => (
+              <span key={r.person_id} className={'mail-receipt' + (r.read_at ? ' read' : '')} title={r.read_at ? fmtDateTime(r.read_at) : ''}>
+                {r.name}
+              </span>
+            ))}
+          </div>
+        )}
       </header>
       <div className="mail-scroll">
         <div className="mail-message"><p style={{ whiteSpace: 'pre-wrap' }}>{message.body}</p></div>
@@ -652,10 +704,68 @@ function AttachmentField({ value, onChange }) {
   );
 }
 
-function MailCompose({ initial, me, onCancel, onSaved }) {
-  const [recipients, setRecipients] = useState([]);
-  const [recipient, setRecipient] = useState(initial?.recipient_person_id || '');
+function initialRecipients(initial, kind) {
+  const list = Array.isArray(initial?.recipients) ? initial.recipients : [];
+  const out = list
+    .filter((r) => (String(r.kind || 'TO').toUpperCase() === kind))
+    .map((r) => ({ person_id: Number(r.person_id), name: r.name || `Person ${r.person_id}`, role: r.role || '' }));
+  if (!out.length && kind === 'TO' && initial?.recipient_person_id && !list.length) {
+    out.push({ person_id: Number(initial.recipient_person_id), name: initial.recipient_name || `Person ${initial.recipient_person_id}`, role: '' });
+  }
+  return out;
+}
+
+// A single To / Cc / Bcc line: type-to-filter over the addressable people,
+// chips for the chosen parties, and a remove control on each chip.
+function RecipientField({ label, value, onChange, contacts, placeholder }) {
   const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const blurTimer = useRef(null);
+  const selected = new Set(value.map((r) => Number(r.person_id)));
+  const q = query.trim().toLowerCase();
+  const pool = contacts.filter((c) => !selected.has(Number(c.person_id)));
+  const matched = q ? pool.filter((c) => `${c.name} ${c.username} ${c.role} ${c.title || ''}`.toLowerCase().includes(q)) : pool;
+  const results = matched.slice(0, 30);
+  return (
+    <div className="field full">
+      <label>{label}</label>
+      <div className="mail-recipient-box">
+        {value.map((r) => (
+          <span key={r.person_id} className="mail-recipient-chip">
+            <span>{r.name}</span>
+            <button type="button" className="mail-attach-x" title={t('mailboxAttachRemove')}
+              onClick={() => onChange(value.filter((x) => Number(x.person_id) !== Number(r.person_id)))}>{'×'}</button>
+          </span>
+        ))}
+        <input value={query}
+          onFocus={() => { if (blurTimer.current) clearTimeout(blurTimer.current); setOpen(true); }}
+          onBlur={() => { blurTimer.current = setTimeout(() => setOpen(false), 150); }}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={placeholder || t('mailboxRecipientPlaceholder')} />
+      </div>
+      {open && (
+        <div className="mail-recipient-menu">
+          {results.map((c) => (
+            <button key={c.person_id} type="button" className="mail-recipient"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { onChange([...value, { person_id: c.person_id, name: c.name, role: c.role }]); setQuery(''); }}>
+              <b>{c.name}</b> <span className="muted">· {c.role}{c.title ? ` · ${c.title}` : ''}</span>
+            </button>
+          ))}
+          {!results.length && <div className="muted" style={{ padding: 10 }}>{t('mailboxNoRecipients')}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MailCompose({ initial, me, onCancel, onSaved }) {
+  const [contacts, setContacts] = useState([]);
+  const [to, setTo] = useState(() => initialRecipients(initial, 'TO'));
+  const [cc, setCc] = useState(() => initialRecipients(initial, 'CC'));
+  const [bcc, setBcc] = useState(() => initialRecipients(initial, 'BCC'));
+  const [showCc, setShowCc] = useState(() => initialRecipients(initial, 'CC').length > 0);
+  const [showBcc, setShowBcc] = useState(() => initialRecipients(initial, 'BCC').length > 0);
   const [subject, setSubject] = useState(initial?.subject || '');
   const [body, setBody] = useState(initial?.body || '');
   const [category, setCategory] = useState(initial?.category || 'GENERAL');
@@ -675,35 +785,40 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
   const [err, setErr] = useState(null);
 
   useEffect(() => {
-    api.get('/mailbox/recipients').then((list) => setRecipients(list || [])).catch((e) => setErr(e.message));
+    api.get('/mailbox/recipients').then((list) => setContacts(list || [])).catch((e) => setErr(e.message));
   }, []);
 
-  const stored = recipients.find((r) => r.person_id === Number(recipient));
-  // A reply pre-fills the original sender, who may sit outside the addressable
-  // list; fall back to the name carried on the draft so the chip still renders.
-  const selected = stored || (initial?.recipient_person_id && initial?.recipient_name
-    ? { person_id: Number(initial.recipient_person_id), name: initial.recipient_name, role: '' }
-    : null);
-  const filtered = (query.trim()
-    ? recipients.filter((r) => `${r.name} ${r.username} ${r.role}`.toLowerCase().includes(query.trim().toLowerCase()))
-    : recipients
-  ).slice(0, 40);
+  // A person can only hold one place on the envelope; whichever line they are
+  // added to removes the other occurrences.
+  const setKind = (kind, next) => {
+    const ids = new Set(next.map((r) => Number(r.person_id)));
+    const prune = (rows) => rows.filter((r) => !ids.has(Number(r.person_id)));
+    if (kind !== 'TO') setTo(prune);
+    if (kind !== 'CC') setCc(prune);
+    if (kind !== 'BCC') setBcc(prune);
+    if (kind === 'TO') setTo(next);
+    if (kind === 'CC') { setCc(next); setShowCc(true); }
+    if (kind === 'BCC') { setBcc(next); setShowBcc(true); }
+  };
 
   async function save(status) {
     setErr(null);
-    if (!Number(recipient)) { setErr(t('mailboxRecipientRequired')); return; }
+    if (status !== 'DRAFT' && !to.length) { setErr(t('mailboxRecipientRequired')); return; }
     if (status === 'SENT' && !subject.trim()) { setErr(t('mailboxSubjectRequired')); return; }
     if (!subject.trim() && !body.trim()) { setErr(t('mailboxBodyRequired')); return; }
     setBusy(true);
     try {
       const payload = {
-        recipient_person_id: Number(recipient),
+        to: to.map((r) => Number(r.person_id)),
+        cc: cc.map((r) => Number(r.person_id)),
+        bcc: bcc.map((r) => Number(r.person_id)),
         subject: subject.trim(),
         body: body.trim(),
         category,
         priority,
         status,
         thread_id: initial?.thread_id || null,
+        parent_id: initial?.parent_id || null,
         attachments: attachments.map((a) => ({
           id: a.id ?? null,
           kind: a.kind,
@@ -737,54 +852,40 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
       <div className="mail-scroll">
         {err && <ErrorNote error={err} />}
         <div className="form-grid" style={{ padding: '0 4px' }}>
-        <div className="field full">
-          <label>{t('mailboxTo')}</label>
-          {selected ? (
-            <>
-              <div className="spread" style={{ alignItems: 'center', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px' }}>
-                <span><b>{selected.name}</b>{selected.role ? <span className="muted"> · {selected.role}</span> : null}</span>
-                <button type="button" className="btn btn-sm" title={t('mailboxChangeRecipient')} onClick={() => setRecipient('')}>{'×'}</button>
-              </div>
-              {initial?.recipient_name && (
-                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{t('mailboxReplyRecipientHint')}</div>
-              )}
-            </>
-          ) : (
-            <>
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('mailboxRecipientPlaceholder')} />
-              <div style={{ maxHeight: 150, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8, marginTop: 6 }}>
-                {filtered.map((r) => (
-                  <button key={r.person_id} type="button" className="mail-recipient"
-                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', background: 'none', border: 0, borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
-                    onClick={() => { setRecipient(r.person_id); setQuery(''); }}>
-                    <b>{r.name}</b> <span className="muted">· {r.role}{r.title ? ` · ${r.title}` : ''}</span>
-                  </button>
-                ))}
-                {!filtered.length && <div className="muted" style={{ padding: 10 }}>{t('mailboxNoRecipients')}</div>}
-              </div>
-            </>
+          <RecipientField label={t('mailboxTo')} value={to} onChange={(next) => setKind('TO', next)} contacts={contacts} />
+          {(showCc || cc.length > 0) && (
+            <RecipientField label={t('mailboxCc')} value={cc} onChange={(next) => setKind('CC', next)} contacts={contacts} />
           )}
-        </div>
-        <div className="field full"><label>{t('mailboxSubject')}</label><input value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
-        <AttachmentField value={attachments} onChange={setAttachments} />
-        <div className="field"><label>{t('mailboxCategory')}</label>
-          <select value={category} onChange={(e) => setCategory(e.target.value)}>
-            <option value="GENERAL">GENERAL</option>
-            <option value="REPORT">REPORT</option>
-            <option value="EXECUTION">EXECUTION</option>
-            <option value="REQUEST">REQUEST</option>
-            <option value="ALERT">ALERT</option>
-          </select>
-        </div>
-        <div className="field"><label>{t('mailboxPriority')}</label>
-          <select value={priority} onChange={(e) => setPriority(e.target.value)}>
-            <option value="LOW">LOW</option>
-            <option value="NORMAL">NORMAL</option>
-            <option value="HIGH">HIGH</option>
-            <option value="URGENT">URGENT</option>
-          </select>
-        </div>
-        <div className="field full"><label>{t('mailboxMessage')}</label><textarea value={body} onChange={(e) => setBody(e.target.value)} style={{ minHeight: 140 }} /></div>
+          {(showBcc || bcc.length > 0) && (
+            <RecipientField label={t('mailboxBcc')} value={bcc} onChange={(next) => setKind('BCC', next)} contacts={contacts} />
+          )}
+          {(!showCc || !showBcc) && (
+            <div className="mail-recipient-toggles">
+              {!showCc && <button type="button" className="btn btn-sm" onClick={() => setShowCc(true)}>{t('mailboxAddCc')}</button>}
+              {!showBcc && <button type="button" className="btn btn-sm" onClick={() => setShowBcc(true)}>{t('mailboxAddBcc')}</button>}
+            </div>
+          )}
+          {initial?.forwardHint && <div className="muted field full" style={{ fontSize: 12 }}>{t('mailboxForwardHint')}</div>}
+          <div className="field full"><label>{t('mailboxSubject')}</label><input value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
+          <AttachmentField value={attachments} onChange={setAttachments} />
+          <div className="field"><label>{t('mailboxCategory')}</label>
+            <select value={category} onChange={(e) => setCategory(e.target.value)}>
+              <option value="GENERAL">GENERAL</option>
+              <option value="REPORT">REPORT</option>
+              <option value="EXECUTION">EXECUTION</option>
+              <option value="REQUEST">REQUEST</option>
+              <option value="ALERT">ALERT</option>
+            </select>
+          </div>
+          <div className="field"><label>{t('mailboxPriority')}</label>
+            <select value={priority} onChange={(e) => setPriority(e.target.value)}>
+              <option value="LOW">LOW</option>
+              <option value="NORMAL">NORMAL</option>
+              <option value="HIGH">HIGH</option>
+              <option value="URGENT">URGENT</option>
+            </select>
+          </div>
+          <div className="field full"><label>{t('mailboxMessage')}</label><textarea value={body} onChange={(e) => setBody(e.target.value)} style={{ minHeight: 140 }} /></div>
         </div>
       </div>
       <div className="mail-compose-actions">

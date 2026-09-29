@@ -274,20 +274,132 @@ function recipientVisible(user, personId) {
 }
 
 // Everyone this account has already exchanged mail with, in either direction.
-// Replying must always be able to reach the original sender even when they sit
-// outside the account's downward command scope (e.g. a global executive).
+// Replying must always be able to reach the original sender (and any other
+// addressee) even when they sit outside the account's downward command scope
+// (e.g. a global executive), so reply-all is never blocked by the scope rule.
 function correspondencePersonIds(user) {
   const ids = new Set();
   if (!user.person_id) return ids;
-  const rows = db.prepare(
-    'SELECT sender_person_id, recipient_person_id FROM message WHERE sender_person_id = ? OR recipient_person_id = ?'
-  ).all(user.person_id, user.person_id);
-  for (const r of rows) {
-    for (const p of [r.sender_person_id, r.recipient_person_id]) {
-      if (p && Number(p) !== user.person_id) ids.add(Number(p));
+  const add = (v) => { if (v && Number(v) !== user.person_id) ids.add(Number(v)); };
+  const sentIds = db.prepare('SELECT id FROM message WHERE sender_person_id = ?').all(user.person_id).map((r) => r.id);
+  const receivedIds = db.prepare('SELECT message_id FROM message_recipient WHERE person_id = ?').all(user.person_id).map((r) => r.message_id);
+  const involved = [...new Set([...sentIds, ...receivedIds])];
+  if (!involved.length) return ids;
+  const ph = involved.map(() => '?').join(',');
+  for (const r of db.prepare(`SELECT person_id FROM message_recipient WHERE message_id IN (${ph})`).all(...involved)) add(r.person_id);
+  for (const r of db.prepare(`SELECT sender_person_id FROM message WHERE id IN (${ph})`).all(...involved)) add(r.sender_person_id);
+  return ids;
+}
+
+const RECIPIENT_KINDS = ['TO', 'CC', 'BCC'];
+const KIND_RANK = { TO: 0, CC: 1, BCC: 2 };
+
+// The addressed parties of a message, person-joined and ordered To, Cc, Bcc.
+function recipientRowsFor(messageId) {
+  return db.prepare(
+    `SELECT r.person_id, r.kind, r.read_at, p.first_name, p.last_name
+       FROM message_recipient r LEFT JOIN person p ON p.id = r.person_id
+      WHERE r.message_id = ?
+      ORDER BY CASE r.kind WHEN 'TO' THEN 0 WHEN 'CC' THEN 1 ELSE 2 END, r.id`
+  ).all(Number(messageId)).map((r) => ({
+    person_id: r.person_id,
+    name: [r.first_name, r.last_name].filter(Boolean).join(' ') || `Person ${r.person_id}`,
+    kind: r.kind,
+    read_at: r.read_at || null,
+  }));
+}
+
+// Normalise any accepted recipient shape (to/cc/bcc arrays, a recipients list,
+// or the legacy single id) into a deduplicated `{ person_id, kind }` list.
+// Anyone out of command scope - and not already a correspondent - is rejected.
+function sanitizeRecipients(user, body) {
+  const byPerson = new Map();
+  let blocked = null;
+  const addOne = (value, kind) => {
+    const pid = Number(value && typeof value === 'object' ? value.person_id : value);
+    if (!pid || !get('person', pid)) return;
+    if (!canAddress(user, pid)) { blocked = pid; return; }
+    const current = byPerson.get(pid);
+    if (current == null || KIND_RANK[kind] < KIND_RANK[current]) byPerson.set(pid, kind);
+  };
+  const addList = (arr, kind) => { if (Array.isArray(arr)) arr.forEach((v) => addOne(v, kind)); };
+  addList(body.to, 'TO');
+  addList(body.cc, 'CC');
+  addList(body.bcc, 'BCC');
+  if (Array.isArray(body.recipients)) {
+    for (const r of body.recipients) {
+      if (!r) continue;
+      const kind = RECIPIENT_KINDS.includes(String(r.kind).toUpperCase()) ? String(r.kind).toUpperCase() : 'TO';
+      addOne(r, kind);
     }
   }
-  return ids;
+  if (body.recipient_person_id != null || body.recipient_id != null) addOne(body.recipient_person_id ?? body.recipient_id, 'TO');
+  if (blocked) return { error: `Recipient ${personLabel(blocked)} is outside your command scope` };
+  const list = [...byPerson.entries()].map(([person_id, kind]) => ({ person_id, kind }))
+    .sort((a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind]);
+  return { list, to: list.filter((r) => r.kind === 'TO') };
+}
+
+// Replace a message's addressing. Rows that already exist keep their read
+// receipt; senders' per-recipient receipts survive an edit of a draft.
+function saveRecipients(messageId, list) {
+  const mid = Number(messageId);
+  const existing = new Map(
+    db.prepare('SELECT id, person_id, kind FROM message_recipient WHERE message_id = ?').all(mid).map((r) => [r.person_id, r])
+  );
+  const keep = new Set();
+  const now = new Date().toISOString();
+  const ins = db.prepare('INSERT INTO message_recipient (message_id, person_id, kind, read_at, created_at) VALUES (?, ?, ?, NULL, ?)');
+  for (const r of list) {
+    const prev = existing.get(r.person_id);
+    if (prev) {
+      if (prev.kind !== r.kind) db.prepare('UPDATE message_recipient SET kind = ? WHERE id = ?').run(r.kind, prev.id);
+      keep.add(prev.person_id);
+    } else {
+      ins.run(mid, r.person_id, r.kind, now);
+      keep.add(r.person_id);
+    }
+  }
+  for (const r of existing.values()) if (!keep.has(r.person_id)) db.prepare('DELETE FROM message_recipient WHERE id = ?').run(r.id);
+  const primary = list.find((r) => r.kind === 'TO');
+  const primaryUser = primary ? primaryUserForPerson(primary.person_id) : null;
+  updateRow('message', mid, {
+    recipient_person_id: primary ? primary.person_id : null,
+    recipient_user_id: primaryUser ? primaryUser.id : null,
+  });
+}
+
+// Copy a message's attachments (rows and any on-disk files) onto another
+// message. Forwarding carries the original evidence without sharing a file, so
+// deleting one copy never removes the other.
+function cloneAttachments(fromId, toId) {
+  const rows = db.prepare('SELECT * FROM message_attachment WHERE message_id = ?').all(Number(fromId));
+  if (!rows.length) return;
+  const now = new Date().toISOString();
+  for (const a of rows) {
+    let stored = null;
+    if (a.stored_name) {
+      const src = path.join(UPLOAD_DIR, path.basename(a.stored_name));
+      if (fs.existsSync(src)) {
+        const ext = path.extname(a.stored_name).slice(0, 10).toLowerCase();
+        stored = `${crypto.randomUUID()}${ext || '.bin'}`;
+        fs.copyFileSync(src, path.join(UPLOAD_DIR, stored));
+      }
+    }
+    insertRow('message_attachment', {
+      message_id: Number(toId),
+      kind: a.kind,
+      entity_type: a.entity_type,
+      entity_id: a.entity_id,
+      label: a.label,
+      link: a.link,
+      file_name: a.file_name,
+      stored_name: stored,
+      mime: a.mime,
+      size_bytes: a.size_bytes,
+      created_at: now,
+    });
+  }
 }
 
 // Addressable = inside the command scope, or already a correspondent so a reply
@@ -394,7 +506,16 @@ function saveAttachments(messageId, list) {
 
 function mailRow(user, m, state) {
   const resolved = state || mailStateFor(user.id, m.id);
-  const incoming = Number(m.recipient_person_id) === user.person_id;
+  const everyone = recipientRowsFor(m.id);
+  const isSender = m.sender_user_id === user.id;
+  const myKind = user.person_id ? (everyone.find((r) => r.person_id === user.person_id) || null) : null;
+  const incoming = !!myKind || Number(m.recipient_person_id) === user.person_id;
+  // A blind copy is a secret: only the sender ever sees the Bcc line.
+  const visible = everyone.filter((r) => isSender || r.kind !== 'BCC');
+  const to = visible.filter((r) => r.kind === 'TO');
+  const cc = visible.filter((r) => r.kind === 'CC');
+  const bcc = visible.filter((r) => r.kind === 'BCC');
+  const names = (rows) => rows.map((r) => r.name).join(', ');
   return {
     key: `mail-${m.id}`,
     id: m.id,
@@ -410,14 +531,23 @@ function mailRow(user, m, state) {
     actor: personLabel(m.sender_person_id),
     actor_key: `person-${m.sender_person_id}`,
     sender_person_id: m.sender_person_id,
-    recipient: personLabel(m.recipient_person_id),
-    recipient_person_id: m.recipient_person_id,
+    recipient: to.length ? names(to) : (cc.length ? names(cc) : personLabel(m.recipient_person_id)),
+    recipient_person_id: to.length ? to[0].person_id : m.recipient_person_id,
+    recipients: visible,
+    to,
+    cc,
+    bcc,
+    my_kind: myKind ? myKind.kind : null,
+    // Per-recipient read receipts for the sender's own sent mail.
+    read_receipts: isSender ? visible.map((r) => ({ person_id: r.person_id, name: r.name, kind: r.kind, read_at: r.read_at })) : [],
     category: m.category,
     priority: m.priority,
     status: m.status,
     outgoing: !incoming,
     link: m.link || null,
     thread_id: m.thread_id || null,
+    parent_id: m.parent_id || null,
+    forward_of_id: m.forward_of_id || null,
     attachments: attachmentRowsFor(m.id),
     tags: [m.category, m.priority !== 'NORMAL' ? m.priority : null].filter(Boolean),
     unread: incoming && m.status === 'SENT' && !resolved?.read_at,
@@ -430,7 +560,10 @@ function mailFolders(user) {
     'SELECT * FROM message WHERE sender_user_id = ? ORDER BY COALESCE(sent_at, updated_at, created_at) DESC, id DESC'
   ).all(user.id);
   const incoming = user.person_id
-    ? db.prepare('SELECT * FROM message WHERE recipient_person_id = ? ORDER BY COALESCE(sent_at, created_at) DESC, id DESC').all(user.person_id)
+    ? db.prepare(
+      `SELECT m.* FROM message m JOIN message_recipient r ON r.message_id = m.id
+        WHERE r.person_id = ? ORDER BY COALESCE(m.sent_at, m.created_at) DESC, m.id DESC`
+    ).all(user.person_id)
     : [];
   const states = new Map(db.prepare('SELECT message_id, read_at, archived_at FROM message_state WHERE user_id = ?').all(user.id).map((s) => [s.message_id, s]));
   const row = (m) => mailRow(user, m, states.get(m.id));
@@ -446,16 +579,18 @@ function mailFolders(user) {
 }
 
 function mailVisible(user, id) {
-  const m = db.prepare('SELECT sender_user_id, recipient_person_id FROM message WHERE id = ?').get(Number(id));
+  const m = db.prepare('SELECT sender_user_id FROM message WHERE id = ?').get(Number(id));
   if (!m) return false;
-  return m.sender_user_id === user.id || (user.person_id && m.recipient_person_id === user.person_id);
+  if (m.sender_user_id === user.id) return true;
+  return !!user.person_id && !!db.prepare('SELECT 1 FROM message_recipient WHERE message_id = ? AND person_id = ?').get(Number(id), user.person_id);
 }
 
 function mailParticipant(user, id) {
   const m = get('message', Number(id));
   if (!m) return null;
-  if (m.sender_user_id !== user.id && !(user.person_id && m.recipient_person_id === user.person_id)) return null;
-  return m;
+  if (m.sender_user_id === user.id) return m;
+  const isRecipient = user.person_id && db.prepare('SELECT 1 FROM message_recipient WHERE message_id = ? AND person_id = ?').get(m.id, user.person_id);
+  return isRecipient ? m : null;
 }
 
 function loadMailVisible(req, res) {
@@ -485,21 +620,22 @@ router.get('/mailbox/recipients', (req, res) => {
 
 router.post('/mailbox/messages', (req, res) => {
   const body = req.body || {};
-  const rid = Number(body.recipient_person_id || body.recipient_id);
-  if (!rid) return res.status(400).json({ error: 'Recipient is required' });
-  if (!get('person', rid)) return res.status(404).json({ error: 'Recipient not found' });
-  if (!canAddress(req.user, rid)) return res.status(403).json({ error: 'Recipient is outside your command scope' });
+  const rec = sanitizeRecipients(req.user, body);
+  if (rec.error) return res.status(403).json({ error: rec.error });
   const status = MAIL_STATUSES.has(String(body.status)) ? String(body.status) : 'SENT';
   const subject = String(body.subject || '').trim().slice(0, 200);
   const text = String(body.body || '').trim().slice(0, 20000);
   if (!subject && !text) return res.status(400).json({ error: 'A subject or message body is required' });
+  if (status !== 'DRAFT' && !rec.list.length) return res.status(400).json({ error: 'At least one recipient is required' });
+  if (status !== 'DRAFT' && !rec.to.length) return res.status(400).json({ error: 'A To recipient is required' });
   if (status === 'SENT' && !subject) return res.status(400).json({ error: 'A subject is required to send a message' });
   const now = new Date().toISOString();
-  const recipientUser = primaryUserForPerson(rid);
+  const primary = rec.to[0];
+  const recipientUser = primary ? primaryUserForPerson(primary.person_id) : null;
   const id = insertRow('message', {
     sender_user_id: req.user.id,
     sender_person_id: req.user.person_id || null,
-    recipient_person_id: rid,
+    recipient_person_id: primary ? primary.person_id : null,
     recipient_user_id: recipientUser ? recipientUser.id : null,
     subject,
     body: text,
@@ -510,11 +646,15 @@ router.post('/mailbox/messages', (req, res) => {
     entity_id: body.entity_id ? Number(body.entity_id) : null,
     link: body.link || null,
     thread_id: validThreadId(body.thread_id),
+    parent_id: validThreadId(body.parent_id || body.reply_to_id || body.in_reply_to_id),
+    forward_of_id: validThreadId(body.forward_of_id),
     created_at: now,
     updated_at: now,
     sent_at: status === 'SENT' ? now : null,
   });
+  saveRecipients(id, rec.list);
   if (body.attachments !== undefined) saveAttachments(id, sanitizeAttachments(body.attachments));
+  if (body.forward_of_id) cloneAttachments(body.forward_of_id, id);
   res.status(201).json(mailRow(req.user, get('message', id)));
 });
 
@@ -527,23 +667,59 @@ router.put('/mailbox/messages/:id', (req, res) => {
   const patch = {};
   if (body.subject !== undefined) patch.subject = String(body.subject || '').trim().slice(0, 200);
   if (body.body !== undefined) patch.body = String(body.body || '').trim().slice(0, 20000);
-  if (body.recipient_person_id !== undefined || body.recipient_id !== undefined) {
-    const rid = Number(body.recipient_person_id || body.recipient_id);
-    if (!rid || !get('person', rid)) return res.status(404).json({ error: 'Recipient not found' });
-    if (!canAddress(req.user, rid)) return res.status(403).json({ error: 'Recipient is outside your command scope' });
-    patch.recipient_person_id = rid;
-    const ru = primaryUserForPerson(rid);
-    patch.recipient_user_id = ru ? ru.id : null;
+  const touchesRecipients = body.to !== undefined || body.cc !== undefined || body.bcc !== undefined
+    || body.recipients !== undefined || body.recipient_person_id !== undefined || body.recipient_id !== undefined;
+  let rec = null;
+  if (touchesRecipients) {
+    rec = sanitizeRecipients(req.user, body);
+    if (rec.error) return res.status(403).json({ error: rec.error });
   }
   if (body.thread_id !== undefined) patch.thread_id = validThreadId(body.thread_id);
+  if (body.parent_id !== undefined) patch.parent_id = validThreadId(body.parent_id);
   if (body.category !== undefined && MAIL_CATEGORIES.has(body.category)) patch.category = body.category;
   if (body.priority !== undefined && MAIL_PRIORITIES.has(body.priority)) patch.priority = body.priority;
   if (body.link !== undefined) patch.link = body.link || null;
   if (body.status !== undefined && MAIL_STATUSES.has(body.status) && body.status !== 'SENT') patch.status = body.status;
   patch.updated_at = new Date().toISOString();
   updateRow('message', m.id, patch);
+  if (rec) saveRecipients(m.id, rec.list);
   if (body.attachments !== undefined) saveAttachments(m.id, sanitizeAttachments(body.attachments));
+  if (body.forward_of_id && !m.forward_of_id) cloneAttachments(body.forward_of_id, m.id);
   res.json(mailRow(req.user, get('message', m.id)));
+});
+
+// Forward = start a fresh editable draft carrying the original's subject, a
+// quoted body and a physical copy of its attachments. The draft then flows
+// through the normal compose/send path, so recipients and notes stay editable.
+router.post('/mailbox/messages/:id/forward', (req, res) => {
+  const m = mailParticipant(req.user, req.params.id);
+  if (!m) return res.status(404).json({ error: 'Message not found' });
+  const subject = /^fwd:/i.test(m.subject || '') ? (m.subject || '') : `Fwd: ${m.subject || ''}`.trim();
+  const note = String((req.body && req.body.note) || '').trim().slice(0, 20000);
+  const quoted = `\n\n---------- Forwarded message ----------\nFrom: ${personLabel(m.sender_person_id)}\nDate: ${m.sent_at || m.created_at}\nSubject: ${m.subject || ''}\n\n${m.body || ''}`;
+  const now = new Date().toISOString();
+  const id = insertRow('message', {
+    sender_user_id: req.user.id,
+    sender_person_id: req.user.person_id || null,
+    recipient_person_id: null,
+    recipient_user_id: null,
+    subject,
+    body: (note + quoted).trim(),
+    category: m.category || 'GENERAL',
+    priority: m.priority || 'NORMAL',
+    status: 'DRAFT',
+    entity_type: m.entity_type || null,
+    entity_id: m.entity_id ?? null,
+    link: m.link || null,
+    thread_id: m.thread_id || m.id,
+    parent_id: m.id,
+    forward_of_id: m.id,
+    created_at: now,
+    updated_at: now,
+    sent_at: null,
+  });
+  cloneAttachments(m.id, id);
+  res.status(201).json(mailRow(req.user, get('message', id)));
 });
 
 router.post('/mailbox/messages/:id/send', (req, res) => {
@@ -557,7 +733,10 @@ router.post('/mailbox/messages/:id/send', (req, res) => {
     if (!subject) return res.status(400).json({ error: 'A subject is required to send a message' });
     updateRow('message', m.id, { subject, updated_at: now });
   }
-  if (!get('message', m.id).subject) return res.status(400).json({ error: 'A subject is required to send a message' });
+  const fresh = get('message', m.id);
+  if (!fresh.subject) return res.status(400).json({ error: 'A subject is required to send a message' });
+  const addressed = recipientRowsFor(m.id);
+  if (!addressed.some((r) => r.kind === 'TO')) return res.status(400).json({ error: 'A To recipient is required' });
   updateRow('message', m.id, { status: 'SENT', sent_at: now, updated_at: now });
   res.json(mailRow(req.user, get('message', m.id)));
 });
@@ -570,6 +749,11 @@ router.put('/mailbox/messages/:id/read', (req, res) => {
     `INSERT INTO message_state (user_id, message_id, read_at) VALUES (?, ?, ?)
      ON CONFLICT(user_id, message_id) DO UPDATE SET read_at = excluded.read_at`
   ).run(req.user.id, m.id, readAt);
+  // First read by any account of a person is that person's read receipt.
+  if (req.user.person_id) {
+    db.prepare('UPDATE message_recipient SET read_at = COALESCE(read_at, ?) WHERE message_id = ? AND person_id = ?')
+      .run(readAt, m.id, req.user.person_id);
+  }
   res.json({ message_id: m.id, read_at: readAt });
 });
 
