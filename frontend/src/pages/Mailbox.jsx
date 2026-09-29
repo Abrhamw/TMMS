@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, fmtDateTime, fmtDate } from '../api';
-import { ErrorNote, Loading, Page, Pill, SearchField } from '../components';
+import { ErrorNote, Loading, Page, Pill, SearchField, SearchSelect } from '../components';
 import Comments from '../components/Comments';
 import { t } from '../i18n';
 import { can, getStoredUser } from '../auth';
@@ -313,11 +313,13 @@ export default function Mailbox() {
                   body: mailMessage.body,
                   category: mailMessage.category,
                   priority: mailMessage.priority,
+                  attachments: mailMessage.attachments || [],
                 })}
                 onSend={() => withReload(() => api.post(`/mailbox/messages/${mailMessage.id}/send`, {}))}
                 onArchive={() => withReload(() => api.put(`/mailbox/messages/${mailMessage.id}/archive`, {}))}
                 onUnarchive={() => withReload(() => api.put(`/mailbox/messages/${mailMessage.id}/unarchive`, {}))}
                 onOpenLink={() => { if (mailMessage.link) nav(mailMessage.link); }}
+                onOpenAttachment={(link) => nav(link)}
               />
             ) : reportDocument ? (
               <ReportReader report={reportDocument} onOpen={() => nav(`/reports?report=${reportDocument.id}`)} />
@@ -375,9 +377,10 @@ function markMailRead(data, id) {
   };
 }
 
-function MailReader({ message, me, onReply, onEdit, onSend, onArchive, onUnarchive, onOpenLink }) {
+function MailReader({ message, me, onReply, onEdit, onSend, onArchive, onUnarchive, onOpenLink, onOpenAttachment }) {
   const isDraft = message.status === 'DRAFT' || message.status === 'QUEUED';
   const mineIsSender = message.sender_person_id === me.person_id;
+  const attachments = message.attachments || [];
   return (
     <>
       <header className="mail-reader-head">
@@ -403,8 +406,138 @@ function MailReader({ message, me, onReply, onEdit, onSend, onArchive, onUnarchi
           <TagChips tags={message.tags} />
         </div>
       </header>
-      <div className="mail-message"><p style={{ whiteSpace: 'pre-wrap' }}>{message.body}</p></div>
+      <div className="mail-scroll">
+        <div className="mail-message"><p style={{ whiteSpace: 'pre-wrap' }}>{message.body}</p></div>
+        {attachments.length > 0 && (
+          <div className="mail-attach-reader">
+            <div className="mail-attach-reader-title">{t('mailboxAttachments')} ({attachments.length})</div>
+            <div className="mail-attach-chips">
+              {attachments.map((a) => (
+                <button key={attachmentKey(a)} type="button" className="mail-attach-chip mail-attach-chip-btn"
+                  title={a.has_file ? t('mailboxAttachDownload') : (a.link || '')}
+                  onClick={() => {
+                    if (a.has_file && a.id != null) api.download(`/mailbox/attachments/${a.id}/file`, a.file_name || a.label || 'attachment');
+                    else if (a.link && onOpenAttachment) onOpenAttachment(a.link);
+                  }}>
+                  <span className="mail-attach-chip-label">{a.label || a.file_name}</span>
+                  <span className="muted mail-attach-chip-kind">{a.has_file ? t('mailboxAttachDownload') : t('mailboxAttachOpen')}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </>
+  );
+}
+
+const ATTACH_TYPES = [
+  { value: 'REPORT', labelKey: 'mailboxAttachReports' },
+  { value: 'EXECUTION', labelKey: 'mailboxAttachExecutions' },
+  { value: 'TASK', labelKey: 'mailboxAttachTasks' },
+  { value: 'ASSET', labelKey: 'mailboxAttachAssets' },
+  { value: 'LINE', labelKey: 'mailboxAttachLines' },
+  { value: 'CREW', labelKey: 'mailboxAttachCrews' },
+  { value: 'PERSON', labelKey: 'mailboxAttachPeople' },
+  { value: 'FILE', labelKey: 'mailboxAttachFile' },
+];
+
+function attachmentKey(a) {
+  if (!a) return '';
+  if (a.id != null) return `id-${a.id}`;
+  if (a.entity_id != null && a.entity_type) return `${a.entity_type}-${a.entity_id}`;
+  return `file-${a.file_name || a.label}-${a.size_bytes || ''}`;
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = () => reject(reader.error || new Error('read failed'));
+    reader.readAsDataURL(file);
+  });
+}
+
+// Compose-time attachment chooser: pick a saved report, an execution, or any
+// task/asset/line/crew/person record (scoped to the caller), or upload a file.
+function AttachmentField({ value, onChange }) {
+  const [type, setType] = useState('REPORT');
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [err, setErr] = useState(null);
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    if (type === 'FILE') { setResults([]); return undefined; }
+    let alive = true;
+    const handle = setTimeout(() => {
+      api.get(`/mailbox/attachments/catalog?type=${type}&q=${encodeURIComponent(query.trim())}`)
+        .then((res) => { if (alive) { setResults(res.items || []); setErr(null); } })
+        .catch((e) => { if (alive) setErr(e.message); });
+    }, 250);
+    return () => { alive = false; clearTimeout(handle); };
+  }, [type, query]);
+
+  const has = (item) => value.some((a) => a.entity_type === item.entity_type && Number(a.entity_id) === Number(item.entity_id));
+  function addEntity(item) {
+    if (has(item)) return;
+    onChange([...value, { kind: item.type, entity_type: item.entity_type, entity_id: item.entity_id, label: item.label, link: item.link }]);
+  }
+  function remove(a) {
+    onChange(value.filter((x) => attachmentKey(x) !== attachmentKey(a)));
+  }
+  async function addFiles(fileList) {
+    setErr(null);
+    const added = [];
+    for (const file of Array.from(fileList || [])) {
+      if (file.size > 8 * 1024 * 1024) { setErr(t('mailboxAttachTooLarge')); continue; }
+      try {
+        const data = await fileToBase64(file);
+        added.push({ kind: 'FILE', file_name: file.name, mime: file.type || 'application/octet-stream', label: file.name, size_bytes: file.size, data });
+      } catch (_) { setErr(t('mailboxAttachTooLarge')); }
+    }
+    if (added.length) onChange([...value, ...added]);
+    if (fileRef.current) fileRef.current.value = '';
+  }
+
+  return (
+    <div className="field full">
+      <label>{t('mailboxAttachments')}</label>
+      {value.length > 0 && (
+        <div className="mail-attach-chips">
+          {value.map((a) => (
+            <span key={attachmentKey(a)} className="mail-attach-chip" title={a.link || a.file_name || a.label}>
+              <span className="mail-attach-chip-label">{a.label || a.file_name}</span>
+              <button type="button" className="mail-attach-x" title={t('mailboxAttachRemove')} onClick={() => remove(a)}>{'×'}</button>
+            </span>
+          ))}
+        </div>
+      )}
+      {err && <ErrorNote error={err} />}
+      <div className="mail-attach-picker">
+        <SearchSelect value={type} onChange={(e) => setType(e.target.value)} aria-label={t('mailboxAttachType')}>
+          {ATTACH_TYPES.map((opt) => <option key={opt.value} value={opt.value}>{t(opt.labelKey)}</option>)}
+        </SearchSelect>
+        {type === 'FILE' ? (
+          <input ref={fileRef} type="file" multiple onChange={(e) => addFiles(e.target.files)} />
+        ) : (
+          <>
+            <SearchField value={query} onChange={setQuery} placeholder={t('mailboxAttachSearch')} />
+            <div className="mail-attach-results">
+              {results.map((item) => (
+                <button key={`${item.entity_type}-${item.entity_id}`} type="button" className="mail-attach-option"
+                  disabled={has(item)} onClick={() => addEntity(item)}>
+                  <span>{item.label}</span>
+                  {item.sub && <span className="muted"> · {String(item.sub).replace(/_/g, ' ')}</span>}
+                  {has(item) && <span className="muted"> · {t('mailboxAttachAdded')}</span>}
+                </button>
+              ))}
+              {!results.length && <div className="muted mail-attach-empty">{t('mailboxAttachNoResults')}</div>}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -416,6 +549,17 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
   const [body, setBody] = useState(initial?.body || '');
   const [category, setCategory] = useState(initial?.category || 'GENERAL');
   const [priority, setPriority] = useState(initial?.priority || 'NORMAL');
+  const [attachments, setAttachments] = useState(() => (initial?.attachments || []).map((a) => ({
+    id: a.id,
+    kind: a.kind || 'FILE',
+    entity_type: a.entity_type || null,
+    entity_id: a.entity_id ?? null,
+    label: a.label || a.file_name,
+    link: a.link || null,
+    file_name: a.file_name || null,
+    mime: a.mime || null,
+    has_file: !!a.has_file,
+  })));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
@@ -449,6 +593,17 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
         priority,
         status,
         thread_id: initial?.thread_id || null,
+        attachments: attachments.map((a) => ({
+          id: a.id ?? null,
+          kind: a.kind,
+          entity_type: a.entity_type || null,
+          entity_id: a.entity_id ?? null,
+          label: a.label || a.file_name || null,
+          link: a.link || null,
+          file_name: a.file_name || null,
+          mime: a.mime || null,
+          data: a.data || null,
+        })),
       };
       if (initial?.editId) {
         await api.put(`/mailbox/messages/${initial.editId}`, payload);
@@ -499,6 +654,7 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
           )}
         </div>
         <div className="field full"><label>{t('mailboxSubject')}</label><input value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
+        <AttachmentField value={attachments} onChange={setAttachments} />
         <div className="field"><label>{t('mailboxCategory')}</label>
           <select value={category} onChange={(e) => setCategory(e.target.value)}>
             <option value="GENERAL">GENERAL</option>

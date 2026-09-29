@@ -62,10 +62,20 @@ export default function Reports() {
   }, [perfScope, canPerf]);
 
   // Deep link from the mailbox: /reports?report=<id> opens the saved report in
-  // the reader. The query param is cleared afterwards so the URL stays clean.
+  // the reader, and /reports?document=<TYPE>&id=<id> opens an entity document.
+  // The query params are cleared afterwards so the URL stays clean.
   useEffect(() => {
+    const dtype = searchParams.get('document');
+    const did = searchParams.get('id');
+    if (dtype && did) {
+      setView(null);
+      setDocuments([]);
+      openDocument(dtype, did);
+      setSearchParams({}, { replace: true });
+      return undefined;
+    }
     const rid = searchParams.get('report');
-    if (!rid) return;
+    if (!rid) return undefined;
     let alive = true;
     setDocuments([]);
     api.get(`/reports/${encodeURIComponent(rid)}`)

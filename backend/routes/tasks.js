@@ -992,6 +992,7 @@ function sendExecutionReport(req, t) {
     findings ? `Findings raised: ${findings}` : null,
     `Open the task: /tasks/${t.id}`,
   ].filter(Boolean).join('\n');
+  const executions = db.prepare('SELECT id FROM checklist_execution WHERE task_id = ? ORDER BY id').all(t.id);
   return sendMail({
     senderUserId: req.user.id,
     senderPersonId: req.user.person_id || null,
@@ -1003,6 +1004,13 @@ function sendExecutionReport(req, t) {
     entityType: 'task',
     entityId: t.id,
     link: `/tasks/${t.id}`,
+    attachments: executions.map((e) => ({
+      kind: 'EXECUTION',
+      entity_type: 'CHECKLIST_EXECUTION',
+      entity_id: e.id,
+      label: `Execution EX-${String(e.id).padStart(5, '0')}`,
+      link: `/tasks/${t.id}`,
+    })),
   });
 }
 

@@ -42,13 +42,14 @@ function sendMail({
   entityId = null,
   link = null,
   threadId = null,
+  attachments = [],
 }) {
   const rid = Number(recipientPersonId);
   if (!rid) return null;
   const now = new Date().toISOString();
   const recipientUser = primaryUserForPerson(rid);
   const sent = status === 'SENT';
-  return insertRow('message', {
+  const id = insertRow('message', {
     sender_user_id: senderUserId,
     sender_person_id: senderPersonId,
     recipient_person_id: rid,
@@ -66,6 +67,23 @@ function sendMail({
     updated_at: now,
     sent_at: sent ? now : null,
   });
+  for (const a of (Array.isArray(attachments) ? attachments : []).slice(0, 20)) {
+    if (!a || a.entity_id == null) continue;
+    insertRow('message_attachment', {
+      message_id: id,
+      kind: a.kind || 'DOC',
+      entity_type: a.entity_type || null,
+      entity_id: Number(a.entity_id),
+      label: a.label ? String(a.label).slice(0, 200) : null,
+      link: a.link ? String(a.link).slice(0, 400) : null,
+      file_name: null,
+      stored_name: null,
+      mime: null,
+      size_bytes: null,
+      created_at: now,
+    });
+  }
+  return id;
 }
 
 module.exports = { primaryUserForPerson, immediateBossForTask, sendMail };
