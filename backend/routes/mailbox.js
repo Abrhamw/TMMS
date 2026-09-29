@@ -4,7 +4,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { db, get, insertRow, updateRow } = require('../util');
 const { isGlobal, isCrewUser, isOnCrew, hasPerm } = require('../auth');
-const { authorizedCrewIds, taskVisible } = require('../authority');
+const { authorizedCrewIds, taskVisible, commandScope } = require('../authority');
 
 const router = express.Router();
 const OPEN = new Set(['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION']);
@@ -925,6 +925,11 @@ router.get('/mailbox/attachments/catalog', (req, res) => {
   const out = [];
   const add = (item) => { if (match(item.label, item.sub)) out.push(item); };
   const limit = 50;
+  // The catalog is a mailbox surface, so every entity it lists must pass the
+  // same command-scope authority as the entity's own list endpoint. Without
+  // this a field crew could enumerate the whole asset/line/crew/person register.
+  const scope = commandScope(req.user);
+  const inScope = (set, id) => scope.global || (set && set.has(id));
 
   if (type === 'REPORT') {
     if (!hasPerm(req.user, 'report:read')) return res.json({ type, items: [] });
@@ -955,24 +960,28 @@ router.get('/mailbox/attachments/catalog', (req, res) => {
   } else if (type === 'ASSET') {
     const rows = db.prepare('SELECT id, asset_id, name FROM asset ORDER BY asset_id LIMIT 500').all();
     for (const a of rows) {
+      if (!inScope(scope.assetIds, a.id)) continue;
       add({ type: 'ASSET', entity_type: 'ASSET_DETAIL', entity_id: a.id, label: `${a.asset_id}${a.name ? ` - ${a.name}` : ''}`, sub: 'Asset', link: `/reports?document=ASSET_DETAIL&id=${a.id}` });
       if (out.length >= limit) break;
     }
   } else if (type === 'LINE') {
     const rows = db.prepare('SELECT id, line_id, name FROM transmission_line ORDER BY line_id LIMIT 500').all();
     for (const l of rows) {
+      if (!inScope(scope.lineIds, l.id)) continue;
       add({ type: 'LINE', entity_type: 'LINE_DETAIL', entity_id: l.id, label: `${l.line_id}${l.name ? ` - ${l.name}` : ''}`, sub: 'Line', link: `/reports?document=LINE_DETAIL&id=${l.id}` });
       if (out.length >= limit) break;
     }
   } else if (type === 'CREW') {
     const rows = db.prepare('SELECT id, crew_code, name FROM crew ORDER BY crew_code LIMIT 500').all();
     for (const c of rows) {
+      if (!inScope(scope.crewIds, c.id)) continue;
       add({ type: 'CREW', entity_type: 'CREW_DETAIL', entity_id: c.id, label: `${c.crew_code || 'CREW'}${c.name ? ` - ${c.name}` : ''}`, sub: 'Crew', link: `/reports?document=CREW_DETAIL&id=${c.id}` });
       if (out.length >= limit) break;
     }
   } else if (type === 'PERSON') {
     const rows = db.prepare('SELECT id, first_name, last_name, role FROM person ORDER BY first_name LIMIT 500').all();
     for (const p of rows) {
+      if (!inScope(scope.memberIds, p.id)) continue;
       add({ type: 'PERSON', entity_type: 'PERSON_DETAIL', entity_id: p.id, label: `${p.first_name || ''} ${p.last_name || ''}`.trim(), sub: p.role, link: `/reports?document=PERSON_DETAIL&id=${p.id}` });
       if (out.length >= limit) break;
     }
