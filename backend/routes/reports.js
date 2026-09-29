@@ -7,7 +7,7 @@ const { taskProgress } = require('../taskProgress');
 const { computeRegionValuation, mergeValuations } = require('./register');
 const { maintenanceCostForRegions, currencyCode, assetRegion } = require('../maintenanceCost');
 const { deriveCrewStatus } = require('../crewStatus');
-const { taskReadiness, crewReadiness, personPerformanceRows } = require('../readiness');
+const { taskReadiness, crewReadiness, personPerformanceRows, crewRosterPersonIds } = require('../readiness');
 const { targetHeadline, resolveTarget } = require('../target');
 
 function moneyStr(v, code) {
@@ -258,7 +258,9 @@ function compute(reportType, params, user) {
       return { title: 'Crew Readiness Report', rows };
     }
     case 'PERSON_PERFORMANCE': {
-      const rows = personPerformanceRows(scoped).map((r) => ({
+      const perfCrews = scopeCrews(user, scope, list('crew')).filter((c) => !regionId || c.region_id === regionId);
+      const perfTasks = scoped.filter((t) => !regionId || t.region_id === regionId);
+      const rows = personPerformanceRows(perfTasks, crewRosterPersonIds(perfCrews)).map((r) => ({
         person: r.name, tasks: r.tasks, completed: r.completed, completion_rate: r.completion_rate,
         on_time: r.on_time, on_time_rate: r.on_time_rate, findings: r.findings, gps_violations: r.gps_violations,
       }));
@@ -775,7 +777,7 @@ function compute(reportType, params, user) {
           WHERE tf.created_by = ? ORDER BY tf.captured_at DESC`
       ).all(p.id);
       const gps = db.prepare('SELECT * FROM gps_validation WHERE validated_by = ? ORDER BY validated_at DESC').all(p.id);
-      const perf = personPerformanceRows(scopeTasks(user, scope, list('task'))).find((r) => r.id === p.id) || null;
+      const perf = personPerformanceRows(scopeTasks(user, scope, list('task')), [p.id]).find((r) => r.id === p.id) || null;
       const regions = db.prepare(
         `SELECT r.name FROM region_personnel rp JOIN region r ON r.id = rp.region_id WHERE rp.person_id = ?`
       ).all(p.id).map((r) => r.name);

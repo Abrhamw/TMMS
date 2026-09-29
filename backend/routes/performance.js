@@ -2,7 +2,7 @@ const express = require('express');
 const { list } = require('../util');
 const { can } = require('../auth');
 const { readCrewIds } = require('../authority');
-const { crewPerformanceRows, personPerformanceRows } = require('../readiness');
+const { crewPerformanceRows, personPerformanceRows, crewRosterPersonIds } = require('../readiness');
 
 const router = express.Router();
 
@@ -24,7 +24,9 @@ router.get('/performance', (req, res) => {
   if (date_from) tasks = tasks.filter((t) => activityDate(t) >= date_from);
   if (date_to) tasks = tasks.filter((t) => activityDate(t) <= date_to);
 
-  const rows = scope === 'crew' ? crewPerformanceRows(crews, tasks) : personPerformanceRows(tasks);
+  const rows = scope === 'crew'
+    ? crewPerformanceRows(crews, tasks)
+    : personPerformanceRows(tasks, crewRosterPersonIds(crews));
   res.json({ scope, rows });
 });
 
