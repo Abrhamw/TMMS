@@ -1068,12 +1068,21 @@ router.get('/mailbox/folder', (req, res) => {
   res.json(page);
 });
 
-// The account's private filing labels.
+// The account's private filing labels, with total and unread counts. A label's
+// unread count only tracks messages that reached this account as a recipient.
 router.get('/mailbox/labels', (req, res) => {
   const counts = new Map(db.prepare('SELECT label_id, COUNT(*) c FROM message_label WHERE user_id = ? GROUP BY label_id')
     .all(req.user.id).map((r) => [r.label_id, r.c]));
+  const unread = new Map(db.prepare(
+    `SELECT ml.label_id, COUNT(*) c FROM message_label ml
+       JOIN message m ON m.id = ml.message_id AND m.status = 'SENT'
+       JOIN message_recipient r ON r.message_id = m.id AND r.person_id = ?
+      WHERE ml.user_id = ?
+        AND NOT EXISTS (SELECT 1 FROM message_state s WHERE s.user_id = ml.user_id AND s.message_id = m.id AND s.read_at IS NOT NULL)
+      GROUP BY ml.label_id`
+  ).all(req.user.person_id || -1, req.user.id).map((r) => [r.label_id, r.c]));
   const rows = db.prepare('SELECT id, name, color, created_at FROM mail_label WHERE owner_user_id = ? ORDER BY name')
-    .all(req.user.id).map((l) => ({ ...l, count: counts.get(l.id) || 0 }));
+    .all(req.user.id).map((l) => ({ ...l, count: counts.get(l.id) || 0, unread: unread.get(l.id) || 0 }));
   res.json(rows);
 });
 
@@ -1142,6 +1151,87 @@ router.put('/mailbox/messages/:id/acknowledge', (req, res) => {
   const at = new Date().toISOString();
   db.prepare('UPDATE message_recipient SET acknowledged_at = COALESCE(acknowledged_at, ?) WHERE id = ?').run(at, row.id);
   res.json({ message_id: m.id, acknowledged_at: at });
+});
+
+// The whole conversation a message belongs to (its thread), oldest first, so the
+// reader can show the back-and-forth rather than a single mail.
+router.get('/mailbox/messages/:id/thread', (req, res) => {
+  processOutbox();
+  const m = mailParticipant(req.user, req.params.id);
+  if (!m) return res.status(404).json({ error: 'Message not found' });
+  const root = m.thread_id || m.id;
+  const rows = db.prepare('SELECT * FROM message WHERE id = ? OR thread_id = ? ORDER BY created_at, id').all(root, root);
+  const particip = (x) => x.sender_user_id === req.user.id
+    || (!!req.user.person_id && !!db.prepare('SELECT 1 FROM message_recipient WHERE message_id = ? AND person_id = ?').get(x.id, req.user.person_id));
+  res.json({ root_id: root, messages: rows.filter(particip).map((x) => mailRow(req.user, x)) });
+});
+
+// Bulk archive / label a selection from the list. Only messages the caller can
+// see are touched; the rest are silently skipped.
+router.post('/mailbox/messages/bulk', (req, res) => {
+  const body = req.body || {};
+  const action = String(body.action || '');
+  const ids = Array.isArray(body.ids) ? [...new Set(body.ids.map(Number).filter(Boolean))] : [];
+  if (!ids.length) return res.status(400).json({ error: 'No messages selected' });
+  const visible = ids.filter((id) => mailParticipant(req.user, id));
+  if (!visible.length) return res.json({ ok: true, count: 0 });
+  const now = new Date().toISOString();
+  let count = 0;
+  if (action === 'archive' || action === 'unarchive') {
+    const archivedAt = action === 'archive' ? now : null;
+    for (const id of visible) {
+      db.prepare(
+        `INSERT INTO message_state (user_id, message_id, archived_at) VALUES (?, ?, ?)
+         ON CONFLICT(user_id, message_id) DO UPDATE SET archived_at = excluded.archived_at`
+      ).run(req.user.id, id, archivedAt);
+      count++;
+    }
+  } else if (action === 'label_add' || action === 'label_remove') {
+    const label = db.prepare('SELECT id FROM mail_label WHERE id = ? AND owner_user_id = ?').get(Number(body.label_id), req.user.id);
+    if (!label) return res.status(404).json({ error: 'Label not found' });
+    for (const id of visible) {
+      if (action === 'label_add') {
+        db.prepare('INSERT OR IGNORE INTO message_label (user_id, message_id, label_id, created_at) VALUES (?, ?, ?, ?)').run(req.user.id, id, label.id, now);
+      } else {
+        db.prepare('DELETE FROM message_label WHERE user_id = ? AND message_id = ? AND label_id = ?').run(req.user.id, id, label.id);
+      }
+      count++;
+    }
+  } else {
+    return res.status(400).json({ error: 'Unsupported bulk action' });
+  }
+  res.json({ ok: true, count });
+});
+
+// Saved searches: named, reusable mailbox filters for this account.
+router.get('/mailbox/searches', (req, res) => {
+  res.json(db.prepare('SELECT id, name, query, folder, label, action_only, created_at FROM mail_saved_search WHERE owner_user_id = ? ORDER BY name').all(req.user.id));
+});
+
+router.post('/mailbox/searches', (req, res) => {
+  const body = req.body || {};
+  const name = String(body.name || '').trim().slice(0, 60);
+  if (!name) return res.status(400).json({ error: 'A search name is required' });
+  if (db.prepare('SELECT id FROM mail_saved_search WHERE owner_user_id = ? AND name = ?').get(req.user.id, name)) {
+    return res.status(409).json({ error: 'A saved search with that name already exists' });
+  }
+  const id = insertRow('mail_saved_search', {
+    owner_user_id: req.user.id,
+    name,
+    query: body.query ? String(body.query).slice(0, 200) : null,
+    folder: body.folder ? String(body.folder).slice(0, 30) : null,
+    label: body.label ? String(body.label).slice(0, 40) : null,
+    action_only: body.action_only ? 1 : 0,
+    created_at: new Date().toISOString(),
+  });
+  res.status(201).json(db.prepare('SELECT id, name, query, folder, label, action_only, created_at FROM mail_saved_search WHERE id = ?').get(id));
+});
+
+router.delete('/mailbox/searches/:id', (req, res) => {
+  const row = db.prepare('SELECT id FROM mail_saved_search WHERE id = ? AND owner_user_id = ?').get(Number(req.params.id), req.user.id);
+  if (!row) return res.status(404).json({ error: 'Saved search not found' });
+  db.prepare('DELETE FROM mail_saved_search WHERE id = ?').run(row.id);
+  res.json({ ok: true, id: row.id });
 });
 
 router.get('/mailbox/:taskId', (req, res) => {

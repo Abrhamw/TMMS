@@ -571,6 +571,19 @@ function initSchema() {
   CREATE INDEX IF NOT EXISTS idx_message_label_message ON message_label(message_id);
   CREATE INDEX IF NOT EXISTS idx_message_label_label ON message_label(label_id);
 
+  -- Per-account saved searches (named, reusable mailbox filters).
+  CREATE TABLE IF NOT EXISTS mail_saved_search (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    query TEXT,
+    folder TEXT,
+    label TEXT,
+    action_only INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    UNIQUE(owner_user_id, name)
+  );
+
   -- Per-account mailbox state (read receipt, archive filing) for directed mail.
   CREATE TABLE IF NOT EXISTS message_state (
     user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,

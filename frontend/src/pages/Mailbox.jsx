@@ -124,6 +124,15 @@ export default function Mailbox() {
   const [actionOnly, setActionOnly] = useState(false);
   const [serverPage, setServerPage] = useState(null);
   const [loadingPage, setLoadingPage] = useState(false);
+  // Deeper messaging UX: saved searches, conversation view, bulk selection.
+  const [searches, setSearches] = useState([]);
+  const [saveSearchOpen, setSaveSearchOpen] = useState(false);
+  const [conversation, setConversation] = useState(null);
+  const [selectedForBulk, setSelectedForBulk] = useState(() => new Set());
+
+  async function loadSearches() {
+    try { setSearches(await api.get('/mailbox/searches') || []); } catch (_) { /* optional */ }
+  }
 
   async function loadLabels() {
     try { setLabels(await api.get('/mailbox/labels') || []); } catch (_) { /* labels are optional */ }
@@ -141,7 +150,7 @@ export default function Mailbox() {
     } catch (e) { setError(e.message); }
   }
 
-  useEffect(() => { load(); loadLabels(); }, []);
+  useEffect(() => { load(); loadLabels(); loadSearches(); }, []);
 
   // A mail folder or a label drives the server-paged feed; other folders are the
   // read-time task/report stream handled client-side below.
@@ -214,6 +223,7 @@ export default function Mailbox() {
         setReportDocument(null);
         setMailMessage(message);
         setLoadingThread(false);
+        openConversation(message);
         if (message.unread) {
           api.put(`/mailbox/messages/${message.id}/read`, {}).then(() => {
             if (!alive) return;
@@ -285,6 +295,7 @@ export default function Mailbox() {
     setFolder(key);
     setLabelView(null);
     setCompose(null);
+    setSelectedForBulk(new Set());
     const nextRows = folderRows(data, key);
     if (isMessageFolder(key)) { setSelectedId(null); setSelectedMessageKey(nextRows?.[0]?.key || null); }
     else { setSelectedMessageKey(null); setSelectedId(nextRows?.[0]?.id || null); }
@@ -294,6 +305,7 @@ export default function Mailbox() {
     setCompose(null);
     setSelectedId(null);
     setSelectedMessageKey(null);
+    setSelectedForBulk(new Set());
     setLabelView((cur) => (cur === name ? null : name));
   }
 
@@ -332,6 +344,7 @@ export default function Mailbox() {
     setThread(null);
     setMailMessage(null);
     setReportDocument(null);
+    setConversation(null);
   }
 
   // Reply pre-fills the sender; reply-all also carries every other To and Cc
@@ -354,6 +367,8 @@ export default function Mailbox() {
     return {
       recipients,
       subject: /^re:/i.test(message.subject) ? message.subject : `Re: ${message.subject}`,
+      // Quote the original so the thread keeps its context.
+      body: `\n\nOn ${fmtDateTime(message.at)}, ${message.actor} wrote:\n> ${String(message.body || '').split('\n').join('\n> ')}`,
       category: message.category,
       thread_id: message.id,
       parent_id: message.id,
@@ -368,6 +383,62 @@ export default function Mailbox() {
       await load();
       startCompose({ editId: draft.id, ...draft, forwardHint: true });
     } catch (e) { setError(e.message); }
+  }
+
+  // Load the whole conversation a mail belongs to.
+  async function openConversation(message) {
+    if (!message || message.kind !== 'MAIL') { setConversation(null); return; }
+    try { setConversation(await api.get(`/mailbox/messages/${message.id}/thread`)); }
+    catch (e) { setError(e.message); }
+  }
+
+  function toggleBulk(id) {
+    setSelectedForBulk((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function runBulk(action, labelId) {
+    const ids = [...selectedForBulk];
+    if (!ids.length) return;
+    try {
+      await api.post('/mailbox/messages/bulk', { ids, action, label_id: labelId });
+      setSelectedForBulk(new Set());
+      await load();
+      await loadLabels();
+    } catch (e) { setError(e.message); }
+  }
+
+  function applySearch(s) {
+    setCompose(null);
+    setSelectedId(null);
+    setSelectedMessageKey(null);
+    setSelectedForBulk(new Set());
+    setQuery(s.query || '');
+    setActionOnly(!!s.action_only);
+    setLabelView(s.label || null);
+    if (s.folder && MAIL_FOLDERS.has(s.folder)) setFolder(s.folder);
+  }
+
+  async function saveCurrentSearch(name) {
+    try {
+      await api.post('/mailbox/searches', {
+        name,
+        query: query.trim() || null,
+        folder: labelView ? 'mailany' : folder,
+        label: labelView || null,
+        action_only: actionOnly,
+      });
+      setSaveSearchOpen(false);
+      await loadSearches();
+    } catch (e) { setError(e.message); }
+  }
+
+  async function deleteSearch(id) {
+    try { await api.del(`/mailbox/searches/${id}`); await loadSearches(); }
+    catch (e) { setError(e.message); }
   }
 
   return (
@@ -405,12 +476,30 @@ export default function Mailbox() {
                   onClick={() => selectLabel(l.name)}>
                   <span className="mail-label-dot" style={{ background: l.color || '#64748b' }} />
                   <span className="mail-label-name">{l.name}</span>
-                  <b>{l.count}</b>
+                  {l.unread > 0 ? <b className="mail-folder-unread">{l.unread}</b> : <b>{l.count}</b>}
                 </button>
               ))}
               {!labelManage && !labels.length && <div className="muted mail-labels-empty">{t('mailboxNoLabels')}</div>}
             </div>
             <SearchField value={query} onChange={setQuery} placeholder={t('mailboxSearch')} />
+            <div className="mail-searches">
+              <div className="mail-searches-head">
+                <span>{t('mailboxSavedSearches')}</span>
+                <button type="button" className="btn btn-sm" onClick={() => setSaveSearchOpen((v) => !v)}>
+                  {saveSearchOpen ? t('cancel') : t('mailboxSaveSearch')}
+                </button>
+              </div>
+              {saveSearchOpen && <SaveSearchForm onSave={saveCurrentSearch} />}
+              {searches.map((s) => (
+                <div key={s.id} className="mail-search-row">
+                  <button type="button" className="mail-search-apply" onClick={() => applySearch(s)} title={s.query || ''}>
+                    <span className="mail-label-name">{s.name}</span>
+                    {s.query && <span className="muted"> · {s.query}</span>}
+                  </button>
+                  <button type="button" className="mail-attach-x" title={t('delete')} onClick={() => deleteSearch(s.id)}>{'×'}</button>
+                </div>
+              ))}
+            </div>
             <label className="mail-action-filter">
               <input type="checkbox" checked={actionOnly} onChange={(e) => setActionOnly(e.target.checked)} />
               {t('mailboxActionOnly')}
@@ -420,21 +509,41 @@ export default function Mailbox() {
                 {labelView ? t('mailboxLabelView') + ': ' + labelView : t('mailboxFolderResults')} · {serverPage.total}
               </div>
             )}
+            {selectedForBulk.size > 0 && (
+              <div className="mail-bulk-bar">
+                <span>{selectedForBulk.size} {t('mailboxSelected')}</span>
+                <button type="button" className="btn btn-sm" onClick={() => runBulk('archive')}>{t('mailboxArchiveAction')}</button>
+                <button type="button" className="btn btn-sm" onClick={() => runBulk('unarchive')}>{t('mailboxUnarchiveAction')}</button>
+                {labels.length > 0 && (
+                  <SearchSelect className="mail-bulk-label" value="" aria-label={t('mailboxAddLabel')}
+                    onChange={(e) => { if (e.target.value) runBulk('label_add', Number(e.target.value)); }}>
+                    <option value="">{t('mailboxAddLabel')}</option>
+                    {labels.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  </SearchSelect>
+                )}
+                <button type="button" className="btn btn-sm" onClick={() => setSelectedForBulk(new Set())}>{t('mailboxClearSelection')}</button>
+              </div>
+            )}
             <div className="mail-thread-list">
               {visibleRows.map((item) => isMessageFolder(folder) || labelView ? (
-                <button key={item.key} className={'mail-thread' + (selectedMessageKey === item.key && !compose ? ' active' : '')}
-                  onClick={() => { setCompose(null); setSelectedId(null); setSelectedMessageKey(item.key); }}>
-                  <div className="spread">
-                    <b>{item.kind === 'MAIL' ? (item.outgoing ? `${t('mailboxTo')}: ${item.recipient}` : item.actor) : item.kind === 'REPORT' ? item.report_code : item.task_number}</b>
-                    <span className="mail-kind">{item.kind === 'MAIL' ? tagLabel(item.category) : item.kind === 'REPORT' ? t('mailboxKindReport') : item.kind === 'COMMENT' ? t('mailboxKindMessage') : t('mailboxKindUpdate')}</span>
-                  </div>
-                  {item.unread && <span className="mail-unread">{t('mailboxUnreadOne')}</span>}
-                  {item.action_required && <span className="mail-action-badge">{t('mailboxActionRequired')}</span>}
-                  <div className="mail-thread-title">{item.subject}</div>
-                  <div className="muted mail-thread-meta">{item.kind === 'MAIL' ? `${item.actor} · ${fmtDate(item.at)}` : `${item.actor} · ${fmtDate(item.at)}`}</div>
-                  <TagChips tags={item.tags} />
-                  <div className="mail-thread-last"><span>{item.body}</span></div>
-                </button>
+                <div key={item.key} className={'mail-thread-wrap' + (selectedMessageKey === item.key && !compose ? ' active' : '')}>
+                  <label className="mail-thread-check" title={t('mailboxSelectMessage')}>
+                    <input type="checkbox" checked={selectedForBulk.has(item.id)} onChange={() => toggleBulk(item.id)} />
+                  </label>
+                  <button className={'mail-thread' + (selectedMessageKey === item.key && !compose ? ' active' : '')}
+                    onClick={() => { setCompose(null); setSelectedId(null); setSelectedMessageKey(item.key); }}>
+                    <div className="spread">
+                      <b>{item.kind === 'MAIL' ? (item.outgoing ? `${t('mailboxTo')}: ${item.recipient}` : item.actor) : item.kind === 'REPORT' ? item.report_code : item.task_number}</b>
+                      <span className="mail-kind">{item.kind === 'MAIL' ? tagLabel(item.category) : item.kind === 'REPORT' ? t('mailboxKindReport') : item.kind === 'COMMENT' ? t('mailboxKindMessage') : t('mailboxKindUpdate')}</span>
+                    </div>
+                    {item.unread && <span className="mail-unread">{t('mailboxUnreadOne')}</span>}
+                    {item.action_required && <span className="mail-action-badge">{t('mailboxActionRequired')}</span>}
+                    <div className="mail-thread-title">{item.subject}</div>
+                    <div className="muted mail-thread-meta">{item.kind === 'MAIL' ? `${item.actor} · ${fmtDate(item.at)}` : `${item.actor} · ${fmtDate(item.at)}`}</div>
+                    <TagChips tags={item.tags} />
+                    <div className="mail-thread-last"><span>{item.body}</span></div>
+                  </button>
+                </div>
               ) : (
                 <button key={item.id} className={'mail-thread' + (selectedId === item.id && !compose ? ' active' : '')}
                   onClick={() => { setCompose(null); setSelectedMessageKey(null); setSelectedId(item.id); }}>
@@ -497,6 +606,7 @@ export default function Mailbox() {
                 allLabels={labels}
                 onLabels={(ids) => setMessageLabels(mailMessage.id, ids)}
                 onAcknowledge={() => acknowledge(mailMessage.id)}
+                conversation={conversation}
               />
             ) : reportDocument ? (
               <ReportReader report={reportDocument} onOpen={() => nav(`/reports?report=${reportDocument.id}`)} />
@@ -659,7 +769,9 @@ function MailAttachmentPreview({ attachment, onClose, onOpenTask }) {
   );
 }
 
-function MailReader({ message, me, onReply, onReplyAll, onForward, onEdit, onSend, onArchive, onUnarchive, onOpenLink, onPreview, onOpenTask, allLabels, onLabels, onAcknowledge }) {
+function MailReader({ message, me, onReply, onReplyAll, onForward, onEdit, onSend, onArchive, onUnarchive, onOpenLink, onPreview, onOpenTask, allLabels, onLabels, onAcknowledge, conversation }) {
+  const [showConversation, setShowConversation] = useState(false);
+  const threadMessages = (conversation && conversation.messages) || [];
   const isDraft = message.status === 'DRAFT' || message.status === 'QUEUED';
   const mineIsSender = message.sender_person_id === me.person_id;
   const attachments = message.attachments || [];
@@ -693,6 +805,11 @@ function MailReader({ message, me, onReply, onReplyAll, onForward, onEdit, onSen
             {!isDraft && <button type="button" className="btn btn-sm" onClick={onReply}>{t('mailboxReply')}</button>}
             {!isDraft && canReplyAll && <button type="button" className="btn btn-sm" onClick={onReplyAll}>{t('mailboxReplyAll')}</button>}
             {!isDraft && onForward && <button type="button" className="btn btn-sm" onClick={onForward}>{t('mailboxForward')}</button>}
+            {threadMessages.length > 1 && (
+              <button type="button" className={'btn btn-sm' + (showConversation ? ' btn-primary' : '')} onClick={() => setShowConversation((v) => !v)}>
+                {t('mailboxConversation')} ({threadMessages.length})
+              </button>
+            )}
             {linkedTaskId
               ? <button type="button" className="btn btn-sm" onClick={() => onOpenTask(linkedTaskId)}>{t('mailboxOpenTask')}</button>
               : message.link && <button type="button" className="btn btn-sm" onClick={onOpenLink}>{t('mailboxOpenLink')}</button>}
@@ -765,6 +882,21 @@ function MailReader({ message, me, onReply, onReplyAll, onForward, onEdit, onSen
                 </button>
               ))}
             </div>
+          </div>
+        )}
+        {showConversation && threadMessages.length > 0 && (
+          <div className="mail-conversation">
+            <div className="mail-attach-reader-title">{t('mailboxConversation')} ({threadMessages.length})</div>
+            {threadMessages.map((m) => (
+              <article key={m.id} className={'mail-message mail-conversation-item' + (m.id === message.id ? ' current' : '')}>
+                <div className="spread" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  <b>{m.actor}</b>
+                  <span className="muted">{fmtDateTime(m.at)}</span>
+                </div>
+                <div className="muted mail-thread-meta">{t('mailboxTo')}: {m.to && m.to.length ? m.to.map((r) => r.name).join(', ') : m.recipient}</div>
+                <p style={{ whiteSpace: 'pre-wrap' }}>{m.body}</p>
+              </article>
+            ))}
           </div>
         )}
       </div>
@@ -964,6 +1096,11 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
   })));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [saveState, setSaveState] = useState('idle');
+  const savedIdRef = useRef(initial?.editId || null);
+  const busyRef = useRef(false);
+  const statusRef = useRef(initial?.status && initial.status !== 'SENT' ? initial.status : 'DRAFT');
+  const firstRunRef = useRef(true);
 
   useEffect(() => {
     api.get('/mailbox/recipients').then((list) => setContacts(list || [])).catch((e) => setErr(e.message));
@@ -982,6 +1119,60 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
     if (kind === 'BCC') { setBcc(next); setShowBcc(true); }
   };
 
+  function buildPayload(status) {
+    return {
+      to: to.map((r) => Number(r.person_id)),
+      cc: cc.map((r) => Number(r.person_id)),
+      bcc: bcc.map((r) => Number(r.person_id)),
+      subject: subject.trim(),
+      body: body.trim(),
+      category,
+      priority,
+      status,
+      scheduled_at: schedule ? new Date(schedule).toISOString() : null,
+      action_required: actionRequired,
+      due_date: actionRequired && dueDate ? dueDate : null,
+      thread_id: initial?.thread_id || null,
+      parent_id: initial?.parent_id || null,
+      attachments: attachments.map((a) => ({
+        id: a.id ?? null,
+        kind: a.kind,
+        entity_type: a.entity_type || null,
+        entity_id: a.entity_id ?? null,
+        label: a.label || a.file_name || null,
+        link: a.link || null,
+        file_name: a.file_name || null,
+        mime: a.mime || null,
+        data: a.data || null,
+      })),
+    };
+  }
+
+  // Autosave the working draft a moment after typing stops so a compose is never
+  // lost. A new compose becomes a server-side draft; later saves reuse its id.
+  useEffect(() => {
+    if (firstRunRef.current) { firstRunRef.current = false; return undefined; }
+    if (busyRef.current) return undefined;
+    const hasContent = to.length || cc.length || bcc.length || subject.trim() || body.trim() || attachments.length > 0;
+    if (!hasContent) { setSaveState('idle'); return undefined; }
+    const timer = setTimeout(async () => {
+      if (busyRef.current) return;
+      try {
+        setSaveState('saving');
+        const payload = buildPayload(statusRef.current);
+        if (savedIdRef.current) {
+          await api.put(`/mailbox/messages/${savedIdRef.current}`, payload);
+        } else {
+          const created = await api.post('/mailbox/messages', payload);
+          savedIdRef.current = created.id;
+        }
+        setSaveState('saved');
+      } catch (e) { setSaveState('error'); setErr(e.message); }
+    }, 1500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [to, cc, bcc, subject, body, category, priority, attachments, actionRequired, dueDate, schedule]);
+
   async function save(status) {
     setErr(null);
     if (status !== 'DRAFT' && !to.length) { setErr(t('mailboxRecipientRequired')); return; }
@@ -990,50 +1181,32 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
     // A send with a future time is held in the Outbox and delivered when due.
     const scheduledAt = schedule ? new Date(schedule).toISOString() : null;
     const effectiveStatus = status === 'SENT' && scheduledAt && new Date(schedule) > new Date() ? 'QUEUED' : status;
+    busyRef.current = true;
     setBusy(true);
     try {
-      const payload = {
-        to: to.map((r) => Number(r.person_id)),
-        cc: cc.map((r) => Number(r.person_id)),
-        bcc: bcc.map((r) => Number(r.person_id)),
-        subject: subject.trim(),
-        body: body.trim(),
-        category,
-        priority,
-        status: effectiveStatus,
-        scheduled_at: scheduledAt,
-        action_required: actionRequired,
-        due_date: actionRequired && dueDate ? dueDate : null,
-        thread_id: initial?.thread_id || null,
-        parent_id: initial?.parent_id || null,
-        attachments: attachments.map((a) => ({
-          id: a.id ?? null,
-          kind: a.kind,
-          entity_type: a.entity_type || null,
-          entity_id: a.entity_id ?? null,
-          label: a.label || a.file_name || null,
-          link: a.link || null,
-          file_name: a.file_name || null,
-          mime: a.mime || null,
-          data: a.data || null,
-        })),
-      };
-      if (initial?.editId) {
-        await api.put(`/mailbox/messages/${initial.editId}`, payload);
-        if (effectiveStatus === 'SENT') await api.post(`/mailbox/messages/${initial.editId}/send`, {});
+      const payload = buildPayload(effectiveStatus);
+      const editId = savedIdRef.current || initial?.editId || null;
+      if (editId) {
+        await api.put(`/mailbox/messages/${editId}`, payload);
+        if (effectiveStatus === 'SENT') await api.post(`/mailbox/messages/${editId}/send`, {});
       } else {
         await api.post('/mailbox/messages', payload);
       }
       await onSaved();
-    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+    } catch (e) { setErr(e.message); } finally { setBusy(false); busyRef.current = false; }
   }
 
   return (
     <>
       <header className="mail-reader-head">
         <div className="spread" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <h2>{initial?.editId ? t('mailboxEditDraft') : t('mailboxCompose')}</h2>
-          <button type="button" className="btn btn-sm" onClick={onCancel}>{t('cancel')}</button>
+          <h2>{savedIdRef.current || initial?.editId ? t('mailboxEditDraft') : t('mailboxCompose')}</h2>
+          <div className="mail-compose-head-right">
+            {saveState === 'saving' && <span className="muted mail-savestate">{t('mailboxSaving')}</span>}
+            {saveState === 'saved' && <span className="muted mail-savestate">{t('mailboxDraftSaved')}</span>}
+            {saveState === 'error' && <span className="mail-savestate err">{t('mailboxDraftSaveFailed')}</span>}
+            <button type="button" className="btn btn-sm" onClick={onCancel}>{t('cancel')}</button>
+          </div>
         </div>
       </header>
       <div className="mail-scroll">
@@ -1122,6 +1295,19 @@ function ReportReader({ report, onOpen }) {
         <ReportView data={report.data} />
       </div>
     </>
+  );
+}
+
+// Name a mailbox filter and save it for reuse.
+function SaveSearchForm({ onSave }) {
+  const [name, setName] = useState('');
+  return (
+    <div className="mail-label-create">
+      <input value={name} maxLength={60} placeholder={t('mailboxSearchName')}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) onSave(name.trim()); }} />
+      <button type="button" className="btn btn-sm" disabled={!name.trim()} onClick={() => onSave(name.trim())}>{t('save')}</button>
+    </div>
   );
 }
 
