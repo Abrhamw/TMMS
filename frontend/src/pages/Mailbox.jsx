@@ -623,8 +623,9 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
           <button type="button" className="btn btn-sm" onClick={onCancel}>{t('cancel')}</button>
         </div>
       </header>
-      {err && <ErrorNote error={err} />}
-      <div className="form-grid" style={{ padding: '0 4px' }}>
+      <div className="mail-scroll">
+        {err && <ErrorNote error={err} />}
+        <div className="form-grid" style={{ padding: '0 4px' }}>
         <div className="field full">
           <label>{t('mailboxTo')}</label>
           {selected ? (
@@ -673,8 +674,9 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
           </select>
         </div>
         <div className="field full"><label>{t('mailboxMessage')}</label><textarea value={body} onChange={(e) => setBody(e.target.value)} style={{ minHeight: 140 }} /></div>
+        </div>
       </div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 4px' }}>
+      <div className="mail-compose-actions">
         <button type="button" className="btn" disabled={busy} onClick={() => save('DRAFT')}>{t('mailboxSaveDraft')}</button>
         <button type="button" className="btn" disabled={busy} onClick={() => save('QUEUED')}>{t('mailboxQueue')}</button>
         <button type="button" className="btn btn-primary" disabled={busy} onClick={() => save('SENT')}>{t('mailboxSend')}</button>
