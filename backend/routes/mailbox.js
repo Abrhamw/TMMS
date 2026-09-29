@@ -1,4 +1,7 @@
 const express = require('express');
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
 const { db, get, insertRow, updateRow } = require('../util');
 const { isGlobal, isCrewUser, isOnCrew, hasPerm } = require('../auth');
 const { authorizedCrewIds, taskVisible } = require('../authority');
@@ -6,6 +9,13 @@ const { authorizedCrewIds, taskVisible } = require('../authority');
 const router = express.Router();
 const OPEN = new Set(['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION']);
 const CLOSED = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
+
+// Uploaded mail attachments reuse the task-attachment storage directory.
+const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+const MAX_ATTACH_BYTES = 8 * 1024 * 1024;
+const MAX_ATTACHMENTS = 20;
+
 
 // Short, at-a-glance chips for a task thread (status, type, urgency, overdue).
 function taskTags(task, nowIso) {
@@ -263,8 +273,123 @@ function recipientVisible(user, personId) {
   return regions.size > 0 && regions.has(user.region_id);
 }
 
+// Everyone this account has already exchanged mail with, in either direction.
+// Replying must always be able to reach the original sender even when they sit
+// outside the account's downward command scope (e.g. a global executive).
+function correspondencePersonIds(user) {
+  const ids = new Set();
+  if (!user.person_id) return ids;
+  const rows = db.prepare(
+    'SELECT sender_person_id, recipient_person_id FROM message WHERE sender_person_id = ? OR recipient_person_id = ?'
+  ).all(user.person_id, user.person_id);
+  for (const r of rows) {
+    for (const p of [r.sender_person_id, r.recipient_person_id]) {
+      if (p && Number(p) !== user.person_id) ids.add(Number(p));
+    }
+  }
+  return ids;
+}
+
+// Addressable = inside the command scope, or already a correspondent so a reply
+// to the sender is never blocked by the one-way scope rule.
+function canAddress(user, personId) {
+  return recipientVisible(user, personId) || correspondencePersonIds(user).has(Number(personId));
+}
+
 function mailStateFor(userId, messageId) {
   return db.prepare('SELECT read_at, archived_at FROM message_state WHERE user_id = ? AND message_id = ?').get(userId, messageId) || null;
+}
+
+// A thread reference is only valid while the parent message still exists.
+function validThreadId(value) {
+  const id = Number(value);
+  if (!id || !Number.isFinite(id)) return null;
+  return db.prepare('SELECT id FROM message WHERE id = ?').get(id) ? id : null;
+}
+
+function attachmentRowsFor(messageId) {
+  return db.prepare(
+    `SELECT id, kind, entity_type, entity_id, label, link, file_name, mime, size_bytes, stored_name
+       FROM message_attachment WHERE message_id = ? ORDER BY id`
+  ).all(Number(messageId)).map((a) => ({
+    id: a.id,
+    kind: a.kind,
+    entity_type: a.entity_type,
+    entity_id: a.entity_id,
+    label: a.label,
+    link: a.link,
+    file_name: a.file_name,
+    mime: a.mime,
+    size_bytes: a.size_bytes,
+    has_file: !!a.stored_name,
+  }));
+}
+
+function sanitizeAttachments(list) {
+  if (!Array.isArray(list)) return [];
+  const kinds = new Set(['DOC', 'REPORT', 'EXECUTION', 'TASK', 'ASSET', 'LINE', 'CREW', 'PERSON', 'FILE', 'LINK']);
+  return list.slice(0, MAX_ATTACHMENTS).map((a) => {
+    if (!a || typeof a !== 'object') return null;
+    return {
+      id: a.id != null && Number.isFinite(Number(a.id)) ? Number(a.id) : null,
+      kind: kinds.has(a.kind) ? a.kind : 'DOC',
+      entity_type: a.entity_type ? String(a.entity_type).slice(0, 40) : null,
+      entity_id: a.entity_id != null && Number.isFinite(Number(a.entity_id)) ? Number(a.entity_id) : null,
+      label: a.label ? String(a.label).slice(0, 200) : null,
+      link: a.link ? String(a.link).slice(0, 400) : null,
+      file_name: a.file_name ? String(a.file_name).slice(0, 200) : null,
+      mime: a.mime ? String(a.mime).slice(0, 120) : null,
+      data: typeof a.data === 'string' ? a.data : null,
+    };
+  }).filter(Boolean);
+}
+
+// Replace a message's attachments. Existing rows kept by id; new files are
+// written to disk; removed files are unlinked so storage does not leak.
+function saveAttachments(messageId, list) {
+  const mid = Number(messageId);
+  const existing = db.prepare('SELECT * FROM message_attachment WHERE message_id = ?').all(mid);
+  const byId = new Map(existing.map((e) => [e.id, e]));
+  const keep = new Set();
+  const now = new Date().toISOString();
+  for (const a of list) {
+    if (!a) continue;
+    if (a.id != null && byId.has(a.id)) { keep.add(a.id); continue; }
+    let stored = null;
+    let size = null;
+    if (a.data) {
+      let buf;
+      try { buf = Buffer.from(a.data, 'base64'); } catch (_) { continue; }
+      if (!buf.length || buf.length > MAX_ATTACH_BYTES) continue;
+      const ext = path.extname(a.file_name || '').slice(0, 10).toLowerCase();
+      stored = `${crypto.randomUUID()}${ext || '.bin'}`;
+      fs.writeFileSync(path.join(UPLOAD_DIR, stored), buf);
+      size = buf.length;
+    } else if (!a.link && a.entity_id == null) {
+      continue;
+    }
+    const id = insertRow('message_attachment', {
+      message_id: mid,
+      kind: a.kind || 'DOC',
+      entity_type: a.entity_type,
+      entity_id: a.entity_id,
+      label: a.label,
+      link: a.link,
+      file_name: a.file_name,
+      stored_name: stored,
+      mime: a.mime || (stored ? 'application/octet-stream' : null),
+      size_bytes: size,
+      created_at: now,
+    });
+    keep.add(Number(id));
+  }
+  for (const e of existing) {
+    if (keep.has(e.id)) continue;
+    if (e.stored_name) {
+      try { fs.unlinkSync(path.join(UPLOAD_DIR, path.basename(e.stored_name))); } catch (_) { /* row still removed */ }
+    }
+    db.prepare('DELETE FROM message_attachment WHERE id = ?').run(e.id);
+  }
 }
 
 function mailRow(user, m, state) {
@@ -293,6 +418,7 @@ function mailRow(user, m, state) {
     outgoing: !incoming,
     link: m.link || null,
     thread_id: m.thread_id || null,
+    attachments: attachmentRowsFor(m.id),
     tags: [m.category, m.priority !== 'NORMAL' ? m.priority : null].filter(Boolean),
     unread: incoming && m.status === 'SENT' && !resolved?.read_at,
     archived: !!resolved?.archived_at,
@@ -347,8 +473,9 @@ router.get('/mailbox/recipients', (req, res) => {
       ORDER BY p.first_name, p.last_name`
   ).all();
   const seen = new Map();
+  const correspondents = correspondencePersonIds(req.user);
   for (const r of rows) {
-    if (!recipientVisible(req.user, r.person_id)) continue;
+    if (!recipientVisible(req.user, r.person_id) && !correspondents.has(Number(r.person_id))) continue;
     const name = [r.first_name, r.last_name].filter(Boolean).join(' ');
     if (q && !`${name} ${r.username} ${r.role} ${r.title || ''}`.toLowerCase().includes(q)) continue;
     if (!seen.has(r.person_id)) seen.set(r.person_id, { person_id: r.person_id, name, role: r.role, title: r.title, username: r.username });
@@ -361,7 +488,7 @@ router.post('/mailbox/messages', (req, res) => {
   const rid = Number(body.recipient_person_id || body.recipient_id);
   if (!rid) return res.status(400).json({ error: 'Recipient is required' });
   if (!get('person', rid)) return res.status(404).json({ error: 'Recipient not found' });
-  if (!recipientVisible(req.user, rid)) return res.status(403).json({ error: 'Recipient is outside your command scope' });
+  if (!canAddress(req.user, rid)) return res.status(403).json({ error: 'Recipient is outside your command scope' });
   const status = MAIL_STATUSES.has(String(body.status)) ? String(body.status) : 'SENT';
   const subject = String(body.subject || '').trim().slice(0, 200);
   const text = String(body.body || '').trim().slice(0, 20000);
@@ -382,11 +509,12 @@ router.post('/mailbox/messages', (req, res) => {
     entity_type: body.entity_type || null,
     entity_id: body.entity_id ? Number(body.entity_id) : null,
     link: body.link || null,
-    thread_id: body.thread_id ? Number(body.thread_id) : null,
+    thread_id: validThreadId(body.thread_id),
     created_at: now,
     updated_at: now,
     sent_at: status === 'SENT' ? now : null,
   });
+  if (body.attachments !== undefined) saveAttachments(id, sanitizeAttachments(body.attachments));
   res.status(201).json(mailRow(req.user, get('message', id)));
 });
 
@@ -402,17 +530,19 @@ router.put('/mailbox/messages/:id', (req, res) => {
   if (body.recipient_person_id !== undefined || body.recipient_id !== undefined) {
     const rid = Number(body.recipient_person_id || body.recipient_id);
     if (!rid || !get('person', rid)) return res.status(404).json({ error: 'Recipient not found' });
-    if (!recipientVisible(req.user, rid)) return res.status(403).json({ error: 'Recipient is outside your command scope' });
+    if (!canAddress(req.user, rid)) return res.status(403).json({ error: 'Recipient is outside your command scope' });
     patch.recipient_person_id = rid;
     const ru = primaryUserForPerson(rid);
     patch.recipient_user_id = ru ? ru.id : null;
   }
+  if (body.thread_id !== undefined) patch.thread_id = validThreadId(body.thread_id);
   if (body.category !== undefined && MAIL_CATEGORIES.has(body.category)) patch.category = body.category;
   if (body.priority !== undefined && MAIL_PRIORITIES.has(body.priority)) patch.priority = body.priority;
   if (body.link !== undefined) patch.link = body.link || null;
   if (body.status !== undefined && MAIL_STATUSES.has(body.status) && body.status !== 'SENT') patch.status = body.status;
   patch.updated_at = new Date().toISOString();
   updateRow('message', m.id, patch);
+  if (body.attachments !== undefined) saveAttachments(m.id, sanitizeAttachments(body.attachments));
   res.json(mailRow(req.user, get('message', m.id)));
 });
 
@@ -459,6 +589,99 @@ router.put('/mailbox/messages/:id/unarchive', (req, res) => {
   if (!m) return;
   db.prepare('UPDATE message_state SET archived_at = NULL WHERE user_id = ? AND message_id = ?').run(req.user.id, m.id);
   res.json({ message_id: m.id, archived_at: null });
+});
+
+// Serve a stored attachment to anyone who can see its parent message.
+router.get('/mailbox/attachments/:attId/file', (req, res) => {
+  const att = db.prepare('SELECT * FROM message_attachment WHERE id = ?').get(Number(req.params.attId));
+  if (!att || !att.stored_name || !mailVisible(req.user, att.message_id)) {
+    return res.status(404).json({ error: 'Attachment not found' });
+  }
+  const file = path.join(UPLOAD_DIR, path.basename(att.stored_name));
+  if (!fs.existsSync(file)) return res.status(404).json({ error: 'Attachment file missing' });
+  res.setHeader('Content-Type', att.mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(att.file_name || 'attachment')}`);
+  fs.createReadStream(file).pipe(res);
+});
+
+// Remove one attachment from a draft/queued message the caller authored.
+router.delete('/mailbox/messages/:id/attachments/:attId', (req, res) => {
+  const m = loadMailVisible(req, res);
+  if (!m) return;
+  if (m.sender_user_id !== req.user.id) return res.status(403).json({ error: 'Only the sender can edit this message' });
+  const att = db.prepare('SELECT * FROM message_attachment WHERE id = ? AND message_id = ?').get(Number(req.params.attId), m.id);
+  if (!att) return res.status(404).json({ error: 'Attachment not found' });
+  if (att.stored_name) {
+    try { fs.unlinkSync(path.join(UPLOAD_DIR, path.basename(att.stored_name))); } catch (_) { /* row still removed */ }
+  }
+  db.prepare('DELETE FROM message_attachment WHERE id = ?').run(att.id);
+  res.json({ ok: true, id: att.id });
+});
+
+// Type-to-filter picker feed for the compose attachment chooser. Returns light
+// references (not file bytes) that narrow by `q`, scoped to the caller's command
+// chain for tasks/executions.
+router.get('/mailbox/attachments/catalog', (req, res) => {
+  const type = String(req.query.type || '').toUpperCase();
+  const q = String(req.query.q || '').trim().toLowerCase();
+  const match = (label, sub) => !q || `${label} ${sub || ''}`.toLowerCase().includes(q);
+  const out = [];
+  const add = (item) => { if (match(item.label, item.sub)) out.push(item); };
+  const limit = 50;
+
+  if (type === 'REPORT') {
+    const rows = db.prepare('SELECT id, report_code, title, report_type, scope_region_id FROM report ORDER BY id DESC LIMIT 500').all();
+    for (const r of rows) {
+      if (!isGlobal(req.user) && r.scope_region_id && r.scope_region_id !== req.user.region_id) continue;
+      add({ type: 'REPORT', entity_type: 'REPORT', entity_id: r.id, label: `${r.report_code || 'REPORT'} - ${r.title || ''}`.trim(), sub: r.report_type, link: `/reports?report=${r.id}` });
+      if (out.length >= limit) break;
+    }
+  } else if (type === 'EXECUTION') {
+    const rows = db.prepare(
+      `SELECT e.id, e.task_id, e.result, e.submitted_at, t.task_number, t.title
+         FROM checklist_execution e LEFT JOIN task t ON t.id = e.task_id
+        ORDER BY e.id DESC LIMIT 500`
+    ).all();
+    for (const e of rows) {
+      const t = e.task_id ? get('task', e.task_id) : null;
+      if (t && !taskVisible(req.user, t)) continue;
+      add({ type: 'EXECUTION', entity_type: 'CHECKLIST_EXECUTION', entity_id: e.id, label: `EX-${String(e.id).padStart(5, '0')} - ${e.task_number ? `${e.task_number} ${e.title || ''}` : (e.result || 'Execution')}`.trim(), sub: e.submitted_at, link: e.task_id ? `/tasks/${e.task_id}` : null });
+      if (out.length >= limit) break;
+    }
+  } else if (type === 'TASK') {
+    const rows = taskRows(req.user);
+    for (const t of rows) {
+      add({ type: 'TASK', entity_type: 'TASK', entity_id: t.id, label: `${t.task_number} - ${t.title}`, sub: t.status, link: `/tasks/${t.id}` });
+      if (out.length >= limit) break;
+    }
+  } else if (type === 'ASSET') {
+    const rows = db.prepare('SELECT id, asset_id, name FROM asset ORDER BY asset_id LIMIT 500').all();
+    for (const a of rows) {
+      add({ type: 'ASSET', entity_type: 'ASSET_DETAIL', entity_id: a.id, label: `${a.asset_id}${a.name ? ` - ${a.name}` : ''}`, sub: 'Asset', link: `/reports?document=ASSET_DETAIL&id=${a.id}` });
+      if (out.length >= limit) break;
+    }
+  } else if (type === 'LINE') {
+    const rows = db.prepare('SELECT id, line_id, name FROM transmission_line ORDER BY line_id LIMIT 500').all();
+    for (const l of rows) {
+      add({ type: 'LINE', entity_type: 'LINE_DETAIL', entity_id: l.id, label: `${l.line_id}${l.name ? ` - ${l.name}` : ''}`, sub: 'Line', link: `/reports?document=LINE_DETAIL&id=${l.id}` });
+      if (out.length >= limit) break;
+    }
+  } else if (type === 'CREW') {
+    const rows = db.prepare('SELECT id, crew_code, name FROM crew ORDER BY crew_code LIMIT 500').all();
+    for (const c of rows) {
+      add({ type: 'CREW', entity_type: 'CREW_DETAIL', entity_id: c.id, label: `${c.crew_code || 'CREW'}${c.name ? ` - ${c.name}` : ''}`, sub: 'Crew', link: `/reports?document=CREW_DETAIL&id=${c.id}` });
+      if (out.length >= limit) break;
+    }
+  } else if (type === 'PERSON') {
+    const rows = db.prepare('SELECT id, first_name, last_name, role FROM person ORDER BY first_name LIMIT 500').all();
+    for (const p of rows) {
+      add({ type: 'PERSON', entity_type: 'PERSON_DETAIL', entity_id: p.id, label: `${p.first_name || ''} ${p.last_name || ''}`.trim(), sub: p.role, link: `/reports?document=PERSON_DETAIL&id=${p.id}` });
+      if (out.length >= limit) break;
+    }
+  } else {
+    return res.status(400).json({ error: 'Unknown catalog type' });
+  }
+  res.json({ type, items: out });
 });
 
 router.get('/mailbox', (req, res) => {

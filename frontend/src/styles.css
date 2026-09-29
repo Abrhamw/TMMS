@@ -876,6 +876,26 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
 .mail-compose { flex: none; padding: 12px 20px; border-top: 1px solid var(--border); }
 .mail-compose .comment-form { align-items: stretch; }
 .mail-compose .comment-form textarea { min-width: 0; }
+.mail-scroll { flex: 1; min-height: 0; overflow: auto; padding: 14px 20px; }
+.mail-scroll .mail-message { margin-bottom: 10px; }
+.mail-attach-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
+.mail-attach-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 6px 3px 10px; border: 1px solid var(--border); border-radius: 999px; background: #f1f5f9; font-size: 12px; }
+.mail-attach-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mail-attach-x { flex: none; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%; background: #cbd5e1; color: #334155; font-size: 12px; line-height: 1; cursor: pointer; }
+.mail-attach-x:hover { background: #dc2626; color: #fff; }
+.mail-attach-chip-btn { background: #fff; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.mail-attach-chip-btn:hover { border-color: var(--primary); color: var(--primary); }
+.mail-attach-chip-kind { flex: none; font-size: 10px; }
+.mail-attach-picker { display: grid; grid-template-columns: minmax(120px, 180px) minmax(0, 1fr); gap: 8px; align-items: start; margin-top: 4px; }
+.mail-attach-picker input[type="file"] { min-width: 0; }
+.mail-attach-results { max-height: 180px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+.mail-attach-option { display: block; width: 100%; padding: 8px 10px; border: 0; border-bottom: 1px solid var(--border); background: none; color: var(--text); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.mail-attach-option:last-child { border-bottom: 0; }
+.mail-attach-option:hover:not(:disabled) { background: #f0fdf4; }
+.mail-attach-option:disabled { opacity: .55; cursor: default; }
+.mail-attach-empty { padding: 10px; font-size: 12px; }
+.mail-attach-reader { max-width: 760px; }
+.mail-attach-reader-title { margin-bottom: 6px; color: var(--muted); font-size: 12px; font-weight: 600; }
 
 /* Executive portfolio summary */
 .executive-brief { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 4px 0 14px; border-bottom: 1px solid var(--border); }
@@ -907,6 +927,8 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
   .mail-folder { min-width: 0; }
   .mail-timeline { padding: 10px; }
   .mail-reader-head, .mail-compose { padding: 12px; }
+  .mail-scroll { padding: 10px; }
+  .mail-attach-picker { grid-template-columns: minmax(0, 1fr); }
   .executive-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .executive-grid { grid-template-columns: minmax(0, 1fr); }
   .executive-tabs { top: 0; }

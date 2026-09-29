@@ -536,6 +536,26 @@ function initSchema() {
     PRIMARY KEY (user_id, message_id)
   );
 
+  -- Documents attached to a directed mail. An attachment is either a reference
+  -- to an existing entity (report, execution, task, asset document, ...) carried
+  -- as a link, or an uploaded file stored on disk. This keeps a single flexible
+  -- mechanism for "attach any doc" without copying the entity itself.
+  CREATE TABLE IF NOT EXISTS message_attachment (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'DOC',
+    entity_type TEXT,
+    entity_id INTEGER,
+    label TEXT,
+    link TEXT,
+    file_name TEXT,
+    stored_name TEXT,
+    mime TEXT,
+    size_bytes INTEGER,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_message_attachment ON message_attachment(message_id);
+
   CREATE TABLE IF NOT EXISTS org_unit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     unit_code TEXT NOT NULL UNIQUE,
