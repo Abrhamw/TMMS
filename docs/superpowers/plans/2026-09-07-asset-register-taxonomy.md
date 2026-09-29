@@ -1157,7 +1157,7 @@ export default function RegisterTree({ canWrite, regionId, onChangeRegion, onSel
 
 - [ ] **Step 2: Wire the component into Assets.jsx**
 
-Imports: add `import RegisterTree from '../components/RegisterTree';` after the `Dossier` import (`Assets.jsx:7`).
+Imports: add `import RegisterTree from '../components/RegisterTree';` after the `Document` import (`Assets.jsx:7`).
 
 State: add after line 30:
 

@@ -1,3 +1,4 @@
+import { SearchSelect } from './components';
 import { useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Outlet, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import Landing from './pages/Landing';
@@ -23,7 +24,7 @@ import Organization from './pages/Organization';
 import OperatingModel from './pages/OperatingModel';
 import Login from './pages/Login';
 import GlobalSearch from './components/GlobalSearch';
-import { getStoredUser, getStoredToken, logout, can, CREW_ROLES } from './auth';
+import { getStoredUser, getStoredToken, logout, can, CREW_ROLES, listOtherAccounts, switchAccount, removeAccount } from './auth';
 import { t, LOCALES, getLang, setLanguage, getLocale } from './i18n';
 import { api, setApiLocale } from './api';
 import './styles.css';
@@ -49,7 +50,7 @@ function useI18n() {
 function LanguageSwitcher() {
   const lang = getLang();
   return (
-    <select
+    <SearchSelect
       className="lang-select"
       value={lang}
       onChange={(e) => {
@@ -62,7 +63,7 @@ function LanguageSwitcher() {
       {Object.entries(LOCALES).map(([code, l]) => (
         <option key={code} value={code}>{l.label}</option>
       ))}
-    </select>
+    </SearchSelect>
   );
 }
 
@@ -95,19 +96,74 @@ function InboxChip() {
 
 function UserMenu() {
   const nav = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
   const user = getStoredUser();
-  async function signOut() {    await logout();
+  const [others, setOthers] = useState(() => listOtherAccounts());
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => { if (!e.target.closest('.user-menu')) setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const displayName = user?.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : user?.username;
+  const initial = user?.first_name?.[0] || user?.username?.[0] || '?';
+
+  async function signOut() {
+    await logout();
     nav('/login', { replace: true });
     window.location.reload();
   }
+
+  async function doSwitch(token) {
+    setBusy(true);
+    await switchAccount(token);
+    window.location.reload();
+  }
+
+  function doRemove(userId, e) {
+    e.stopPropagation();
+    removeAccount(userId);
+    setOthers(listOtherAccounts());
+  }
+
   return (
     <div className="user-menu">
-      <span className="avatar">{user?.first_name?.[0] || user?.username?.[0] || '?'}</span>
-      <span className="um-name">
-        <b>{user?.first_name ? `${user.first_name} ${user.last_name || ''}` : user?.username}</b>
-        <small>{personTitle(user) || user?.role} · {user?.region_id ? `Region #${user.region_id}` : t('allRegions')}</small>
-      </span>
-      <button className="btn btn-sm" onClick={signOut}>{t('signOut')}</button>
+      <button type="button" className="um-trigger" aria-haspopup="menu" aria-expanded={open}
+        onClick={() => { setOthers(listOtherAccounts()); setOpen((v) => !v); }}>
+        <span className="avatar">{initial}</span>
+        <span className="um-name">
+          <b>{displayName}</b>
+          <small>{personTitle(user) || user?.role} · {user?.region_id ? `Region #${user.region_id}` : t('allRegions')}</small>
+        </span>
+      </button>
+      {open && (
+        <div className="um-dropdown" role="menu">
+          <div className="um-item um-current">
+            <span className="avatar">{initial}</span>
+            <span className="um-name"><b>{displayName}</b><small>{personTitle(user) || user?.role}</small></span>
+            <span className="um-tag">{t('signedIn')}</span>
+          </div>
+          {others.map((a) => {
+            const nm = a.user.first_name ? `${a.user.first_name} ${a.user.last_name || ''}`.trim() : a.user.username;
+            return (
+              <button key={a.user.id} type="button" className="um-item" role="menuitem" disabled={busy} onClick={() => doSwitch(a.token)}>
+                <span className="avatar">{a.user.first_name?.[0] || a.user.username?.[0] || '?'}</span>
+                <span className="um-name"><b>{nm}</b><small>{personTitle(a.user) || a.user.role}</small></span>
+                <span className="um-remove" role="button" tabIndex={0} title={t('removeAccount')} aria-label={t('removeAccount')}
+                  onClick={(e) => doRemove(a.user.id, e)}>×</span>
+              </button>
+            );
+          })}
+          <div className="um-sep" />
+          <button type="button" className="um-item um-add" role="menuitem" onClick={() => { setOpen(false); nav('/login', { state: { addAccount: true } }); }}>
+            + {t('addAccount')}
+          </button>
+          <button type="button" className="um-item" role="menuitem" onClick={signOut}>{t('signOut')}</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -228,6 +284,14 @@ function RequireExecutive({ children }) {
   return children;
 }
 
+// Reports are a management/oversight surface. A role without `report:read`
+// (field crews) is sent home rather than shown an empty, forbidden page.
+function RequireReportAccess({ children }) {
+  const user = getStoredUser();
+  if (!user || !can(user, 'report:read')) return <Navigate to="/home" replace />;
+  return children;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -252,7 +316,7 @@ export default function App() {
           <Route path="/checklists" element={<Checklists />} />
           <Route path="/gps" element={<Gps />} />
           <Route path="/certifications" element={<Certifications />} />
-          <Route path="/reports" element={<Reports />} />
+          <Route path="/reports" element={<RequireReportAccess><Reports /></RequireReportAccess>} />
           <Route path="/value" element={<RequireExecutive><Value /></RequireExecutive>} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/organization" element={<Organization />} />

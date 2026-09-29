@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Page, Empty, ErrorNote, Loading, Modal, Pill } from '../components';
+import { SearchSelect, Page, Empty, ErrorNote, Loading, Modal, Pill } from '../components';
 import { api, fmtDateTime } from '../api';
 import { t, setLanguage, LOCALES } from '../i18n';
 import { can, getStoredUser } from '../auth';
@@ -201,23 +201,23 @@ export default function Settings() {
         <div className="card card-pad">
           <div className="grid2">
             <label>{t('language')}
-              <select value={cfg.language} onChange={changeLanguage}>
+              <SearchSelect value={cfg.language} onChange={changeLanguage}>
                 {Object.entries(LOCALES).map(([code, l]) => (
                   <option key={code} value={code}>{l.label}</option>
                 ))}
-              </select>
+              </SearchSelect>
             </label>
             <label>{t('units')}
-              <select value={cfg.unit_system} onChange={set('unit_system')}>
+              <SearchSelect value={cfg.unit_system} onChange={set('unit_system')}>
                 <option value="metric">{t('metric')}</option>
                 <option value="imperial">{t('imperial')}</option>
-              </select>
+              </SearchSelect>
             </label>
             <label>{t('gridFrequency')}
-              <select value={cfg.grid_frequency_hz} onChange={set('grid_frequency_hz')}>
+              <SearchSelect value={cfg.grid_frequency_hz} onChange={set('grid_frequency_hz')}>
                 <option value="50">50 Hz</option>
                 <option value="60">60 Hz</option>
-              </select>
+              </SearchSelect>
             </label>
             <label>{t('currency')}
               <input value={cfg.currency || ''} onChange={set('currency')} />
@@ -301,24 +301,24 @@ export default function Settings() {
                 <div className="field"><label>{t('username')}</label><input disabled={!!userForm.id} value={userForm.username} onChange={(e) => setUserForm({ ...userForm, username: e.target.value })} /></div>
                 <div className="field"><label>{t('password')}{userForm.id && <span className="muted"> — {t('passwordHint')}</span>}</label><input type="password" value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })} /></div>
                 <div className="field"><label>{t('role')}</label>
-                  <select value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}>
+                  <SearchSelect value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}>
                     {ROLES.map((r) => <option key={r}>{LEGACY_ROLES.has(r) ? `${r} (legacy)` : r}</option>)}
-                  </select></div>
+                  </SearchSelect></div>
                 <div className="field"><label>{t('region')}</label>
-                  <select value={userForm.region_id} onChange={(e) => setUserForm({ ...userForm, region_id: e.target.value })}>
+                  <SearchSelect value={userForm.region_id} onChange={(e) => setUserForm({ ...userForm, region_id: e.target.value })}>
                     <option value="">{t('allRegions')}</option>
                     {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                  </select></div>
+                  </SearchSelect></div>
                 <div className="field"><label>{t('linkedPerson')}</label>
-                  <select value={userForm.person_id} onChange={(e) => setUserForm({ ...userForm, person_id: e.target.value })}>
+                  <SearchSelect value={userForm.person_id} onChange={(e) => setUserForm({ ...userForm, person_id: e.target.value })}>
                     <option value="">— {t('none')} —</option>
                     {people.map((p) => <option key={p.id} value={p.id}>{p.first_name} {p.last_name}</option>)}
-                  </select></div>
+                  </SearchSelect></div>
                 <div className="field"><label>{t('status')}</label>
-                  <select value={userForm.active ? 1 : 0} onChange={(e) => setUserForm({ ...userForm, active: Number(e.target.value) === 1 })}>
+                  <SearchSelect value={userForm.active ? 1 : 0} onChange={(e) => setUserForm({ ...userForm, active: Number(e.target.value) === 1 })}>
                     <option value={1}>{t('statusActive')}</option>
                     <option value={0}>{t('statusInactive')}</option>
-                  </select></div>
+                  </SearchSelect></div>
               </div>
               {userForm.id && <p className="muted mt">{t('passwordHint')}</p>}
             </Modal>
@@ -379,23 +379,23 @@ export default function Settings() {
                 <div className="field"><label>{t('firstName')} *</label><input value={personForm.first_name} onChange={(e) => setPersonForm({ ...personForm, first_name: e.target.value })} /></div>
                 <div className="field"><label>{t('lastName')} *</label><input value={personForm.last_name} onChange={(e) => setPersonForm({ ...personForm, last_name: e.target.value })} /></div>
                 <div className="field"><label>{t('personRole')} *</label>
-                  <select value={personForm.role} onChange={(e) => setPersonForm({ ...personForm, role: e.target.value })}>
+                  <SearchSelect value={personForm.role} onChange={(e) => setPersonForm({ ...personForm, role: e.target.value })}>
                     <option value="">—</option>
                     {['MEMBER', 'LEAD', 'TECHNICIAN', 'ENGINEER', 'MANAGER', 'INSPECTOR', 'CREW_LEAD'].map((r) => <option key={r}>{r}</option>)}
-                  </select></div>
+                  </SearchSelect></div>
                 <div className="field"><label>{t('personTitle')}</label><input value={personForm.title} onChange={(e) => setPersonForm({ ...personForm, title: e.target.value })} /></div>
                 <div className="field"><label>{t('phone')}</label><input value={personForm.phone} onChange={(e) => setPersonForm({ ...personForm, phone: e.target.value })} /></div>
                 <div className="field"><label>{t('email')}</label><input value={personForm.email} onChange={(e) => setPersonForm({ ...personForm, email: e.target.value })} /></div>
                 <div className="field"><label>{t('regionAssignment')}</label>
-                  <select value={personForm.region_id} onChange={(e) => setPersonForm({ ...personForm, region_id: e.target.value })}>
+                  <SearchSelect value={personForm.region_id} onChange={(e) => setPersonForm({ ...personForm, region_id: e.target.value })}>
                     <option value="">— {t('none')} —</option>
                     {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                  </select></div>
+                  </SearchSelect></div>
                 <div className="field"><label>{t('status')}</label>
-                  <select value={personForm.active ? 1 : 0} onChange={(e) => setPersonForm({ ...personForm, active: Number(e.target.value) === 1 })}>
+                  <SearchSelect value={personForm.active ? 1 : 0} onChange={(e) => setPersonForm({ ...personForm, active: Number(e.target.value) === 1 })}>
                     <option value={1}>{t('statusActive')}</option>
                     <option value={0}>{t('statusInactive')}</option>
-                  </select></div>
+                  </SearchSelect></div>
               </div>
             </Modal>
           )}

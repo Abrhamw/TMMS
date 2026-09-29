@@ -339,10 +339,24 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
 .main-col { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .shell-topbar { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 10px 22px; background: var(--panel); border-bottom: 1px solid var(--border); }
 .lang-select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; background: #fff; }
-.user-menu { display: flex; align-items: center; gap: 10px; }
+.user-menu { display: flex; align-items: center; gap: 10px; position: relative; }
 .user-menu .avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--primary); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; }
 .um-name { display: flex; flex-direction: column; line-height: 1.15; font-size: 13px; }
 .um-name small { color: var(--muted); font-size: 11px; }
+.um-trigger { display: flex; align-items: center; gap: 10px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.um-dropdown { position: absolute; top: calc(100% + 8px); right: 0; z-index: 80; min-width: 290px; background: #fff; border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,0.16); overflow: hidden; }
+.um-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 0; background: none; text-align: left; font: inherit; color: var(--text); cursor: pointer; }
+.um-item:hover { background: #f0fdf4; }
+.um-item:disabled { opacity: .6; cursor: default; }
+.um-item .um-name { flex: 1; min-width: 0; }
+.um-item .um-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.um-item .avatar { width: 28px; height: 28px; font-size: 13px; flex: none; }
+.um-current, .um-current:hover { background: #ecfdf5; cursor: default; }
+.um-tag { margin-left: auto; font-size: 10px; font-weight: 700; color: var(--primary); text-transform: uppercase; }
+.um-remove { margin-left: auto; padding: 0 4px; color: var(--muted); font-size: 18px; line-height: 1; }
+.um-remove:hover { color: #dc2626; }
+.um-sep { border-top: 1px solid var(--border); }
+.um-add { color: var(--primary); font-weight: 600; }
 
 /* Global search */
 .global-search { position: relative; flex: 1; max-width: 440px; margin-right: auto; }
@@ -440,9 +454,9 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
   .no-print, .sidebar, .shell-topbar, .main > .topbar .actions, .tabs, .filters, .map-picker-locate, .map-picker-readout { display: none !important; }
   /* A printed report is a document, never a form: no action buttons, tabs,
      form fields or map overlays may appear on paper. This covers every print
-     surface (modals, dossiers, scoped reports), so a Close/Print button never
+     surface (modals, documents, scoped reports), so a Close/Print button never
      leaks into the sheet. */
-  button, .btn, .tab, select, input, textarea,
+  button, .btn, .tab, select, input, textarea, .search-select,
   .map-mini-controls, .map-mini-search, .map-mini-legend, .map-picker-radius,
   .map-picker-err, .leaflet-control-container { display: none !important; }
   .app-shell { display: block !important; height: auto !important; overflow: visible !important; }
@@ -479,7 +493,7 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
   a { color: #000 !important; text-decoration: none; }
 }
 
-/* Scoped printing: when the page has an active dossier/report block
+/* Scoped printing: when the page has an active document/report block
    (.print-report-scope) the Print button narrows the printout to that
    block only — nothing else from the page is included. */
 @media print {
@@ -773,13 +787,60 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
 .search-clear:hover { background: #e2e8f0; color: var(--text); }
 .search-empty { padding: 18px; text-align: center; color: var(--muted); }
 
+/* ---- Searchable <select> replacement ---- */
+.search-select { position: relative; display: inline-block; max-width: 100%; vertical-align: middle; }
+.ss-trigger {
+  display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--text);
+  font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+}
+.ss-trigger:disabled { opacity: .55; cursor: not-allowed; }
+.ss-trigger:focus-visible { outline: 2px solid #bbf7d0; border-color: var(--primary); }
+.ss-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-caret { flex: none; color: var(--muted); font-size: 10px; line-height: 1; }
+.ss-pop {
+  position: absolute; z-index: 1400; top: calc(100% + 4px); left: 0;
+  width: max(100%, 220px); max-width: min(360px, 92vw);
+  background: #fff; border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 14px 34px rgba(15, 23, 42, .18); overflow: hidden;
+}
+.ss-search { padding: 8px; border-bottom: 1px solid var(--border); }
+.ss-search input {
+  width: 100%; padding: 6px 9px; border: 1px solid var(--border); border-radius: 8px;
+  font: inherit; font-size: 13px; color: var(--text); outline: none;
+}
+.ss-search input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(187, 247, 208, .45); }
+.ss-options { max-height: 264px; overflow: auto; padding: 4px; }
+.ss-option {
+  display: block; width: 100%; padding: 7px 9px; border: 0; border-radius: 7px; background: none;
+  color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ss-option:hover { background: #f1f5f9; }
+.ss-option.is-active { background: #ecfdf5; color: var(--primary); font-weight: 600; }
+.ss-option:disabled { opacity: .5; cursor: not-allowed; }
+.ss-empty { padding: 14px; text-align: center; color: var(--muted); font-size: 12px; }
+.field .search-select, .grid2 .search-select { width: 100%; }
+.field .ss-trigger, .grid2 .ss-trigger { padding: 8px 10px; }
+.filters .search-select { flex: 1 1 150px; }
+.filters .ss-trigger { padding: 7px 10px; }
+.map-basemap .search-select { flex: 1; min-width: 90px; }
+.map-basemap .ss-trigger { padding: 4px 6px; font-size: 12px; }
+.map-mini-controls .search-select { max-width: 110px; }
+.map-mini-controls .ss-trigger { padding: 3px 6px; font-size: 11px; }
+.map-mini-controls .ss-pop { left: auto; right: 0; }
+.search-select:has(> .map-select) { width: 100%; }
+.search-select .ss-trigger.map-select { margin-top: 6px; }
+
 /* Task mailbox */
 .mailbox-layout { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); flex: 1; min-height: 0; border: 1px solid var(--border); background: var(--panel); overflow: hidden; }
 .mailbox-list { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--border); }
-.mailbox-folders { display: flex; gap: 2px; padding: 6px; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: thin; }
-.mail-folder { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 8px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
-.mail-folder.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 700; }
-.mail-folder b { font-size: 10px; font-weight: 700; }
+.mailbox-folders { display: flex; flex-direction: column; gap: 2px; padding: 6px; border-bottom: 1px solid var(--border); max-height: 42%; overflow-y: auto; scrollbar-width: thin; }
+.mail-folder { flex: none; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 5px; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; white-space: nowrap; text-align: left; cursor: pointer; }
+.mail-folder.active { color: var(--primary); background: #f0fdf4; font-weight: 700; }
+.mail-folder b { font-size: 11px; font-weight: 700; }
+.mail-folder-unread { color: var(--primary); }
+.mailbox-compose-btn { margin: 8px 8px 0; }
 .mailbox-list > .search-field { margin: 8px; flex: none; max-width: none; }
 .mail-thread-list { flex: 1; min-height: 0; overflow: auto; }
 .mail-thread { display: block; width: 100%; padding: 12px; text-align: left; border: 0; border-top: 1px solid var(--border); background: var(--panel); color: var(--text); font: inherit; cursor: pointer; }

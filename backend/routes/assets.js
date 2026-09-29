@@ -8,8 +8,16 @@ const router = express.Router();
 const { extractKmzText, extractPlacemarks } = require('../geoimport');
 const { findCatalog } = require('../assetCatalog');
 const { maintenanceCostForRegions } = require('../maintenanceCost');
-const { syncSubstationBayCount } = require('../integrity');
+const { syncSubstationBayCount, syncTowerFromAsset } = require('../integrity');
 const { computeHealth, suggestAssetCondition } = require('../assetCondition');
+const { ASSET_TEMPLATE, assetRecords, parseInfra, firstNonEmpty, num } = require('../assetImport');
+
+// Tower structures live in the tower table; their asset rows are created and
+// kept in sync automatically (integrity.syncTowerMirror). Users must not
+// create, edit or delete them directly through the asset register — otherwise
+// a tower would end up with duplicate or divergent register rows.
+const TOWER_MIRROR_TYPES = new Set(['TOWER', 'POLE']);
+const TOWER_MIRROR_MSG = 'Tower structures are managed from the tower register. Add or edit them under Infrastructure > Towers.';
 
 // Chain-of-command helpers: a manager only reaches the assets their command is
 // responsible for; global roles keep the open (all) view.
@@ -274,6 +282,257 @@ router.post('/assets/import-geo', (req, res) => {
   res.status(201).json({ created: created.length, skipped, assets: created });
 });
 
+// ---- Asset register bulk import (CSV / KML / GeoJSON) --------------------------
+// Assets carry no region_id: the structural anchor (substation, line or tower)
+// determines the region and therefore the command scope. The CSV template
+// references parents by human code, which these maps resolve.
+const ASSET_IMPORT_ENUMS = {
+  location_type: new Set(['OUTDOOR', 'INDOOR', 'BUILDING', 'CELLAR', 'UNDERGROUND']),
+  criticality: new Set(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']),
+  lifecycle_status: new Set(['IN_SERVICE', 'OUT_OF_SERVICE', 'RESERVED', 'RETIRED', 'SPARE']),
+  operational_status: new Set(['OPERATIONAL', 'MAINTENANCE', 'OUT_OF_SERVICE', 'UNDER_CONSTRUCTION', 'DECOMMISSIONED']),
+};
+
+function upperIndex(rows, key) {
+  const m = new Map();
+  for (const r of rows) {
+    const v = r[key];
+    if (v != null && String(v).trim() !== '') m.set(String(v).trim().toUpperCase(), r);
+  }
+  return m;
+}
+
+function buildAssetImportContext() {
+  const subs = list('substation');
+  const lines = list('transmission_line');
+  const towers = list('tower');
+  const crews = list('crew');
+  return {
+    subByCode: upperIndex(subs, 'substation_id'),
+    subByName: upperIndex(subs, 'name'),
+    lineByCode: upperIndex(lines, 'line_id'),
+    towerByCode: upperIndex(towers, 'tower_id'),
+    assetByCode: upperIndex(list('asset'), 'asset_id'),
+    regionByCode: upperIndex(list('region'), 'code'),
+    crewByCode: upperIndex(crews, 'crew_code'),
+    crewByName: upperIndex(crews, 'name'),
+    lineById: new Map(lines.map((l) => [l.id, l])),
+  };
+}
+
+function anchorAllowed(scope, { substation_id, line_id, tower_id, region_id }) {
+  if (!scope || scope.global) return true;
+  if (substation_id && scope.substationIds.has(substation_id)) return true;
+  if (line_id && scope.lineIds.has(line_id)) return true;
+  if (tower_id && scope.towerIds.has(tower_id)) return true;
+  if (region_id && scope.regionIds && scope.regionIds.has(region_id)) return true;
+  return false;
+}
+
+function assetRegionOf(ctx, { sub, line, tower }) {
+  if (sub) return sub.region_id;
+  if (line) return line.region_id;
+  if (tower) {
+    const l = ctx.lineById.get(tower.line_id);
+    return l ? l.region_id : null;
+  }
+  return null;
+}
+
+function normalizeAssetRecords(records, ctx, scope, { update }) {
+  const out = [];
+  records.forEach((r, index) => {
+    const rec = r.props || {};
+    const cand = { index, will_skip: false, reason: null, update: false };
+    const skip = (reason) => { cand.will_skip = true; cand.reason = reason; out.push(cand); };
+    const asset_id = firstNonEmpty(rec, ['asset_id', 'asset_code', 'code']);
+    const name = firstNonEmpty(rec, ['name', 'asset_name', 'title']);
+    const assetType = firstNonEmpty(rec, ['asset_type', 'type']).toUpperCase();
+    cand.asset_id = asset_id;
+    cand.name = name;
+    cand.asset_type = assetType;
+    if (!asset_id) return skip('asset_id is required');
+    if (!name) return skip('name is required');
+    if (!assetType) return skip('asset_type is required');
+    if (TOWER_MIRROR_TYPES.has(assetType)) return skip(TOWER_MIRROR_MSG);
+    const subType = firstNonEmpty(rec, ['sub_type', 'subtype']);
+    if (!findCatalog(assetType, subType)) return skip(`unknown asset_type '${assetType}'`);
+
+    const subCode = firstNonEmpty(rec, ['substation_code', 'substation_id', 'substation']);
+    const lineCode = firstNonEmpty(rec, ['line_code', 'line_id', 'line']);
+    const towerCode = firstNonEmpty(rec, ['tower_code', 'tower_id', 'tower']);
+    const parentCode = firstNonEmpty(rec, ['parent_asset_code', 'parent_asset_id', 'parent']);
+    const regionCode = firstNonEmpty(rec, ['region_code', 'region']);
+
+    const sub = subCode ? (ctx.subByCode.get(subCode.toUpperCase()) || ctx.subByName.get(subCode.toUpperCase())) : null;
+    if (subCode && !sub) return skip(`unknown substation_code '${subCode}'`);
+    let line = lineCode ? ctx.lineByCode.get(lineCode.toUpperCase()) : null;
+    if (lineCode && !line) return skip(`unknown line_code '${lineCode}'`);
+    const tower = towerCode ? ctx.towerByCode.get(towerCode.toUpperCase()) : null;
+    if (towerCode && !tower) return skip(`unknown tower_code '${towerCode}'`);
+    if (tower && !line && ctx.lineById.has(tower.line_id)) line = ctx.lineById.get(tower.line_id);
+    const parent = parentCode ? ctx.assetByCode.get(parentCode.toUpperCase()) : null;
+    if (parentCode && !parent) return skip(`unknown parent_asset_code '${parentCode}'`);
+
+    if (sub && (line || tower)) return skip('a substation asset cannot also anchor to a line or tower');
+    if (tower && line && tower.line_id !== line.id) return skip('tower_code belongs to a different line');
+
+    const lat = num(firstNonEmpty(rec, ['latitude', 'lat'])) ?? (r.lat != null ? r.lat : null);
+    const lng = num(firstNonEmpty(rec, ['longitude', 'lng', 'lon'])) ?? (r.lng != null ? r.lng : null);
+    const kmFromRaw = firstNonEmpty(rec, ['km_from']);
+    const kmToRaw = firstNonEmpty(rec, ['km_to']);
+    const kmFrom = num(kmFromRaw);
+    const kmTo = num(kmToRaw);
+    if (kmFromRaw && kmFrom == null) return skip('km_from must be numeric');
+    if (kmToRaw && kmTo == null) return skip('km_to must be numeric');
+    const hasKm = kmFromRaw !== '' || kmToRaw !== '';
+    if (hasKm && !line) return skip('km_from/km_to require a line_code anchor');
+    if (hasKm && tower) return skip('km_from/km_to cannot be set on a tower asset');
+    if (hasKm && kmFrom != null && kmTo != null && kmTo < kmFrom) return skip('km_to must be >= km_from');
+
+    let region = assetRegionOf(ctx, { sub, line, tower });
+    if (regionCode) {
+      const reg = ctx.regionByCode.get(regionCode.toUpperCase());
+      if (!reg) return skip(`unknown region_code '${regionCode}'`);
+      if (region == null) region = reg.id;
+    }
+    if (!sub && !line && !tower && (!Number.isFinite(lat) || !Number.isFinite(lng))) {
+      return skip('standalone assets require latitude and longitude');
+    }
+    if (!anchorAllowed(scope, { substation_id: sub ? sub.id : null, line_id: line ? line.id : null, tower_id: tower ? tower.id : null, region_id: region })) {
+      return skip('asset anchor is outside your command scope');
+    }
+
+    const existing = ctx.assetByCode.get(asset_id.toUpperCase());
+    let existing_id = null;
+    if (existing) {
+      if (TOWER_MIRROR_TYPES.has(existing.asset_type)) return skip('asset_id belongs to a tower structure; edit the tower instead');
+      if (!update) return skip(`${asset_id} already exists (enable "Update existing" to overwrite it)`);
+      cand.update = true;
+      existing_id = existing.id;
+    }
+
+    for (const [field, set] of Object.entries(ASSET_IMPORT_ENUMS)) {
+      const v = firstNonEmpty(rec, [field]).toUpperCase();
+      if (v && !set.has(v)) return skip(`${field} '${v}' is not valid`);
+    }
+    const condRaw = firstNonEmpty(rec, ['condition_rating', 'condition']);
+    let condition = 7;
+    if (condRaw) {
+      const c = Number(condRaw);
+      if (!Number.isFinite(c) || c < 1 || c > 10) return skip('condition_rating must be 1-10');
+      condition = Math.round(c);
+    }
+    let metadata = '{}';
+    const metaRaw = firstNonEmpty(rec, ['metadata']);
+    if (metaRaw) {
+      try { JSON.parse(metaRaw); metadata = metaRaw; } catch (_) { return skip('metadata must be valid JSON'); }
+    }
+    const gpsRaw = firstNonEmpty(rec, ['gps_validated', 'gps']);
+    const gps = gpsRaw === '' ? 0 : (/^(1|true|yes|validated)$/i.test(gpsRaw) ? 1 : 0);
+    const crewCode = firstNonEmpty(rec, ['default_crew_code', 'default_crew', 'crew_code', 'crew']);
+    const crew = crewCode ? (ctx.crewByCode.get(crewCode.toUpperCase()) || ctx.crewByName.get(crewCode.toUpperCase())) : null;
+    if (crewCode && !crew) return skip(`unknown crew '${crewCode}'`);
+
+    cand.anchor = sub ? `substation ${sub.substation_id}` : tower ? `tower ${tower.tower_id}` : line ? `line ${line.line_id}` : 'standalone';
+    cand.existing_id = existing_id;
+    cand.fields = {
+      asset_id,
+      name,
+      asset_type: assetType,
+      sub_type: subType || null,
+      substation_id: sub ? sub.id : null,
+      line_id: line ? line.id : null,
+      tower_id: tower ? tower.id : null,
+      parent_asset_id: parent ? parent.id : null,
+      latitude: Number.isFinite(lat) ? lat : null,
+      longitude: Number.isFinite(lng) ? lng : null,
+      km_from: kmFrom,
+      km_to: kmTo,
+      location_type: firstNonEmpty(rec, ['location_type']).toUpperCase() || 'OUTDOOR',
+      bay: firstNonEmpty(rec, ['bay']) || null,
+      manufacturer: firstNonEmpty(rec, ['manufacturer']) || null,
+      model: firstNonEmpty(rec, ['model']) || null,
+      serial_number: firstNonEmpty(rec, ['serial_number', 'serial']) || null,
+      installation_date: firstNonEmpty(rec, ['installation_date']) || null,
+      commissioned_date: firstNonEmpty(rec, ['commissioned_date']) || null,
+      condition_rating: condition,
+      criticality: firstNonEmpty(rec, ['criticality']).toUpperCase() || 'MEDIUM',
+      lifecycle_status: firstNonEmpty(rec, ['lifecycle_status']).toUpperCase() || 'IN_SERVICE',
+      operational_status: firstNonEmpty(rec, ['operational_status']).toUpperCase() || 'OPERATIONAL',
+      warranty_expiry: firstNonEmpty(rec, ['warranty_expiry']) || null,
+      last_maintenance_at: firstNonEmpty(rec, ['last_maintenance_at']) || null,
+      next_maintenance_at: firstNonEmpty(rec, ['next_maintenance_at']) || null,
+      default_crew_id: crew ? crew.id : null,
+      gps_validated: gps,
+      metadata,
+    };
+    out.push(cand);
+  });
+  return out;
+}
+
+router.get('/assets/import/template', (req, res) => {
+  if (!can(req, 'asset:write')) return res.status(403).json({ error: 'Forbidden: requires asset:write' });
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="tmms-assets-template.csv"');
+  res.send(ASSET_TEMPLATE);
+});
+
+router.post('/assets/import/preview', (req, res) => {
+  if (!can(req, 'asset:write')) return res.status(403).json({ error: 'Forbidden: requires asset:write' });
+  const { format, content, update } = req.body || {};
+  let parsed;
+  try { parsed = parseInfra(format || 'csv', content); } catch (e) { return res.status(400).json({ error: e.message }); }
+  const records = assetRecords(parsed);
+  if (!records.length) return res.status(400).json({ error: 'No asset rows found in the file' });
+  const ctx = buildAssetImportContext();
+  const candidates = normalizeAssetRecords(records, ctx, commandScope(req.user), { update: !!update });
+  const token = `asset${previewSeq++}-${Date.now()}`;
+  pendingPreviews.set(token, { at: Date.now(), candidates });
+  res.json({
+    token,
+    kind: 'assets',
+    update: !!update,
+    count: candidates.length,
+    will_create: candidates.filter((c) => !c.will_skip && !c.update).length,
+    will_update: candidates.filter((c) => !c.will_skip && c.update).length,
+    will_skip: candidates.filter((c) => c.will_skip).length,
+    candidates: candidates.map((c) => ({
+      index: c.index, asset_id: c.asset_id, name: c.name, asset_type: c.asset_type,
+      anchor: c.anchor, update: c.update, will_skip: c.will_skip, reason: c.reason,
+    })),
+  });
+});
+
+router.post('/assets/import/commit', (req, res) => {
+  if (!can(req, 'asset:write')) return res.status(403).json({ error: 'Forbidden: requires asset:write' });
+  const pv = pendingPreviews.get(req.body.token);
+  if (!pv) return res.status(400).json({ error: 'Preview token missing or expired — run the preview again' });
+  pendingPreviews.delete(req.body.token);
+  const edits = req.body.edits || {};
+  const created = [];
+  const updated = [];
+  const skipped = [];
+  for (const c of pv.candidates) {
+    if (c.will_skip) { skipped.push({ asset_id: c.asset_id, reason: c.reason }); continue; }
+    try {
+      const fields = { ...c.fields };
+      const patch = edits[c.index];
+      if (patch) for (const [k, v] of Object.entries(patch)) if (k in fields) fields[k] = v;
+      if (c.update && c.existing_id) {
+        updateRow('asset', c.existing_id, fields, ['metadata'], 'revision');
+        updated.push(get('asset', c.existing_id, ['metadata']));
+      } else {
+        const id = insertRow('asset', { ...fields, revision: 1 }, ['metadata']);
+        created.push(get('asset', id, ['metadata']));
+      }
+    } catch (e) { skipped.push({ asset_id: c.asset_id, reason: e.message }); }
+  }
+  audit(req.user, 'IMPORT_ASSETS', 'asset', null, { created: created.length, updated: updated.length, skipped: skipped.length });
+  res.status(201).json({ created: created.length, updated: updated.length, skipped, assets: created.concat(updated) });
+});
+
 // Evidence-based condition suggestion (advisory). Available to any user who
 // can read the asset; an authorised evaluator confirms it via
 // POST /assets/:id/evaluation with `use_suggested: true`.
@@ -414,6 +673,9 @@ router.post('/assets', (req, res) => {
   if (!anchorInScope(commandScope(req.user), req.body)) {
     return res.status(403).json({ error: 'Forbidden: asset anchor is outside your command scope' });
   }
+  if (TOWER_MIRROR_TYPES.has(req.body.asset_type)) {
+    return res.status(400).json({ error: TOWER_MIRROR_MSG });
+  }
   try {
     if (!validateAssetBody(req, res, req.body)) return;
     const body = { ...req.body, metadata: req.body.metadata || {}, revision: 1 };
@@ -433,6 +695,9 @@ router.put('/assets/:id', (req, res) => {
   if (!a) return res.status(404).json({ error: 'Asset not found' });
   const scope = commandScope(req.user);
   if (!scopeAllowsAsset(scope, a.id)) return res.status(403).json({ error: 'Forbidden: asset is outside your command scope' });
+  if (TOWER_MIRROR_TYPES.has(a.asset_type) || TOWER_MIRROR_TYPES.has(req.body.asset_type)) {
+    return res.status(400).json({ error: TOWER_MIRROR_MSG });
+  }
   const body = { ...req.body };
   const anchorTouched = ['substation_id', 'line_id', 'tower_id'].some((k) => body[k] !== undefined && Number(body[k] || 0) !== (a[k] || 0));
   if (anchorTouched && !scope.global) {
@@ -454,6 +719,9 @@ router.delete('/assets/:id', (req, res) => {
   const a = get('asset', id);
   if (!a) return res.status(404).json({ error: 'Asset not found' });
   if (!scopeAllowsAsset(commandScope(req.user), a.id)) return res.status(403).json({ error: 'Forbidden: asset is outside your command scope' });
+  if (a.tower_id && TOWER_MIRROR_TYPES.has(a.asset_type)) {
+    return res.status(409).json({ error: 'This asset mirrors a tower. Delete the tower under Infrastructure > Towers instead.' });
+  }
   const events = db.prepare('SELECT COUNT(*) c FROM asset_maintenance_event WHERE asset_id = ?').get(id).c;
   const children = db.prepare('SELECT COUNT(*) c FROM asset WHERE parent_asset_id = ?').get(id).c;
   if (events > 0 || children > 0) {
@@ -482,6 +750,7 @@ router.post('/assets/:id/condition', (req, res) => {
     lifecycle_status: lifecycle,
     last_maintenance_at: new Date().toISOString(),
   }, [], 'revision');
+  syncTowerFromAsset(a.id);
   audit(req.user, 'ASSESS', 'asset', a.id, { condition_rating: rating });
   const updated = enrichAsset(get('asset', a.id, ['metadata']));
   res.json(updated);

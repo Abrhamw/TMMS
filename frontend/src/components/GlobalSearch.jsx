@@ -2,12 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { Modal, ErrorNote } from '../components';
-import DossierReport from './DossierReport';
+import DocumentReport from './DocumentReport';
 import { t } from '../i18n';
 
 // Global, always-available backend search. Results are grouped by entity and
 // scoped server-side; selecting a result navigates to its page, opens its
-// dossier, or jumps to the Infrastructure hub.
+// document, or jumps to the Infrastructure hub.
 export default function GlobalSearch() {
   const nav = useNavigate();
   const rootRef = useRef(null);
@@ -18,7 +18,7 @@ export default function GlobalSearch() {
   const [err, setErr] = useState(null);
   const [results, setResults] = useState(null);
   const [active, setActive] = useState(-1);
-  const [dossiers, setDossiers] = useState([]);
+  const [documents, setDocuments] = useState([]);
 
   const flat = useMemo(
     () => (results?.groups || []).flatMap((g) => g.items.map((it) => ({ ...it, group: g.label }))),
@@ -45,15 +45,15 @@ export default function GlobalSearch() {
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
-  function openDossier(type, id, label) {
+  function openDocument(type, id, label) {
     if (!type || id == null) return;
     const key = `${Date.now()}-${Math.random()}`;
-    setDossiers((d) => [...d, { key, type, id, label, loading: true }]);
-    api.get(`/reports/dossier?type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`)
-      .then((res) => setDossiers((d) => d.map((x) => (x.key === key ? { ...x, data: res.data ?? res, loading: false } : x))))
-      .catch((e) => setDossiers((d) => d.map((x) => (x.key === key ? { ...x, error: e.message, loading: false } : x))));
+    setDocuments((d) => [...d, { key, type, id, label, loading: true }]);
+    api.get(`/reports/document?type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`)
+      .then((res) => setDocuments((d) => d.map((x) => (x.key === key ? { ...x, data: res.data ?? res, loading: false } : x))))
+      .catch((e) => setDocuments((d) => d.map((x) => (x.key === key ? { ...x, error: e.message, loading: false } : x))));
   }
-  const popDossier = () => setDossiers((d) => d.slice(0, -1));
+  const popDocument = () => setDocuments((d) => d.slice(0, -1));
 
   function choose(item) {
     if (!item) return;
@@ -61,7 +61,7 @@ export default function GlobalSearch() {
     setActive(-1);
     setQ('');
     setResults(null);
-    if (item.dossier_type) { openDossier(item.dossier_type, item.id, item.title); return; }
+    if (item.document_type) { openDocument(item.document_type, item.id, item.title); return; }
     if (item.href) nav(item.href);
   }
 
@@ -115,22 +115,22 @@ export default function GlobalSearch() {
         </div>
       )}
 
-      {dossiers.length > 0 && (() => {
-        const top = dossiers[dossiers.length - 1];
+      {documents.length > 0 && (() => {
+        const top = documents[documents.length - 1];
         return (
           <Modal
             title={top.data?.title || top.label || 'Details'}
-            onClose={() => (dossiers.length > 1 ? popDossier() : setDossiers([]))}
+            onClose={() => (documents.length > 1 ? popDocument() : setDocuments([]))}
             wide
             printable
             footer={<>
-              {dossiers.length > 1 && <button className="btn" onClick={popDossier}>Back</button>}
-              <button className="btn btn-primary" onClick={() => setDossiers([])}>Close</button>
+              {documents.length > 1 && <button className="btn" onClick={popDocument}>Back</button>}
+              <button className="btn btn-primary" onClick={() => setDocuments([])}>Close</button>
             </>}
           >
             {top.loading ? <div className="muted">Loading…</div>
               : top.error ? <ErrorNote error={top.error} />
-                : <DossierReport data={top.data} onOpenEntity={openDossier} />}
+                : <DocumentReport data={top.data} onOpenEntity={openDocument} />}
           </Modal>
         );
       })()}

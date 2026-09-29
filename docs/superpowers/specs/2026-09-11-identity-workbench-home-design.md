@@ -9,7 +9,7 @@ Replace the current persona-section Home with one Google-simple workbench for ev
 
 1. **Waiting on you** — a personal inbox of work that needs this user's next action.
 2. **History** — two tabs, **Mine** and **In my area**, of recently closed work.
-3. **Work panel** — opening a row runs the common next actions on Home itself (start, checklist, GPS, assign, verify), gated by existing permissions. Full Task Detail stays for print, dossier, follow-up, and route tracing.
+3. **Work panel** — opening a row runs the common next actions on Home itself (start, checklist, GPS, assign, verify), gated by existing permissions. Full Task Detail stays for print, document, follow-up, and route tracing.
 
 Login still lands on `/home`. Landing and login are unchanged. Overview stays as the office dashboard and drops off the crew nav.
 
@@ -41,7 +41,7 @@ Non-goals (YAGNI):
 - Changing follow-up, route-editor, or bay-count rules.
 - Offline / background GPS, push notifications, or a mobile-native shell.
 - Inbox search, saved filters, or infinite scroll (cap 25).
-- Inline print, dossier, follow-up create, or inspection-route map (those stay on Task Detail).
+- Inline print, document, follow-up create, or inspection-route map (those stay on Task Detail).
 
 ## 4. Architecture
 
@@ -166,7 +166,7 @@ Mine is a subset of area when the user worked in-area; the tabs are independent 
 
 ## 8. Work panel
 
-Opens for `kind: 'task'` from inbox or history. Loads `GET /tasks/:id` on open. Reuses Task Detail's existing calls. Does not embed the line-inspection map, dossier, comments thread, or follow-up creator.
+Opens for `kind: 'task'` from inbox or history. Loads `GET /tasks/:id` on open. Reuses Task Detail's existing calls. Does not embed the line-inspection map, document, comments thread, or follow-up creator.
 
 ### 8.1 Always shown
 

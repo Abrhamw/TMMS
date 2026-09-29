@@ -15,7 +15,7 @@ workflow state machine or RBAC:
 - ③ Region-scoped task KPIs (overdue, critical-overdue, completion rate, average cycle time,
   completed-this-week).
 - ④ Crew and person task-performance view (totals / completed / on-time / violation counts).
-- ⑤ Checklist progress % on task rows, task detail and dossiers (display only; status untouched).
+- ⑤ Checklist progress % on task rows, task detail and documents (display only; status untouched).
 
 ## 2. Current state
 
@@ -119,7 +119,7 @@ cards (region-scoped as today); Tasks page header chips reuse the same endpoint.
 Wired into:
 - `taskDetail` output (each task row and detail); executions section shows per-execution
   pass/fail counts (already present for the checklist-executions list) plus progress bar.
-- TASK/ASSET/LINE dossiers and the export column (§4.1).
+- TASK/ASSET/LINE documents and the export column (§4.1).
 - UI: small progress bar chip on Tasks rows and in Crews "assigned work" lists.
 
 ## 5. Files touched
@@ -128,9 +128,9 @@ Wired into:
 - `backend/routes/tasks.js` — `GET /tasks/export.csv`, `POST /tasks/bulk`, `GET /tasks/kpi`,
   `taskProgress`, serializer additions.
 - `backend/routes/performance.js` (new, mounted in `server.js`) — `GET /performance`.
-- `backend/routes/reports.js` — dossier summaries include progress fields.
+- `backend/routes/reports.js` — document summaries include progress fields.
 - Frontend: `Tasks.jsx` (export button, checkboxes + bulk bar, KPI chips, progress bars),
-  `Home.jsx` (KPI cards), `Reports.jsx` (Performance block), `TaskDetail.jsx` & dossier
+  `Home.jsx` (KPI cards), `Reports.jsx` (Performance block), `TaskDetail.jsx` & document
   components (progress display), roles/permission mirror file.
 
 ## 6. Error handling & verification

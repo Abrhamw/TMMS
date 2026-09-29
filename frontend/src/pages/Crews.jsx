@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api, fmtDate } from '../api';
-import { Page, Pill, Modal, ErrorNote, Loading, PrintButton, Progress, ConfirmButton, SearchField, useSearchFilter } from '../components';
+import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, Progress, ConfirmButton, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
-import Dossier from '../components/Dossier';
+import Document from '../components/Document';
 import ViewMap from '../components/ViewMap';
 
 const CREW_ROLES = ['CREW_LEADER', 'LINEMAN', 'TECHNICIAN', 'SAFETY_OFFICER', 'INSPECTOR', 'APPRENTICE'];
@@ -29,7 +29,8 @@ export default function Crews() {
   const [form, setForm] = useState(null);
   const [detail, setDetail] = useState(null);
   const [certs, setCerts] = useState(null);
-  const [dossier, setDossier] = useState(null);
+  const [document, setDocument] = useState(null);
+  const [pick, setPick] = useState('');
   const { query, setQuery, results } = useSearchFilter(rows);
 
   const load = () => api.get('/crews').then(setRows).catch((e) => setError(e.message));
@@ -72,6 +73,7 @@ export default function Crews() {
     const isLeader = form.leader_person_id === pid;
     const members = [...form.members, { _k: Date.now() + Math.random(), person_id: pid, name: personLabel(p), title: p.title || p.role || '', role: isLeader ? 'CREW_LEADER' : 'LINEMAN', skill_level: isLeader ? 'SENIOR' : 'JUNIOR' }];
     setForm({ ...form, members });
+    setPick('');
   }
 
   function moveMember(i, dir) {
@@ -195,22 +197,22 @@ export default function Crews() {
           <h3 className="section-title">Dispatch Eligibility Check</h3>
           <div className="card card-pad">
             <div className="flex mb" style={{ flexWrap: 'wrap', gap: 8 }}>
-              <select value={eligRegion || (regions[0]?.id ?? '')} onChange={(e) => setEligRegion(e.target.value)}>
+              <SearchSelect value={eligRegion || (regions[0]?.id ?? '')} onChange={(e) => setEligRegion(e.target.value)}>
                 {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select>
-              <select value={eligType} onChange={(e) => setEligType(e.target.value)}>
+              </SearchSelect>
+              <SearchSelect value={eligType} onChange={(e) => setEligType(e.target.value)}>
                 {['EMERGENCY', 'PREVENTIVE', 'INSPECTION'].map((t) => <option key={t}>{t}</option>)}
-              </select>
-              <select value={eligChecklist} onChange={(e) => setEligChecklist(e.target.value)}>
+              </SearchSelect>
+              <SearchSelect value={eligChecklist} onChange={(e) => setEligChecklist(e.target.value)}>
                 <option value="">No checklist (task type only)</option>
                 {checklists.filter((c) => c.status === 'ACTIVE').map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
-              </select>
-              <select value={eligTask} onChange={(e) => setEligTask(e.target.value)}>
+              </SearchSelect>
+              <SearchSelect value={eligTask} onChange={(e) => setEligTask(e.target.value)}>
                 <option value="">No specific task</option>
                 {tasks.filter((t) => ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD'].includes(t.status)).map((t) => (
                   <option key={t.id} value={t.id}>{t.task_number} · {t.title}</option>
                 ))}
-              </select>
+              </SearchSelect>
               <button className="btn btn-primary" onClick={() => checkEligibility(eligRegion || regions[0]?.id, eligType, eligChecklist, eligTask)}>Check</button>
             </div>
             {eligibility && eligibility[0]?.dispatch_requirements && (
@@ -289,7 +291,7 @@ export default function Crews() {
           footer={<>
             <PrintButton />
             <button className="btn" onClick={() => setDetail(null)}>Close</button>
-            {canReport && <button className="btn btn-primary" onClick={() => setDossier({ crew_id: detail.id })}>Generate dossier</button>}
+            {canReport && <button className="btn btn-primary" onClick={() => setDocument({ crew_id: detail.id })}>Generate document</button>}
           </>}>
           {detail.region?.center_lat != null && (
             <ViewMap
@@ -310,12 +312,12 @@ export default function Crews() {
                   <Pill value={detail.status} />
                   {detail.status_override && <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>auto: {detail.derived_status}</span>}
                   {canWrite && (
-                    <select value={detail.status_override || ''} style={{ marginLeft: 8 }} onChange={(e) => setOverride(e.target.value)}>
+                    <SearchSelect value={detail.status_override || ''} style={{ marginLeft: 8 }} onChange={(e) => setOverride(e.target.value)}>
                       <option value="">Auto</option>
                       <option value="AVAILABLE">AVAILABLE</option>
                       <option value="OFF_DUTY">OFF_DUTY</option>
                       <option value="UNAVAILABLE">UNAVAILABLE</option>
-                    </select>
+                    </SearchSelect>
                   )}
                 </span>
                 <span className="k">Region</span><span>{detail.region?.name}</span>
@@ -363,7 +365,7 @@ export default function Crews() {
         </Modal>
       )}
 
-      {dossier && <Dossier type="CREW_DETAIL" params={dossier} title="Crew Detail Dossier" onClose={() => setDossier(null)} />}
+      {document && <Document type="CREW_DETAIL" params={document} title="Crew Detail Document" onClose={() => setDocument(null)} />}
 
       {form && (
         <Modal title={form.id ? `Edit — ${form.name}` : 'Add Crew'} onClose={() => setForm(null)} wide
@@ -375,15 +377,15 @@ export default function Crews() {
             <div className="field"><label>Crew name</label><input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             <div className="field"><label>Crew code</label><input value={form.crew_code || ''} onChange={(e) => setForm({ ...form, crew_code: e.target.value })} /></div>
             <div className="field"><label>Type</label>
-              <select value={form.crew_type} onChange={(e) => setForm({ ...form, crew_type: e.target.value })}>
+              <SearchSelect value={form.crew_type} onChange={(e) => setForm({ ...form, crew_type: e.target.value })}>
                 {['MAINTENANCE', 'INSPECTION', 'EMERGENCY_RESPONSE', 'CONSTRUCTION', 'RELAY_AND_PROTECTION', 'SUBSTATION', 'LINE'].map((t) => <option key={t}>{t}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Region</label>
-              <select value={form.region_id || ''} onChange={(e) => setForm({ ...form, region_id: Number(e.target.value) })}>
+              <SearchSelect value={form.region_id || ''} onChange={(e) => setForm({ ...form, region_id: Number(e.target.value) })}>
                 {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Department</label>
-              <select value={form.org_unit_id || ''} onChange={(e) => setForm({ ...form, org_unit_id: e.target.value ? Number(e.target.value) : null })}>
+              <SearchSelect value={form.org_unit_id || ''} onChange={(e) => setForm({ ...form, org_unit_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">— unassigned —</option>
                 {form.org_unit_id && !units.some((u) => u.id === form.org_unit_id) && form.org_unit && (
                   <option value={form.org_unit_id}>{form.org_unit.name}</option>
@@ -391,20 +393,20 @@ export default function Crews() {
                 {units.filter((u) => !form.region_id || u.region_id === form.region_id).map((u) => (
                   <option key={u.id} value={u.id}>{u.name} ({u.unit_code})</option>
                 ))}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Crew leader</label>
-              <select value={form.leader_person_id || ''} onChange={(e) => promoteLeader(e.target.value ? Number(e.target.value) : null)}>
+              <SearchSelect value={form.leader_person_id || ''} onChange={(e) => promoteLeader(e.target.value ? Number(e.target.value) : null)}>
                 <option value="">— none —</option>
                 {people.map((p) => <option key={p.id} value={p.id}>{personLabel(p)}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Home base</label><input value={form.home_base || ''} onChange={(e) => setForm({ ...form, home_base: e.target.value })} /></div>
             <div className="field"><label>Status override</label>
-              <select value={form.status_override || ''} onChange={(e) => setForm({ ...form, status_override: e.target.value || null })}>
+              <SearchSelect value={form.status_override || ''} onChange={(e) => setForm({ ...form, status_override: e.target.value || null })}>
                 <option value="">Auto</option>
                 <option value="AVAILABLE">AVAILABLE</option>
                 <option value="OFF_DUTY">OFF_DUTY</option>
                 <option value="UNAVAILABLE">UNAVAILABLE</option>
-              </select></div>
+              </SearchSelect></div>
           </div>
 
           <h4 className="mt">Crew members</h4>
@@ -417,25 +419,25 @@ export default function Crews() {
                 <div style={{ fontWeight: 600 }}>{m.name}{form.leader_person_id === m.person_id && <span className="pill" style={{ background: '#14532d', color: '#fff', marginLeft: 6 }}>Leader</span>}</div>
                 {m.title && <div className="muted" style={{ fontSize: 12 }}>{m.title}</div>}
               </div>
-              <select title="Role" value={m.role} onChange={(e) => changeRole(i, e.target.value)} style={{ width: 150 }} disabled={!canWrite}>
+              <SearchSelect title="Role" value={m.role} onChange={(e) => changeRole(i, e.target.value)} style={{ width: 150 }} disabled={!canWrite}>
                 {!CREW_ROLES.includes(m.role) && <option value={m.role}>{m.role}</option>}
                 {CREW_ROLES.map((r) => <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>)}
-              </select>
-              <select title="Skill level" value={m.skill_level} onChange={(e) => updateMember(i, { skill_level: e.target.value })} style={{ width: 120 }} disabled={!canWrite}>
+              </SearchSelect>
+              <SearchSelect title="Skill level" value={m.skill_level} onChange={(e) => updateMember(i, { skill_level: e.target.value })} style={{ width: 120 }} disabled={!canWrite}>
                 {!CREW_SKILLS.includes(m.skill_level) && <option value={m.skill_level}>{m.skill_level}</option>}
                 {CREW_SKILLS.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
+              </SearchSelect>
               <button className="btn btn-sm" onClick={() => moveMember(i, -1)} disabled={i === 0}>↑</button>
               <button className="btn btn-sm" onClick={() => moveMember(i, 1)} disabled={i === form.members.length - 1}>↓</button>
               <ConfirmButton label="Delete" title={`Remove ${m.name}?`} onConfirm={() => removeMember(i)} />
             </div>
           ))}
           <div className="mt" style={{ display: 'flex', gap: 8 }}>
-            <select id="memberPick" style={{ flex: 1 }}>
+            <SearchSelect value={pick} onChange={(e) => setPick(e.target.value)} style={{ flex: 1 }}>
               <option value="">— select person to add —</option>
               {available.map((p) => <option key={p.id} value={p.id}>{personLabel(p)}{p.title ? ` — ${p.title}` : ''}</option>)}
-            </select>
-            <button className="btn" disabled={!canWrite} onClick={() => { const el = document.getElementById('memberPick'); if (el.value) addMember(Number(el.value)); }}>+ Add</button>
+            </SearchSelect>
+            <button className="btn" disabled={!canWrite || !pick} onClick={() => { if (pick) addMember(Number(pick)); }}>+ Add</button>
           </div>
         </Modal>
       )}

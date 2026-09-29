@@ -4,7 +4,7 @@ import { taskTypeLabel } from './labels.js';
 // The stored values are technical (true / false / a bare number / a JSON GPS
 // blob); every printable checklist and report should describe what the crew
 // observed instead ("Pass", "Yes", "118 kV", coordinates), so the mapping lives
-// here and is shared by the live run surfaces and the printed dossiers.
+// here and is shared by the live run surfaces and the printed documents.
 
 function parseStored(v) {
   if (v === null || v === undefined || v === '') return null;

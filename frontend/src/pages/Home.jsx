@@ -109,8 +109,8 @@ export default function Home() {
           <div className="home-greeting">
             <div className="avatar lg">{me?.first_name?.[0] || me?.username?.[0] || '?'}</div>
             <div>
-              <div className="home-hello">Welcome back, <b>{data.name || me?.username}</b></div>
-              <div className="muted">{data.title || String(data.role).replace(/_/g, ' ')} · {scopeLine}</div>
+              <div className="home-hello">{t('welcome')}, <b>{data.name || me?.username}</b></div>
+              <div className="muted">{scopeLine}</div>
             </div>
           </div>
 
@@ -119,7 +119,7 @@ export default function Home() {
               <div className="spread" style={{ alignItems: 'center' }}>
                 <div>
                   <b>{data.function.label}</b>
-                  <div className="muted" style={{ fontSize: 12 }}>{data.function.band}{scopeLine ? ` · ${scopeLine}` : ''}</div>
+                  <div className="muted" style={{ fontSize: 12 }}>{data.function.band}</div>
                 </div>
                 <button className="btn btn-sm" onClick={() => nav('/model')}>{t('systemMap')}</button>
               </div>
@@ -196,8 +196,8 @@ function CrewMyDay({ data, me, onOpen }) {
       <div className="home-greeting">
         <div className="avatar lg">{me?.first_name?.[0] || me?.username?.[0] || '?'}</div>
         <div>
-          <div className="home-hello">{t('myDay')} · <b>{data.name || me?.username}</b></div>
-          <div className="muted">{data.title || t('myDaySubtitle')}{scope ? ` · ${scope}` : ''}</div>
+          <div className="home-hello">{t('welcome')}, <b>{data.name || me?.username}</b></div>
+          <div className="muted">{t('myDaySubtitle')}{scope ? ` · ${scope}` : ''}</div>
         </div>
       </div>
 

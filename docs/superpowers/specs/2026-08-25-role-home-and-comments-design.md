@@ -61,14 +61,14 @@ Quick actions per section are gated by the user's existing permissions (`task:cr
 - **New report types** in `routes/reports.js` `compute()`:
   - `ASSET_DETAIL` (param `asset_id`): full asset record, location/bay, condition/health/RUL, lifecycle, maintenance events, checklist executions with results, GPS validations, open tasks, tower components.
   - `CREW_DETAIL` (param `crew_id`): roster + skills, certifications & expiries, task history with completion/on-time, utilization, current open work.
-  - Reports render as a printable dossier page (HTML template). Generate buttons on the **asset detail modal** and **crew detail modal** ("Generate dossier").
+  - Reports render as a printable document page (HTML template). Generate buttons on the **asset detail modal** and **crew detail modal** ("Generate document").
 - **Director Home** includes a one-click **"Generate region report"** quick action (chooses report type; region-scoped).
 - **Checklist templates**: keep admin CRUD on the Checklists page; standard 17 templates remain seeded + admin-editable. Admin Home includes a "Checklist templates" quick action and a manager-facing **checklist compliance** widget (templates vs executions).
 
 ## 6. Files touched
 
-- Backend: `routes/home.js` (new), `routes/comments.js` (new), `routes/reports.js` (2 report types + dossier rendering), `db.js` (`comment` table migration), `server.js` (mount routes).
-- Frontend: `App.jsx` (public landing route + `/home` + `/overview` routing, nav), `pages/Home.jsx` (new role feed), `pages/Landing.jsx` (new picker), `pages/Login.jsx` (persona hint + demo quick-login), `pages/Overview.jsx` (renamed/moved dashboard at `/overview`), `pages/TaskDetail.jsx` (comments), `pages/Assets.jsx` (comments + dossier button), `pages/Crews.jsx` (dossier button), `pages/Gps.jsx` (violation notes), `styles.css` (landing + comments styles), `i18n.js` (new keys).
+- Backend: `routes/home.js` (new), `routes/comments.js` (new), `routes/reports.js` (2 report types + document rendering), `db.js` (`comment` table migration), `server.js` (mount routes).
+- Frontend: `App.jsx` (public landing route + `/home` + `/overview` routing, nav), `pages/Home.jsx` (new role feed), `pages/Landing.jsx` (new picker), `pages/Login.jsx` (persona hint + demo quick-login), `pages/Overview.jsx` (renamed/moved dashboard at `/overview`), `pages/TaskDetail.jsx` (comments), `pages/Assets.jsx` (comments + document button), `pages/Crews.jsx` (document button), `pages/Gps.jsx` (violation notes), `styles.css` (landing + comments styles), `i18n.js` (new keys).
 
 ## 7. Verification
 

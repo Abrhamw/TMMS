@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api, fmtDate, STATUS_COLORS } from '../api';
-import { Page, Pill, Modal, ErrorNote, Loading, Progress, SearchField, useSearchFilter } from '../components';
+import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, Progress, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser, getStoredToken } from '../auth';
 import { KpiTile } from '../components/InfraVisuals';
+import { assetsInScope, linesInRegion, subsInRegion } from '../cascade';
 
 const TITLE = 'Maintenance Tasks';
 const CRUMBS = 'TMMS / Operations';
@@ -33,6 +34,7 @@ export default function Tasks() {
   const [towerF, setTowerF] = useState('');
   const [assetF, setAssetF] = useState('');
   const [subF, setSubF] = useState('');
+  const [regionF, setRegionF] = useState('');
   const [crewF, setCrewF] = useState('');
   const [error, setError] = useState(null);
   const [form, setForm] = useState(null);
@@ -47,6 +49,21 @@ export default function Tasks() {
   const assignableCrews = crews.filter((c) => c.assignable !== false);
   const { query, setQuery, results } = useSearchFilter(rows);
 
+  // Cascade: a chosen region narrows the substation/line/asset lists, and a
+  // chosen substation or line narrows the assets to that exact parent.
+  const filterSubs = useMemo(() => subsInRegion(subs, regionF), [subs, regionF]);
+  const filterLines = useMemo(() => linesInRegion(lines, regionF), [lines, regionF]);
+  const filterAssets = useMemo(
+    () => assetsInScope(assets, { regionId: regionF, substationId: subF, lineId: lineF }, { subs, lines }),
+    [assets, regionF, subF, lineF, subs, lines]
+  );
+  const formSubs = useMemo(() => subsInRegion(subs, form?.region_id), [subs, form?.region_id]);
+  const formLines = useMemo(() => linesInRegion(lines, form?.region_id), [lines, form?.region_id]);
+  const formAssets = useMemo(
+    () => assetsInScope(assets, { regionId: form?.region_id, substationId: form?.substation_id, lineId: form?.line_id }, { subs, lines }),
+    [assets, form?.region_id, form?.substation_id, form?.line_id, subs, lines]
+  );
+
   const noteFor = (task, dispatch) => {
     if (!dispatch) return null;
     const parts = (dispatch.warnings || []).map((w) => w.message);
@@ -60,6 +77,7 @@ export default function Tasks() {
     if (statusFilter) q.push(`status=${statusFilter}`);
     if (typeFilter) q.push(`task_type=${typeFilter}`);
     if (overdueOnly) q.push('overdue=true');
+    if (regionF) q.push(`region_id=${regionF}`);
     if (lineF) q.push(`line_id=${lineF}`);
     if (towerF) q.push(`tower_id=${towerF}`);
     if (assetF) q.push(`asset_id=${assetF}`);
@@ -72,7 +90,7 @@ export default function Tasks() {
     load();
     loadKpi();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter, typeFilter, overdueOnly, lineF, towerF, assetF, subF, crewF]);
+  }, [statusFilter, typeFilter, overdueOnly, regionF, lineF, towerF, assetF, subF, crewF]);
   // Static picker lookups load once, not on every filter change. Towers/assets
   // use the compact brief projection so this page is not pulling 18 MB.
   useEffect(() => {
@@ -113,6 +131,7 @@ export default function Tasks() {
       if (statusFilter) q.push(`status=${statusFilter}`);
       if (typeFilter) q.push(`task_type=${typeFilter}`);
       if (overdueOnly) q.push('overdue=true');
+      if (regionF) q.push(`region_id=${regionF}`);
       if (lineF) q.push(`line_id=${lineF}`);
       if (towerF) q.push(`tower_id=${towerF}`);
       if (assetF) q.push(`asset_id=${assetF}`);
@@ -195,59 +214,63 @@ export default function Tasks() {
       )}
       <div className="filters">
         <SearchField value={query} onChange={setQuery} placeholder="Search tasks…" />
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+        <SearchSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
           <option value="">All statuses</option>
           {STATUSES.map((s) => <option key={s}>{s}</option>)}
-        </select>
-        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+        </SearchSelect>
+        <SearchSelect value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
           <option value="">All types</option>
           {['PREVENTIVE', 'CORRECTIVE', 'EMERGENCY', 'INSPECTION', 'REPLACEMENT', 'TESTING', 'REPAIR'].map((s) => <option key={s}>{s}</option>)}
-        </select>
+        </SearchSelect>
         <label className="flex"><input type="checkbox" checked={overdueOnly} onChange={(e) => setOverdueOnly(e.target.checked)} /> Overdue only</label>
-        <select value={lineF} onChange={(e) => { setLineF(e.target.value); setTowerF(''); }}>
+        <SearchSelect value={regionF} onChange={(e) => { setRegionF(e.target.value); setSubF(''); setLineF(''); setTowerF(''); setAssetF(''); }}>
+          <option value="">All regions</option>
+          {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+        </SearchSelect>
+        <SearchSelect value={subF} onChange={(e) => { setSubF(e.target.value); setAssetF(''); }}>
+          <option value="">All substations</option>
+          {filterSubs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </SearchSelect>
+        <SearchSelect value={lineF} onChange={(e) => { setLineF(e.target.value); setTowerF(''); setAssetF(''); }}>
           <option value="">All lines</option>
-          {lines.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-        </select>
-        <select value={towerF} onChange={(e) => { setTowerF(e.target.value); if (e.target.value) { const tw = towers.find((x) => x.id === Number(e.target.value)); if (tw && tw.line_id) setLineF(String(tw.line_id)); } }}>
+          {filterLines.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+        </SearchSelect>
+        <SearchSelect value={towerF} onChange={(e) => { setTowerF(e.target.value); if (e.target.value) { const tw = towers.find((x) => x.id === Number(e.target.value)); if (tw && tw.line_id) setLineF(String(tw.line_id)); } }}>
           <option value="">All towers</option>
           {(lineF ? towers.filter((tw) => tw.line_id === Number(lineF)) : towers).map((tw) => <option key={tw.id} value={tw.id}>{tw.tower_id}</option>)}
-        </select>
-        <select value={assetF} onChange={(e) => setAssetF(e.target.value)}>
+        </SearchSelect>
+        <SearchSelect value={assetF} onChange={(e) => setAssetF(e.target.value)}>
           <option value="">All assets</option>
-          {assets.map((a) => <option key={a.id} value={a.id}>{a.name || a.asset_id}</option>)}
-        </select>
-        <select value={subF} onChange={(e) => setSubF(e.target.value)}>
-          <option value="">All substations</option>
-          {subs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-        <select value={crewF} onChange={(e) => setCrewF(e.target.value)}>
+          {filterAssets.map((a) => <option key={a.id} value={a.id}>{a.name || a.asset_id}</option>)}
+        </SearchSelect>
+        <SearchSelect value={crewF} onChange={(e) => setCrewF(e.target.value)}>
           <option value="">All crews</option>
           {crews.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        </SearchSelect>
       </div>
       <div className="card">
         {canBulk && checked.length > 0 && (
           <div className="bulkbar" style={{ padding: '10px 14px', borderBottom: '1px solid #e5e7eb', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', background: '#f0f9ff' }}>
             <b>{checked.length} selected</b>
-            <select value={bulkMode} onChange={(e) => { setBulkMode(e.target.value); setBulkVal(''); setBulkErr(null); }}>
+            <SearchSelect value={bulkMode} onChange={(e) => { setBulkMode(e.target.value); setBulkVal(''); setBulkErr(null); }}>
               <option value="">Bulk action…</option>
               <option value="priority">Set priority</option>
               <option value="due_date">Set due date</option>
               <option value="schedule_start">Set schedule start</option>
               <option value="assign">Assign crew</option>
-            </select>
+            </SearchSelect>
             {bulkMode === 'priority' && (
-              <select value={bulkVal} onChange={(e) => setBulkVal(e.target.value)}>
+              <SearchSelect value={bulkVal} onChange={(e) => setBulkVal(e.target.value)}>
                 {['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map((p) => <option key={p}>{p}</option>)}
-              </select>
+              </SearchSelect>
             )}
             {bulkMode === 'due_date' && <input type="datetime-local" value={bulkVal} onChange={(e) => setBulkVal(e.target.value)} />}
             {bulkMode === 'schedule_start' && <input type="datetime-local" value={bulkVal} onChange={(e) => setBulkVal(e.target.value)} />}
             {bulkMode === 'assign' && (
-              <select value={bulkVal} onChange={(e) => setBulkVal(e.target.value)}>
+              <SearchSelect value={bulkVal} onChange={(e) => setBulkVal(e.target.value)}>
                 <option value="">Choose crew…</option>
                 {assignableCrews.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              </SearchSelect>
             )}
             <button className="btn btn-sm btn-primary" disabled={!bulkMode || (!bulkVal && bulkMode !== 'priority')} onClick={applyBulk}>Apply</button>
             <button className="btn btn-sm" onClick={() => { setChecked([]); setBulkMode(false); setBulkVal(''); }}>Clear</button>
@@ -301,30 +324,30 @@ export default function Tasks() {
             <div className="field full"><label>Title</label><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
             <div className="field full"><label>Description</label><textarea value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
             <div className="field"><label>Task type</label>
-              <select value={form.task_type} onChange={(e) => setForm({ ...form, task_type: e.target.value })}>
+              <SearchSelect value={form.task_type} onChange={(e) => setForm({ ...form, task_type: e.target.value })}>
                 {['PREVENTIVE', 'CORRECTIVE', 'EMERGENCY', 'INSPECTION', 'REPLACEMENT', 'TESTING', 'REPAIR'].map((s) => <option key={s}>{s}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Priority</label>
-              <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
+              <SearchSelect value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
                 {['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map((s) => <option key={s}>{s}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Region</label>
-              <select value={form.region_id} onChange={(e) => setForm({ ...form, region_id: Number(e.target.value) })}>
+              <SearchSelect value={form.region_id} onChange={(e) => setForm({ ...form, region_id: Number(e.target.value), substation_id: null, line_id: null, tower_id: null, asset_id: null })}>
                 {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Due date</label><input type="datetime-local" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} /></div>
             <div className="field"><label>Target substation</label>
-              <select value={form.substation_id || ''} onChange={(e) => setForm({ ...form, substation_id: e.target.value ? Number(e.target.value) : null })}>
+              <SearchSelect value={form.substation_id || ''} onChange={(e) => setForm({ ...form, substation_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">— none —</option>
-                {subs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select></div>
+                {formSubs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </SearchSelect></div>
             <div className="field"><label>Target line</label>
-              <select value={form.line_id || ''} onChange={(e) => setForm({ ...form, line_id: e.target.value ? Number(e.target.value) : null, tower_id: null })}>
+              <SearchSelect value={form.line_id || ''} onChange={(e) => setForm({ ...form, line_id: e.target.value ? Number(e.target.value) : null, tower_id: null })}>
                 <option value="">— none —</option>
-                {lines.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-              </select></div>
+                {formLines.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </SearchSelect></div>
             <div className="field"><label>Target tower</label>
-              <select value={form.tower_id || ''} onChange={(e) => {
+              <SearchSelect value={form.tower_id || ''} onChange={(e) => {
                 const tid = e.target.value ? Number(e.target.value) : null;
                 const tw = towers.find((x) => x.id === tid);
                 setForm({ ...form, tower_id: tid, line_id: tw ? tw.line_id : form.line_id });
@@ -333,9 +356,9 @@ export default function Tasks() {
                 {(form.line_id ? towers.filter((tw) => tw.line_id === Number(form.line_id)) : towers).map((tw) => (
                   <option key={tw.id} value={tw.id}>{tw.tower_id} ({tw.tower_number})</option>
                 ))}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Target asset</label>
-              <select value={form.asset_id || ''} onChange={(e) => {
+              <SearchSelect value={form.asset_id || ''} onChange={(e) => {
                 const aid = e.target.value ? Number(e.target.value) : null;
                 const asset = assets.find((a) => a.id === aid);
                 setForm({
@@ -345,8 +368,8 @@ export default function Tasks() {
                 });
               }}>
                 <option value="">— none —</option>
-                {assets.map((a) => <option key={a.id} value={a.id}>{a.name} {a.default_crew_name ? `(${a.default_crew_name})` : ''}</option>)}
-              </select></div>
+                {formAssets.map((a) => <option key={a.id} value={a.id}>{a.name} {a.default_crew_name ? `(${a.default_crew_name})` : ''}</option>)}
+              </SearchSelect></div>
             <div className="field"><label>Checklist templates</label>
               <div style={{ maxHeight: 140, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 6, padding: '6px 8px' }}>
                 {checklists.filter((c) => c.status === 'ACTIVE').map((c) => (
@@ -366,14 +389,14 @@ export default function Tasks() {
               </div>
             </div>
             <div className="field"><label>Crew</label>
-              <select value={form.crew_id || ''} onChange={(e) => setForm({ ...form, crew_id: e.target.value ? Number(e.target.value) : null })}>
+              <SearchSelect value={form.crew_id || ''} onChange={(e) => setForm({ ...form, crew_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">— none —</option>
                 {crews.map((c) => (
                   <option key={c.id} value={c.id} disabled={c.status === 'OFF_DUTY' || c.status === 'UNAVAILABLE'}>
                     {c.name} ({c.status}{c.open_task_count ? ` · ${c.open_task_count} active` : ''})
                   </option>
                 ))}
-              </select></div>
+              </SearchSelect></div>
           </div>
         </Modal>
       )}

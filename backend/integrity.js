@@ -58,6 +58,15 @@ function syncTowerMirror(towerId) {
   const t = db.prepare('SELECT * FROM tower WHERE id = ?').get(towerId);
   if (!t) return { created: false, changed: false };
   const mirrors = db.prepare("SELECT * FROM asset WHERE tower_id = ? AND asset_type = 'TOWER'").all(towerId);
+  // Enforce the 1:1 invariant: if a duplicate ever slipped in (older data, a
+  // direct insert), keep the canonical mirror and drop the extras so the
+  // register never double-counts a tower.
+  if (mirrors.length > 1) {
+    for (const extra of mirrors.slice(1)) {
+      try { db.prepare('DELETE FROM asset WHERE id = ?').run(extra.id); } catch (_) { /* keep if referenced */ }
+    }
+    mirrors.length = 1;
+  }
   const metadata = JSON.stringify({ source: 'tower', tower_type: t.tower_type, height_m: t.height_m });
   if (mirrors.length === 0) {
     const assetId = `TWR-${t.tower_id}`;
@@ -88,6 +97,23 @@ function syncTowerMirror(towerId) {
     ).run(t.tower_id, t.line_id, t.latitude, t.longitude, t.corrosion_rating ?? 8, t.gps_validated, metadata, t.id, 'TOWER');
   }
   return { created: false, changed };
+}
+
+// Asset-side edits to a tower mirror (a condition assessment or GPS validation
+// performed against the asset row) flow back to the tower, so the
+// infrastructure record and its register row always agree. This is the inverse
+// of syncTowerMirror and is called only from asset mutation paths.
+function syncTowerFromAsset(assetId) {
+  const a = db.prepare('SELECT * FROM asset WHERE id = ?').get(assetId);
+  if (!a || !a.tower_id || a.asset_type !== 'TOWER') return false;
+  const t = db.prepare('SELECT * FROM tower WHERE id = ?').get(a.tower_id);
+  if (!t) return false;
+  const cond = a.condition_rating ?? 8;
+  const gps = a.gps_validated ?? 0;
+  if (Number(t.corrosion_rating) === Number(cond) && Number(t.gps_validated) === Number(gps)) return false;
+  db.prepare('UPDATE tower SET corrosion_rating = ?, gps_validated = ?, revision = revision + 1 WHERE id = ?')
+    .run(cond, gps, t.id);
+  return true;
 }
 
 function evaluateCompliance(towerType, std, actual) {
@@ -289,6 +315,6 @@ function reconcileAll({ regionIds } = {}) {
 }
 
 module.exports = {
-  countSubstationBays, substationBayCounts, syncSubstationBayCount, syncLineTowerCount, syncTowerMirror,
+  countSubstationBays, substationBayCounts, syncSubstationBayCount, syncLineTowerCount, syncTowerMirror, syncTowerFromAsset,
   towerCompliance, towerComplianceBatch, towerComplianceSummaryBatch, evaluateCompliance, validateIntegrity, reconcileAll,
 };

@@ -503,7 +503,7 @@ Inside the `TaskDetail` component, near the other handlers (after `createFollowU
 
 - [ ] **Step 2: Render the Work items block**
 
-Insert this block immediately before the `<h3 className="section-title">Task dossier</h3>` heading (near line 355):
+Insert this block immediately before the `<h3 className="section-title">Task document</h3>` heading (near line 355):
 
 ```jsx
       {(task.work_items || []).length > 0 && (

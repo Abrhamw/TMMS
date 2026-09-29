@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, fmtDate, fmtDateTime } from '../api';
-import { Page, Pill, Modal, ErrorNote, Loading, PrintButton, SearchField, useSearchFilter } from '../components';
+import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
 import { formatChecklistResponse, formatChecklistResult, describeTarget, executionTitle } from '../checklistFormat';
 import TargetProfile from '../components/TargetProfile';
@@ -275,17 +275,17 @@ export default function Checklists() {
             <div className="field"><label>Section</label><input value={itemForm.section || ''} onChange={(e) => setItemForm({ ...itemForm, section: e.target.value })} placeholder="Visual / Mechanical / Electrical / Testing" /></div>
             <div className="field"><label>Test equipment</label><input value={itemForm.test_equipment || ''} onChange={(e) => setItemForm({ ...itemForm, test_equipment: e.target.value })} placeholder="Instrument / tool used for this step" /></div>
             <div className="field"><label>Response type</label>
-              <select value={itemForm.response_type} onChange={(e) => setItemForm({ ...itemForm, response_type: e.target.value })}>
+              <SearchSelect value={itemForm.response_type} onChange={(e) => setItemForm({ ...itemForm, response_type: e.target.value })}>
                 {RESPONSE_TYPES.map((r) => <option key={r}>{r}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Required</label>
-              <select value={itemForm.required ? 1 : 0} onChange={(e) => setItemForm({ ...itemForm, required: Number(e.target.value) })}>
+              <SearchSelect value={itemForm.required ? 1 : 0} onChange={(e) => setItemForm({ ...itemForm, required: Number(e.target.value) })}>
                 <option value={1}>Yes</option><option value={0}>No</option>
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Critical step</label>
-              <select value={itemForm.critical_step ? 1 : 0} onChange={(e) => setItemForm({ ...itemForm, critical_step: Number(e.target.value) })}>
+              <SearchSelect value={itemForm.critical_step ? 1 : 0} onChange={(e) => setItemForm({ ...itemForm, critical_step: Number(e.target.value) })}>
                 <option value={0}>No</option><option value={1}>Yes</option>
-              </select></div>
+              </SearchSelect></div>
             <div className="field full"><label>Pass criteria</label><input value={itemForm.pass_criteria || ''} onChange={(e) => setItemForm({ ...itemForm, pass_criteria: e.target.value })} placeholder="Optional criteria for automatic PASS/FAIL" /></div>
           </div>
         </Modal>
@@ -301,32 +301,32 @@ export default function Checklists() {
             <div className="field full"><label>Name</label><input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             <div className="field"><label>Code</label><input value={form.code || ''} onChange={(e) => setForm({ ...form, code: e.target.value })} /></div>
             <div className="field"><label>Category</label>
-              <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+              <SearchSelect value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
                 {['INSPECTION', 'PREVENTIVE_MAINTENANCE', 'CORRECTIVE', 'EMERGENCY', 'COMMISSIONING', 'DIAGNOSTIC'].map((c) => <option key={c}>{c}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Asset type</label>
-              <select value={form.asset_type || ''} onChange={(e) => setForm({ ...form, asset_type: e.target.value })}>
+              <SearchSelect value={form.asset_type || ''} onChange={(e) => setForm({ ...form, asset_type: e.target.value })}>
                 <option value="">— any —</option>
                 {['TRANSFORMER', 'CIRCUIT_BREAKER', 'PROTECTION_RELAY', 'SCADA_RTU', 'ARRESTER', 'TOWER', 'BUSBAR', 'INSULATOR_STRING'].map((t) => <option key={t}>{t}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Task type</label>
-              <select value={form.task_type || ''} onChange={(e) => setForm({ ...form, task_type: e.target.value })}>
+              <SearchSelect value={form.task_type || ''} onChange={(e) => setForm({ ...form, task_type: e.target.value })}>
                 <option value="">— any —</option>
                 {['PREVENTIVE', 'CORRECTIVE', 'EMERGENCY', 'INSPECTION', 'REPLACEMENT', 'TESTING', 'REPAIR'].map((t) => <option key={t}>{t}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Est. minutes</label><input type="number" value={form.estimated_minutes || ''} onChange={(e) => setForm({ ...form, estimated_minutes: Number(e.target.value) })} /></div>
             <div className="field"><label>Mandatory</label>
-              <select value={form.is_mandatory ? 1 : 0} onChange={(e) => setForm({ ...form, is_mandatory: Number(e.target.value) })}>
+              <SearchSelect value={form.is_mandatory ? 1 : 0} onChange={(e) => setForm({ ...form, is_mandatory: Number(e.target.value) })}>
                 <option value={1}>Yes</option><option value={0}>No</option>
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Requires GPS confirmation</label>
-              <select value={form.requires_gps_confirmation ? 1 : 0} onChange={(e) => setForm({ ...form, requires_gps_confirmation: Number(e.target.value) })}>
+              <SearchSelect value={form.requires_gps_confirmation ? 1 : 0} onChange={(e) => setForm({ ...form, requires_gps_confirmation: Number(e.target.value) })}>
                 <option value={1}>Yes</option><option value={0}>No</option>
-              </select></div>
+              </SearchSelect></div>
             <div className="field"><label>Supervisor verification</label>
-              <select value={form.requires_supervisor_verification ? 1 : 0} onChange={(e) => setForm({ ...form, requires_supervisor_verification: Number(e.target.value) })}>
+              <SearchSelect value={form.requires_supervisor_verification ? 1 : 0} onChange={(e) => setForm({ ...form, requires_supervisor_verification: Number(e.target.value) })}>
                 <option value={1}>Required</option><option value={0}>Not required</option>
-              </select></div>
+              </SearchSelect></div>
             <div className="field full"><label>Safety notes</label><textarea value={form.safety_notes || ''} onChange={(e) => setForm({ ...form, safety_notes: e.target.value })} /></div>
             <div className="field full"><label>Materials required</label><textarea value={form.materials || ''} onChange={(e) => setForm({ ...form, materials: e.target.value })} /></div>
             <div className="field full"><label>Required personnel</label><textarea value={form.required_personnel || ''} onChange={(e) => setForm({ ...form, required_personnel: e.target.value })} /></div>

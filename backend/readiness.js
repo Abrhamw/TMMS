@@ -1,7 +1,7 @@
 // Dispatch readiness and crew/person performance.
 //
 // One shared place for the "can this crew actually do this task" audit and the
-// execution KPIs that back the crew/person dossier sections and the readiness
+// execution KPIs that back the crew/person document sections and the readiness
 // reports. Dispatch is decision support: it warns, it never blocks, and the
 // equipment a checklist calls for is surfaced as an advisory list because the
 // schema holds no crew equipment inventory.

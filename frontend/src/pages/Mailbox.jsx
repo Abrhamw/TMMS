@@ -4,26 +4,70 @@ import { api, fmtDateTime, fmtDate } from '../api';
 import { ErrorNote, Loading, Page, Pill, SearchField } from '../components';
 import Comments from '../components/Comments';
 import { t } from '../i18n';
+import { can, getStoredUser } from '../auth';
 import { ReportView } from './Reports';
 
+// Folders, in the order they appear. The first five are real directed mail
+// (authored messages); the remainder are the read-time task/report activity
+// stream.
 const FOLDERS = [
-  { key: 'inbox', labelKey: 'mailboxInbox' },
+  { key: 'mailinbox', labelKey: 'mailboxInbox', mail: true },
+  { key: 'outbox', labelKey: 'mailboxOutbox', mail: true },
+  { key: 'mailsent', labelKey: 'mailboxSent', mail: true },
+  { key: 'drafts', labelKey: 'mailboxDrafts', mail: true },
+  { key: 'archive', labelKey: 'mailboxArchive', mail: true },
   { key: 'messages', labelKey: 'mailboxAll' },
   { key: 'unread', labelKey: 'mailboxUnread' },
   { key: 'reports', labelKey: 'mailboxReports' },
-  { key: 'sent', labelKey: 'mailboxSent' },
+  { key: 'tasks', labelKey: 'mailboxTaskInbox' },
   { key: 'history', labelKey: 'mailboxHistory' },
 ];
 
-function isMessageFolder(folder) {
-  return folder === 'unread' || folder === 'messages' || folder === 'reports';
-}
+const MAIL_FOLDERS = new Set(FOLDERS.filter((f) => f.mail).map((f) => f.key));
 
 function folderRows(data, folder) {
   if (!data) return [];
-  if (folder === 'unread') return data.unread_messages || [];
-  if (folder === 'reports') return (data.messages || []).filter((m) => m.kind === 'REPORT');
-  return data[folder] || [];
+  switch (folder) {
+    case 'mailinbox': return data.mail_inbox || [];
+    case 'outbox': return data.mail_outbox || [];
+    case 'mailsent': return data.mail_sent || [];
+    case 'drafts': return data.mail_drafts || [];
+    case 'archive': return data.mail_archive || [];
+    case 'unread': return [
+      ...(data.unread_messages || []),
+      ...(data.mail_inbox || []).filter((m) => m.unread),
+    ].sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    case 'reports': return (data.messages || []).filter((m) => m.kind === 'REPORT');
+    case 'messages': return data.messages || [];
+    case 'tasks': return data.inbox || [];
+    case 'history': return data.history || [];
+    default: return data[folder] || [];
+  }
+}
+
+function folderCount(data, folder) {
+  if (!data) return 0;
+  if (folder === 'unread') return data.unread_count || 0;
+  if (folder === 'messages') return data.message_count || 0;
+  if (folder === 'reports') return data.report_count || 0;
+  return folderRows(data, folder).length;
+}
+
+function isMessageFolder(folder) {
+  return MAIL_FOLDERS.has(folder) || folder === 'unread' || folder === 'messages' || folder === 'reports';
+}
+
+function findMessage(data, key) {
+  if (!data || !key) return null;
+  const pools = [
+    data.messages, data.unread_messages, data.mail_inbox, data.mail_outbox,
+    data.mail_sent, data.mail_drafts, data.mail_archive,
+  ];
+  for (const pool of pools) {
+    const hit = (pool || []).find((item) => item.key === key);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 function tagLabel(tag) {
@@ -38,12 +82,18 @@ function TagChips({ tags }) {
 
 export default function Mailbox() {
   const nav = useNavigate();
+  const me = getStoredUser();
+  // The Reports folder is only meaningful to roles that can read reports;
+  // field crews (no `report:read`) see task messages only.
+  const folders = FOLDERS.filter((item) => item.key !== 'reports' || can(me, 'report:read'));
   const [data, setData] = useState(null);
-  const [folder, setFolder] = useState('inbox');
+  const [folder, setFolder] = useState('mailinbox');
   const [selectedId, setSelectedId] = useState(null);
   const [selectedMessageKey, setSelectedMessageKey] = useState(null);
   const [thread, setThread] = useState(null);
+  const [mailMessage, setMailMessage] = useState(null);
   const [reportDocument, setReportDocument] = useState(null);
+  const [compose, setCompose] = useState(null);
   const [query, setQuery] = useState('');
   const [listLimit, setListLimit] = useState(60);
   const [error, setError] = useState(null);
@@ -82,10 +132,23 @@ export default function Mailbox() {
   useEffect(() => {
     setError(null);
     if (selectedMessageKey) {
-      const message = data?.messages?.find((item) => item.key === selectedMessageKey);
+      const message = findMessage(data, selectedMessageKey);
       if (!message) return;
       let alive = true;
       setLoadingThread(true);
+      if (message.kind === 'MAIL') {
+        setThread(null);
+        setReportDocument(null);
+        setMailMessage(message);
+        setLoadingThread(false);
+        if (message.unread) {
+          api.put(`/mailbox/messages/${message.id}/read`, {}).then(() => {
+            if (alive) setData((current) => markMailRead(current, message.id));
+          }).catch(() => {});
+        }
+        return () => { alive = false; };
+      }
+      setMailMessage(null);
       api.put(`/mailbox/message/${encodeURIComponent(selectedMessageKey)}/read`, {}).then(() => {
         if (!alive) return;
         setData((current) => current ? {
@@ -113,7 +176,7 @@ export default function Mailbox() {
       }
       return () => { alive = false; };
     }
-    if (!selectedId) { setThread(null); setReportDocument(null); return; }
+    if (!selectedId) { setThread(null); setReportDocument(null); setMailMessage(null); return; }
     let alive = true;
     setLoadingThread(true);
     api.put(`/mailbox/${selectedId}/read`, {}).then(() => {
@@ -135,7 +198,7 @@ export default function Mailbox() {
     ? sourceRows.filter((item) => {
       const text = [
         item.task_number, item.title, item.subject, item.body, item.report_code,
-        item.actor, item.line_name, item.crew_name, item.status,
+        item.actor, item.recipient, item.category, item.line_name, item.crew_name, item.status,
         (item.tags || []).join(' '), item.latest?.summary,
       ].filter(Boolean).join(' ').toLowerCase();
       return text.includes(needle);
@@ -143,40 +206,70 @@ export default function Mailbox() {
     : sourceRows;
   const visibleRows = rows.slice(0, listLimit);
 
+  function selectFolder(key) {
+    setFolder(key);
+    setCompose(null);
+    const nextRows = folderRows(data, key);
+    if (isMessageFolder(key)) { setSelectedId(null); setSelectedMessageKey(nextRows?.[0]?.key || null); }
+    else { setSelectedMessageKey(null); setSelectedId(nextRows?.[0]?.id || null); }
+  }
+
+  async function withReload(fn, notice) {
+    try {
+      await fn();
+      await load();
+    } catch (e) { setError(e.message); }
+  }
+
+  function startCompose(initial) {
+    setCompose(initial || {});
+    setSelectedId(null);
+    setSelectedMessageKey(null);
+    setThread(null);
+    setMailMessage(null);
+    setReportDocument(null);
+  }
+
   return (
     <Page title={t('mailboxTitle')} crumbs="TMMS / Operations / Mailbox" fill>
       {error && <ErrorNote error={error} />}
       {!data ? <Loading /> : (
         <div className="mailbox-layout">
           <aside className="mailbox-list">
+            <button type="button" className="btn btn-primary mailbox-compose-btn" onClick={() => startCompose()}>
+              {t('mailboxCompose')}
+            </button>
             <div className="mailbox-unread-total"><b>{data.unread_count || 0}</b> {t('mailboxUnreadTotal')}</div>
             <div className="mailbox-folders" role="tablist" aria-label="Mailbox folders">
-              {FOLDERS.map((item) => (
-                <button key={item.key} className={'mail-folder' + (folder === item.key ? ' active' : '')}
-                  role="tab" aria-selected={folder === item.key}
-                  onClick={() => {
-                    setFolder(item.key);
-                    const nextRows = folderRows(data, item.key);
-                    if (isMessageFolder(item.key)) { setSelectedId(null); setSelectedMessageKey(nextRows?.[0]?.key || null); }
-                    else { setSelectedMessageKey(null); setSelectedId(nextRows?.[0]?.id || null); }
-                  }}>
-                  <span>{t(item.labelKey)}</span><b>{item.key === 'unread' ? data.unread_count || 0 : item.key === 'messages' ? data.message_count || 0 : item.key === 'reports' ? data.report_count || 0 : data[item.key]?.length || 0}</b>
+              {folders.map((item) => (
+                <button key={item.key} className={'mail-folder' + (folder === item.key && !compose ? ' active' : '')}
+                  role="tab" aria-selected={folder === item.key && !compose}
+                  onClick={() => selectFolder(item.key)}>
+                  <span>{t(item.labelKey)}</span>
+                  {item.key === 'mailinbox' && data.mail_unread_count > 0
+                    ? <b className="mail-folder-unread">{data.mail_unread_count}</b>
+                    : <b>{folderCount(data, item.key)}</b>}
                 </button>
               ))}
             </div>
             <SearchField value={query} onChange={setQuery} placeholder={t('mailboxSearch')} />
             <div className="mail-thread-list">
               {visibleRows.map((item) => isMessageFolder(folder) ? (
-                <button key={item.key} className={'mail-thread' + (selectedMessageKey === item.key ? ' active' : '')} onClick={() => { setSelectedId(null); setSelectedMessageKey(item.key); }}>
-                  <div className="spread"><b>{item.kind === 'REPORT' ? item.report_code : item.task_number}</b><span className="mail-kind">{item.kind === 'REPORT' ? t('mailboxKindReport') : item.kind === 'COMMENT' ? t('mailboxKindMessage') : t('mailboxKindUpdate')}</span></div>
+                <button key={item.key} className={'mail-thread' + (selectedMessageKey === item.key && !compose ? ' active' : '')}
+                  onClick={() => { setCompose(null); setSelectedId(null); setSelectedMessageKey(item.key); }}>
+                  <div className="spread">
+                    <b>{item.kind === 'MAIL' ? (item.outgoing ? `${t('mailboxTo')}: ${item.recipient}` : item.actor) : item.kind === 'REPORT' ? item.report_code : item.task_number}</b>
+                    <span className="mail-kind">{item.kind === 'MAIL' ? tagLabel(item.category) : item.kind === 'REPORT' ? t('mailboxKindReport') : item.kind === 'COMMENT' ? t('mailboxKindMessage') : t('mailboxKindUpdate')}</span>
+                  </div>
                   {item.unread && <span className="mail-unread">{t('mailboxUnreadOne')}</span>}
                   <div className="mail-thread-title">{item.subject}</div>
-                  <div className="muted mail-thread-meta">{item.actor} · {fmtDate(item.at)}</div>
+                  <div className="muted mail-thread-meta">{item.kind === 'MAIL' ? `${item.actor} · ${fmtDate(item.at)}` : `${item.actor} · ${fmtDate(item.at)}`}</div>
                   <TagChips tags={item.tags} />
                   <div className="mail-thread-last"><span>{item.body}</span></div>
                 </button>
               ) : (
-                <button key={item.id} className={'mail-thread' + (selectedId === item.id ? ' active' : '')} onClick={() => { setSelectedMessageKey(null); setSelectedId(item.id); }}>
+                <button key={item.id} className={'mail-thread' + (selectedId === item.id && !compose ? ' active' : '')}
+                  onClick={() => { setCompose(null); setSelectedMessageKey(null); setSelectedId(item.id); }}>
                   <div className="spread"><b>{item.task_number}</b><Pill value={item.status} /></div>
                   {item.unread_count > 0 && <span className="mail-unread">{item.unread_count} {t('mailboxUnreadMany')}</span>}
                   <div className="mail-thread-title">{item.title}</div>
@@ -194,7 +287,37 @@ export default function Mailbox() {
             </div>
           </aside>
           <section className="mailbox-reader">
-            {loadingThread ? <Loading /> : reportDocument ? (
+            {compose ? (
+              <MailCompose
+                initial={compose}
+                me={me}
+                onCancel={() => setCompose(null)}
+                onSaved={async () => { setCompose(null); await load(); }}
+              />
+            ) : loadingThread ? <Loading /> : mailMessage ? (
+              <MailReader
+                message={mailMessage}
+                me={me}
+                onReply={() => startCompose({
+                  recipient_person_id: mailMessage.outgoing ? mailMessage.recipient_person_id : mailMessage.sender_person_id,
+                  subject: /^re:/i.test(mailMessage.subject) ? mailMessage.subject : `Re: ${mailMessage.subject}`,
+                  category: mailMessage.category,
+                  thread_id: mailMessage.id,
+                })}
+                onEdit={() => startCompose({
+                  editId: mailMessage.id,
+                  recipient_person_id: mailMessage.recipient_person_id,
+                  subject: mailMessage.subject,
+                  body: mailMessage.body,
+                  category: mailMessage.category,
+                  priority: mailMessage.priority,
+                })}
+                onSend={() => withReload(() => api.post(`/mailbox/messages/${mailMessage.id}/send`, {}))}
+                onArchive={() => withReload(() => api.put(`/mailbox/messages/${mailMessage.id}/archive`, {}))}
+                onUnarchive={() => withReload(() => api.put(`/mailbox/messages/${mailMessage.id}/unarchive`, {}))}
+                onOpenLink={() => { if (mailMessage.link) nav(mailMessage.link); }}
+              />
+            ) : reportDocument ? (
               <ReportReader report={reportDocument} onOpen={() => nav(`/reports?report=${reportDocument.id}`)} />
             ) : thread ? (
               <>
@@ -231,6 +354,164 @@ export default function Mailbox() {
         </div>
       )}
     </Page>
+  );
+}
+
+function markMailRead(data, id) {
+  if (!data) return data;
+  const wasUnread = (data.mail_inbox || []).some((m) => m.id === id && m.unread);
+  const patch = (rows) => (rows || []).map((m) => m.id === id ? { ...m, unread: false } : m);
+  return {
+    ...data,
+    mail_inbox: patch(data.mail_inbox),
+    mail_archive: patch(data.mail_archive),
+    messages: patch(data.messages),
+    unread_messages: (data.unread_messages || []).filter((m) => m.id !== id),
+    unread_count: Math.max(0, (data.unread_count || 0) - (wasUnread ? 1 : 0)),
+    mail_unread_count: Math.max(0, (data.mail_unread_count || 0) - (wasUnread ? 1 : 0)),
+    mail_counts: data.mail_counts ? { ...data.mail_counts, unread: Math.max(0, (data.mail_counts.unread || 0) - (wasUnread ? 1 : 0)) } : data.mail_counts,
+  };
+}
+
+function MailReader({ message, me, onReply, onEdit, onSend, onArchive, onUnarchive, onOpenLink }) {
+  const isDraft = message.status === 'DRAFT' || message.status === 'QUEUED';
+  const mineIsSender = message.sender_person_id === me.person_id;
+  return (
+    <>
+      <header className="mail-reader-head">
+        <div className="spread" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <div>
+            <div className="mono muted">{message.category} · {message.status}</div>
+            <h2>{message.subject}</h2>
+          </div>
+          <div className="mail-reader-actions">
+            {isDraft && mineIsSender && <button type="button" className="btn btn-sm" onClick={onEdit}>{t('mailboxEditDraft')}</button>}
+            {isDraft && mineIsSender && <button type="button" className="btn btn-sm btn-primary" onClick={onSend}>{t('mailboxSend')}</button>}
+            {!isDraft && <button type="button" className="btn btn-sm" onClick={onReply}>{t('mailboxReply')}</button>}
+            {message.link && <button type="button" className="btn btn-sm" onClick={onOpenLink}>{t('mailboxOpenLink')}</button>}
+            {message.archived
+              ? <button type="button" className="btn btn-sm" onClick={onUnarchive}>{t('mailboxUnarchiveAction')}</button>
+              : <button type="button" className="btn btn-sm" onClick={onArchive}>{t('mailboxArchiveAction')}</button>}
+          </div>
+        </div>
+        <div className="mail-task-meta">
+          <span>{t('mailboxFrom')}: {message.actor}</span>
+          <span>{t('mailboxTo')}: {message.recipient}</span>
+          {message.sent_at && <span>{t('mailboxSentAt')} {fmtDateTime(message.sent_at)}</span>}
+          <TagChips tags={message.tags} />
+        </div>
+      </header>
+      <div className="mail-message"><p style={{ whiteSpace: 'pre-wrap' }}>{message.body}</p></div>
+    </>
+  );
+}
+
+function MailCompose({ initial, me, onCancel, onSaved }) {
+  const [recipients, setRecipients] = useState([]);
+  const [recipient, setRecipient] = useState(initial?.recipient_person_id || '');
+  const [query, setQuery] = useState('');
+  const [subject, setSubject] = useState(initial?.subject || '');
+  const [body, setBody] = useState(initial?.body || '');
+  const [category, setCategory] = useState(initial?.category || 'GENERAL');
+  const [priority, setPriority] = useState(initial?.priority || 'NORMAL');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    api.get('/mailbox/recipients').then((list) => setRecipients(list || [])).catch((e) => setErr(e.message));
+  }, []);
+
+  const selected = recipients.find((r) => r.person_id === Number(recipient));
+  const filtered = (query.trim()
+    ? recipients.filter((r) => `${r.name} ${r.username} ${r.role}`.toLowerCase().includes(query.trim().toLowerCase()))
+    : recipients
+  ).slice(0, 40);
+
+  async function save(status) {
+    setErr(null);
+    if (!Number(recipient)) { setErr(t('mailboxRecipientRequired')); return; }
+    if (status === 'SENT' && !subject.trim()) { setErr(t('mailboxSubjectRequired')); return; }
+    if (!subject.trim() && !body.trim()) { setErr(t('mailboxBodyRequired')); return; }
+    setBusy(true);
+    try {
+      const payload = {
+        recipient_person_id: Number(recipient),
+        subject: subject.trim(),
+        body: body.trim(),
+        category,
+        priority,
+        status,
+        thread_id: initial?.thread_id || null,
+      };
+      if (initial?.editId) {
+        await api.put(`/mailbox/messages/${initial.editId}`, payload);
+        if (status === 'SENT') await api.post(`/mailbox/messages/${initial.editId}/send`, {});
+      } else {
+        await api.post('/mailbox/messages', payload);
+      }
+      await onSaved();
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  }
+
+  return (
+    <>
+      <header className="mail-reader-head">
+        <div className="spread" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <h2>{initial?.editId ? t('mailboxEditDraft') : t('mailboxCompose')}</h2>
+          <button type="button" className="btn btn-sm" onClick={onCancel}>{t('cancel')}</button>
+        </div>
+      </header>
+      {err && <ErrorNote error={err} />}
+      <div className="form-grid" style={{ padding: '0 4px' }}>
+        <div className="field full">
+          <label>{t('mailboxTo')}</label>
+          {selected ? (
+            <div className="spread" style={{ alignItems: 'center', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px' }}>
+              <span><b>{selected.name}</b> <span className="muted">· {selected.role}</span></span>
+              <button type="button" className="btn btn-sm" onClick={() => setRecipient('')}>{'×'}</button>
+            </div>
+          ) : (
+            <>
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('mailboxRecipientPlaceholder')} />
+              <div style={{ maxHeight: 150, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8, marginTop: 6 }}>
+                {filtered.map((r) => (
+                  <button key={r.person_id} type="button" className="mail-recipient"
+                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', background: 'none', border: 0, borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
+                    onClick={() => { setRecipient(r.person_id); setQuery(''); }}>
+                    <b>{r.name}</b> <span className="muted">· {r.role}{r.title ? ` · ${r.title}` : ''}</span>
+                  </button>
+                ))}
+                {!filtered.length && <div className="muted" style={{ padding: 10 }}>{t('mailboxNoRecipients')}</div>}
+              </div>
+            </>
+          )}
+        </div>
+        <div className="field full"><label>{t('mailboxSubject')}</label><input value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
+        <div className="field"><label>{t('mailboxCategory')}</label>
+          <select value={category} onChange={(e) => setCategory(e.target.value)}>
+            <option value="GENERAL">GENERAL</option>
+            <option value="REPORT">REPORT</option>
+            <option value="EXECUTION">EXECUTION</option>
+            <option value="REQUEST">REQUEST</option>
+            <option value="ALERT">ALERT</option>
+          </select>
+        </div>
+        <div className="field"><label>{t('mailboxPriority')}</label>
+          <select value={priority} onChange={(e) => setPriority(e.target.value)}>
+            <option value="LOW">LOW</option>
+            <option value="NORMAL">NORMAL</option>
+            <option value="HIGH">HIGH</option>
+            <option value="URGENT">URGENT</option>
+          </select>
+        </div>
+        <div className="field full"><label>{t('mailboxMessage')}</label><textarea value={body} onChange={(e) => setBody(e.target.value)} style={{ minHeight: 140 }} /></div>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 4px' }}>
+        <button type="button" className="btn" disabled={busy} onClick={() => save('DRAFT')}>{t('mailboxSaveDraft')}</button>
+        <button type="button" className="btn" disabled={busy} onClick={() => save('QUEUED')}>{t('mailboxQueue')}</button>
+        <button type="button" className="btn btn-primary" disabled={busy} onClick={() => save('SENT')}>{t('mailboxSend')}</button>
+      </div>
+    </>
   );
 }
 

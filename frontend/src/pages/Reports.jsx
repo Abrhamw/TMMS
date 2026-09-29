@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, fmtDate, fmtMoney } from '../api';
-import { Page, Pill, Modal, ErrorNote, Loading, PrintButton, MoneyCard, SearchField, useSearchFilter } from '../components';
+import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, MoneyCard, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
-import DossierReport from '../components/DossierReport';
+import { assetsInScope, linesInRegion } from '../cascade';
+import DocumentReport from '../components/DocumentReport';
 
-const DOSSIER_TYPES = ['ASSET_DETAIL', 'CREW_DETAIL', 'PERSON_DETAIL', 'TASK_DETAIL', 'LINE_DETAIL'];
+const DOCUMENT_TYPES = ['ASSET_DETAIL', 'CREW_DETAIL', 'PERSON_DETAIL', 'TASK_DETAIL', 'LINE_DETAIL'];
 
 export default function Reports() {
   const canGenerate = can(getStoredUser(), 'report:write');
@@ -16,27 +17,27 @@ export default function Reports() {
   const [genForm, setGenForm] = useState(null);
   const [view, setView] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [entityLists, setEntityLists] = useState({ tasks: [], lines: [], assets: [], crews: [], people: [] });
+  const [entityLists, setEntityLists] = useState({ tasks: [], lines: [], assets: [], crews: [], people: [], regions: [], subs: [] });
   const canPerf = canGenerate;
   const [perfScope, setPerfScope] = useState('crew');
   const [perf, setPerf] = useState(null);
   const [perfErr, setPerfErr] = useState(null);
-  const [dossiers, setDossiers] = useState([]);
+  const [documents, setDocuments] = useState([]);
   const { query, setQuery, results: reportRows } = useSearchFilter(reports);
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Click-through drill-down: push an entity dossier onto the stack and fetch
+  // Click-through drill-down: push an entity document onto the stack and fetch
   // its read-only detail (scoped to the caller). Clicking an entity inside a
-  // dossier pushes another level so the reader can keep walking the chain.
-  function openDossier(type, id, label) {
+  // document pushes another level so the reader can keep walking the chain.
+  function openDocument(type, id, label) {
     if (!type || id == null) return;
     const key = `${Date.now()}-${Math.random()}`;
-    setDossiers((d) => [...d, { key, type, id, label, loading: true }]);
-    api.get(`/reports/dossier?type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`)
-      .then((res) => setDossiers((d) => d.map((x) => (x.key === key ? { ...x, data: res.data ?? res, loading: false } : x))))
-      .catch((e) => setDossiers((d) => d.map((x) => (x.key === key ? { ...x, error: e.message, loading: false } : x))));
+    setDocuments((d) => [...d, { key, type, id, label, loading: true }]);
+    api.get(`/reports/document?type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`)
+      .then((res) => setDocuments((d) => d.map((x) => (x.key === key ? { ...x, data: res.data ?? res, loading: false } : x))))
+      .catch((e) => setDocuments((d) => d.map((x) => (x.key === key ? { ...x, error: e.message, loading: false } : x))));
   }
-  const popDossier = () => setDossiers((d) => d.slice(0, -1));
+  const popDocument = () => setDocuments((d) => d.slice(0, -1));
 
   const load = () => {
     api.get('/report-templates').then(setTemplates).catch((e) => setError(e.message));
@@ -50,6 +51,8 @@ export default function Reports() {
     api.get('/assets?brief=1').then((r) => setEntityLists((e) => ({ ...e, assets: r }))).catch(() => {});
     api.get('/crews').then((r) => setEntityLists((e) => ({ ...e, crews: r }))).catch(() => {});
     api.get('/people').then((r) => setEntityLists((e) => ({ ...e, people: r }))).catch(() => {});
+    api.get('/regions').then((r) => setEntityLists((e) => ({ ...e, regions: r }))).catch(() => {});
+    api.get('/substations').then((r) => setEntityLists((e) => ({ ...e, subs: r }))).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -64,7 +67,7 @@ export default function Reports() {
     const rid = searchParams.get('report');
     if (!rid) return;
     let alive = true;
-    setDossiers([]);
+    setDocuments([]);
     api.get(`/reports/${encodeURIComponent(rid)}`)
       .then((res) => { if (alive) setView(res); })
       .catch((e) => { if (alive) setError(e.message); });
@@ -77,7 +80,7 @@ export default function Reports() {
     try {
       setBusy(true);
       const res = await api.post('/reports/generate', genForm);
-      setDossiers([]);
+      setDocuments([]);
       setView(res);
       load();
       setGenForm(null);
@@ -106,13 +109,13 @@ export default function Reports() {
             <div className="card">
               <div className="tbl-wrap">
                 <table>
-                  <thead><tr><th>{perfScope === 'crew' ? 'Crew' : 'Person'}</th><th>Tasks</th><th>Completed</th><th>Rate</th><th>On time</th><th>On-time rate</th><th>Checklist pass</th><th>Open</th><th>Overdue</th><th>Avg cycle (h)</th><th>Findings</th><th>GPS viol.</th></tr></thead>
+                  <thead><tr><th>{perfScope === 'crew' ? 'Crew' : 'Person'}</th><th>Tasks</th><th>Completed</th><th>Rate</th><th>On time</th><th>On-time rate</th><th>Open</th><th>Overdue</th><th>Avg cycle (h)</th><th>Findings</th><th>GPS viol.</th></tr></thead>
                   <tbody>
                     {perf.map((r) => {
                       const detailType = perfScope === 'crew' ? 'CREW_DETAIL' : 'PERSON_DETAIL';
                       return (
                         <tr key={r.id} className="row-link"
-                          onClick={() => openDossier(detailType, r.id, r.name)}
+                          onClick={() => openDocument(detailType, r.id, r.name)}
                           title={`Click to view ${perfScope} details`}>
                           <td><b>{r.name}</b></td>
                           <td>{r.tasks}</td>
@@ -120,7 +123,6 @@ export default function Reports() {
                           <td>{r.completion_rate}%</td>
                           <td>{r.on_time}</td>
                           <td>{r.on_time_rate}%</td>
-                          <td>{r.checklist_pass_rate != null ? `${r.checklist_pass_rate}%` : '—'}</td>
                           <td>{r.open ?? 0}</td>
                           <td className={r.overdue ? 'bad' : undefined}>{r.overdue ?? 0}</td>
                           <td>{r.avg_cycle_hours != null ? r.avg_cycle_hours : '—'}</td>
@@ -129,7 +131,7 @@ export default function Reports() {
                         </tr>
                       );
                     })}
-                    {perf.length === 0 && <tr><td colSpan={12} className="muted center">No data for this scope.</td></tr>}
+                    {perf.length === 0 && <tr><td colSpan={11} className="muted center">No data for this scope.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -165,7 +167,7 @@ export default function Reports() {
                   <td>{r.report_type}</td>
                   <td className="nowrap">{fmtDate(r.period_start)} → {fmtDate(r.period_end)}</td>
                   <td className="nowrap">{fmtDate(r.generated_at)}</td>
-                  <td><button className="btn btn-sm" onClick={() => { setDossiers([]); api.get(`/reports/${r.id}`).then(setView).catch((e) => setError(e.message)); }}>View</button></td>
+                  <td><button className="btn btn-sm" onClick={() => { setDocuments([]); api.get(`/reports/${r.id}`).then(setView).catch((e) => setError(e.message)); }}>View</button></td>
                 </tr>
               ))}
               {reportRows.length === 0 && (
@@ -184,42 +186,42 @@ export default function Reports() {
           </>}>
           <div className="form-grid">
             <div className="field full"><label>Report type</label>
-              <select value={genForm.report_type} onChange={(e) => setGenForm({ ...genForm, report_type: e.target.value })}>
+              <SearchSelect value={genForm.report_type} onChange={(e) => setGenForm({ ...genForm, report_type: e.target.value })}>
                 {templates.map((t) => <option key={t.id} value={t.report_type}>{t.name}</option>)}
-              </select></div>
-            {DOSSIER_TYPES.includes(genForm.report_type) ? (
+              </SearchSelect></div>
+            {DOCUMENT_TYPES.includes(genForm.report_type) ? (
               <EntityPicker type={genForm.report_type} form={genForm} lists={entityLists} setForm={setGenForm} />
             ) : (
               <>
                 <div className="field"><label>Period start</label><input type="date" value={genForm.period_start} onChange={(e) => setGenForm({ ...genForm, period_start: e.target.value })} /></div>
                 <div className="field"><label>Period end</label><input type="date" value={genForm.period_end} onChange={(e) => setGenForm({ ...genForm, period_end: e.target.value })} /></div>
                 <div className="field"><label>Region scope</label>
-                  <select value={genForm.scope_region_id || ''} onChange={(e) => setGenForm({ ...genForm, scope_region_id: e.target.value ? Number(e.target.value) : null })}>
+                  <SearchSelect value={genForm.scope_region_id || ''} onChange={(e) => setGenForm({ ...genForm, scope_region_id: e.target.value ? Number(e.target.value) : null })}>
                     <option value="">All regions</option>
                     {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                  </select></div>
+                  </SearchSelect></div>
               </>
             )}
           </div>
         </Modal>
       )}
 
-      {(view || dossiers.length > 0) && (() => {
-        const top = dossiers[dossiers.length - 1];
+      {(view || documents.length > 0) && (() => {
+        const top = documents[documents.length - 1];
         return (
-          <Modal title={top ? (top.data?.title || top.label || 'Entity Dossier') : (view?.title || view?.data?.title || 'Report')}
-            onClose={() => (top ? popDossier() : setView(null))} wide printable
+          <Modal title={top ? (top.data?.title || top.label || 'Entity Document') : (view?.title || view?.data?.title || 'Report')}
+            onClose={() => (top ? popDocument() : setView(null))} wide printable
             footer={top ? (
               <>
-                <button className="btn" onClick={popDossier}>{dossiers.length > 1 ? 'Back' : (view ? 'Back to report' : 'Close')}</button>
+                <button className="btn" onClick={popDocument}>{documents.length > 1 ? 'Back' : (view ? 'Back to report' : 'Close')}</button>
                 <PrintButton />
               </>
             ) : (
               <><PrintButton /><button className="btn btn-primary" onClick={() => setView(null)}>Close</button></>
             )}>
             {top
-              ? (top.loading ? <Loading /> : top.error ? <ErrorNote error={top.error} /> : <DossierReport data={top.data} onOpenEntity={openDossier} />)
-              : <ReportView data={view?.data} onOpenEntity={openDossier} />}
+              ? (top.loading ? <Loading /> : top.error ? <ErrorNote error={top.error} /> : <DocumentReport data={top.data} onOpenEntity={openDocument} />)
+              : <ReportView data={view?.data} onOpenEntity={openDocument} />}
           </Modal>
         );
       })()}
@@ -241,7 +243,7 @@ function ReportView({ data, onOpenEntity }) {
     return null;
   };
   if (!data) return <div className="muted">No data</div>;
-  if (data.dossier) return <DossierReport data={data} onOpenEntity={onOpenEntity} />;
+  if (data.document) return <DocumentReport data={data} onOpenEntity={onOpenEntity} />;
   if (data.financial) return <FinancialTables f={data.financial} onOpenEntity={onOpenEntity} />;
   if (data.rows) {
     if (data.rows.length && data.rows[0] && 'label' in data.rows[0]) {
@@ -476,20 +478,33 @@ function ReportView({ data, onOpenEntity }) {
 function EntityPicker({ type, form, lists, setForm }) {
   const key = { ASSET_DETAIL: ['asset_id', 'assets'], CREW_DETAIL: ['crew_id', 'crews'], PERSON_DETAIL: ['person_id', 'people'], TASK_DETAIL: ['task_id', 'tasks'], LINE_DETAIL: ['line_id', 'lines'] }[type];
   const [field, listKey] = key || [];
-  const items = lists[listKey] || [];
+  const regions = lists.regions || [];
+  const regionId = form.scope_region_id || '';
+  const items = useMemo(() => {
+    const raw = lists[listKey] || [];
+    if (!regionId) return raw;
+    if (listKey === 'lines') return linesInRegion(raw, regionId);
+    if (listKey === 'assets') return assetsInScope(raw, { regionId }, { subs: lists.subs || [], lines: lists.lines || [] });
+    return raw.filter((x) => x.region_id == null || String(x.region_id) === String(regionId));
+  }, [lists, listKey, regionId]);
   const label = field === 'asset_id' ? 'Asset' : field === 'crew_id' ? 'Crew' : field === 'person_id' ? 'Person' : field === 'line_id' ? 'Line' : 'Task';
   const val = form[field];
   const selected = items.find((x) => x.id === Number(val));
   return (
     <div className="field full"><label>{label}</label>
-      <select value={val || ''} onChange={(e) => setForm({ ...form, [field]: e.target.value ? Number(e.target.value) : null })}>
+      <SearchSelect value={regionId} onChange={(e) => setForm({ ...form, scope_region_id: e.target.value ? Number(e.target.value) : null, [field]: null })}>
+        <option value="">All regions</option>
+        {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+      </SearchSelect>
+      <div className="mt" />
+      <SearchSelect value={val || ''} onChange={(e) => setForm({ ...form, [field]: e.target.value ? Number(e.target.value) : null })}>
         <option value="">Select {label.toLowerCase()}…</option>
         {items.map((x) => (
           <option key={x.id} value={x.id}>
             {field === 'task_id' ? `${x.task_number} — ${x.title}` : field === 'person_id' ? `${x.first_name} ${x.last_name}` : x.name || x.asset_id || x.line_id || x.crew_code}
           </option>
         ))}
-      </select>
+      </SearchSelect>
       {selected && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>Region scoping applied to your access.</div>}
     </div>
   );

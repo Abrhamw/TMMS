@@ -38,7 +38,7 @@ No software installation is required. TMMS runs in a web browser.
 9. Checklists
 10. GPS validation and geofences
 11. Certifications
-12. Reports and dossiers
+12. Reports and documents
 13. Value and cost
 14. Organization
 15. Settings and administration
@@ -271,7 +271,7 @@ From a line record you can:
 
 - "Generate towers from route" to create tower positions along the route.
 - View the tower list and the line assets.
-- Open the "Line Detail Dossier" for a printable summary.
+- Open the "Line Detail Document" for a printable summary.
 - Reset the route if it needs to be redrawn.
 
 ### 5.4 Towers and the line map workspace
@@ -320,7 +320,7 @@ To add an asset:
 Assets supports Register, Table and Cards views, plus "Import KMZ/KML" for
 bulk loading georeferenced assets. Asset detail includes open tasks,
 maintenance history, GPS validations and a discussion thread. From the history
-you can "+ Add maintenance event" and "Save event". "Generate dossier" produces
+you can "+ Add maintenance event" and "Save event". "Generate document" produces
 a printable asset report.
 
 ### 5.6 Data validation
@@ -414,7 +414,7 @@ Task Detail is the working page for a single task. It contains:
 - "Field log - findings & photos": record findings and attach photos.
 - "Checklist Executions": the history of each run.
 - "Work items": per-item progress (a supervisor can patch an item).
-- "Task dossier": generate a printable task report.
+- "Task document": generate a printable task report.
 - "Follow-up work": raised and recommended follow-up tasks.
 - "Discussion": a comment thread.
 
@@ -685,7 +685,7 @@ qualification lapses.
 
 ---
 
-## 12. Reports and dossiers
+## 12. Reports and documents
 
 ### 12.1 Reports
 
@@ -701,8 +701,8 @@ CREW_UTILIZATION, OUTAGE_INCIDENT, COMPLIANCE_AUDIT, OVERDUE_TASK,
 SCHEDULE_ADHERENCE and GPS_COVERAGE. "Field Team Performance" can be grouped
 either "By crew" or "By person".
 
-From any report you can drill down into a dossier for the underlying asset,
-crew, task or line, then navigate back. Dossiers are also available directly:
+From any report you can drill down into a document for the underlying asset,
+crew, task or line, then navigate back. Documents are also available directly:
 
 - ASSET_DETAIL, CREW_DETAIL, TASK_DETAIL and LINE_DETAIL.
 - ASSET_VALUATION and MAINTENANCE_COST for financial views.
@@ -796,7 +796,7 @@ The Map is read-oriented; edit records in their registers.
 | Checklist | A standardized procedure executed step by step. |
 | Critical step | A checklist step that fails the whole run if it fails. |
 | Crew | A field team that performs work. |
-| Dossier | A printable summary of one asset, crew, task or line. |
+| Document | A printable summary of one asset, crew, task or line. |
 | Execution | One completed run of a checklist. |
 | Follow-up | A corrective task raised automatically after a failure. |
 | Geofence | An allowed area for GPS checks. |
@@ -845,7 +845,7 @@ How do I change the language?
 Use the selector in the top bar. The page reloads in the chosen language.
 
 How do I get a printable copy of a record?
-Use the print control on a report or dossier, or the browser print function.
+Use the print control on a report or document, or the browser print function.
 
 ---
 

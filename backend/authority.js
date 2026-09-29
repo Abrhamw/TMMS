@@ -275,7 +275,7 @@ function regionCrewIds(regionId) {
   return new Set(db.prepare('SELECT id FROM crew WHERE region_id = ?').all(regionId).map((c) => c.id));
 }
 
-// Crews visible for *reading* (lists, dossiers, KPIs). Region managers see every
+// Crews visible for *reading* (lists, documents, KPIs). Region managers see every
 // crew in their region; everyone else falls back to the command set, so this
 // never widens assignment authority (that stays `authorizedCrewIds`).
 function readCrewIds(user) {

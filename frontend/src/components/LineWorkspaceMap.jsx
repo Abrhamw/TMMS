@@ -142,7 +142,7 @@ export default function LineWorkspaceMap({
 
     // Substation yards at the line terminals, drawn from each substation's
     // recorded boundary polygon (falling back to nothing) so the workspace
-    // matches the dossier and the main infrastructure map.
+    // matches the document and the main infrastructure map.
     const li = data.current.lineInfo;
     [li && li.from_substation, li && li.to_substation].forEach((s) => {
       const ring = boundaryRing(s && s.boundary_json);

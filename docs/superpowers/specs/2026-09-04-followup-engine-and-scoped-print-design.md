@@ -2,7 +2,7 @@
 
 Date: 2026-09-04. Extends the `2026-09-04-rbac-reporting-assets` plan (Tasks 4-10 now closed
 and re-verified; see that plan for the RBAC/roles migration, crew-role field split, findings,
-attachments, report dossiers and asset register work).
+attachments, report documents and asset register work).
 
 ## 1. Result-based follow-up tasks (hybrid)
 
@@ -39,16 +39,16 @@ attachments, report dossiers and asset register work).
 - A `.print-report-scope` marks the *only* intended print area. When the Print button is
   pressed while such a scope exists, `body.report-printing` is toggled and the print CSS
   hides everything else (`@media print body.report-printing .content > *:not(.print-report-scope)`)
-  so the printed output is just the active dossier/report - not the rest of the page.
-- Every `printable` `Modal` (Lines/Reports/Crews/Checklists dossiers) is automatically a
-  scope; the TaskDetail inline dossier is wrapped in `.print-report-scope`.
+  so the printed output is just the active document/report - not the rest of the page.
+- Every `printable` `Modal` (Lines/Reports/Crews/Checklists documents) is automatically a
+  scope; the TaskDetail inline document is wrapped in `.print-report-scope`.
 - No scope present (e.g. plain list view) => default full-view print unchanged.
 
 ## 3. Closing gaps from Tasks 4-10
 
 - Added the missing `DELETE /tasks/:id/attachments/:attId` (Task 6): only the uploader, the
   task's crew lead, or a global role; removes the physical file then the row, with audit.
-- Role-gated button sweep: Crews (Edit only for `crew:write`, dossier only for
+- Role-gated button sweep: Crews (Edit only for `crew:write`, document only for
   `report:write`), Schedules (Edit only for `schedule:write`), Checklists (Activate/Add-step
   only for `checklist:write`).
 
@@ -57,7 +57,7 @@ attachments, report dossiers and asset register work).
 - `backend/routes/tasks.js` - follow-up engine, `GET /tasks/:id` enrichment, robust task
   numbering.
 - `backend/routes/attachments.js` - DELETE endpoint.
-- `frontend/src/pages/TaskDetail.jsx` - follow-up/recommendation UI + scoped dossier card.
+- `frontend/src/pages/TaskDetail.jsx` - follow-up/recommendation UI + scoped document card.
 - `frontend/src/pages/Crews.jsx`, `Schedules.jsx`, `Checklists.jsx` - button gating.
 - `frontend/src/components.jsx` (`PrintButton`, printable `Modal` scope), `styles.css`
   (scoped print rules).
@@ -67,5 +67,5 @@ attachments, report dossiers and asset register work).
 - Crew member restricted (start/finding/submit 403); member checklist capture saved
   (`executed_by` person, `crew_id`) while task stays IN_PROGRESS; lead submit +
   manager verify completes. FAIL verify auto-created EMERGENCY child; second materialise
-  409 (dedupe); crew-lead create 403. Dossiers generate (TASK/LINE). All endpoints smoke
+  409 (dedupe); crew-lead create 403. Documents generate (TASK/LINE). All endpoints smoke
   checked after restart; `npm run build` clean.

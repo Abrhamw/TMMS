@@ -58,7 +58,7 @@ router.get('/search', (req, res) => {
         type: 'asset',
         title: a.name || a.asset_id,
         subtitle: [a.asset_id, a.asset_type, a.condition_rating != null ? `cond ${a.condition_rating}/10` : null].filter(Boolean).join(' · '),
-        dossier_type: 'ASSET_DETAIL',
+        document_type: 'ASSET_DETAIL',
       }));
     push('asset', 'Assets', items);
   }
@@ -72,7 +72,7 @@ router.get('/search', (req, res) => {
         type: 'crew',
         title: c.name,
         subtitle: [c.crew_code, c.crew_type, regionName(c.region_id)].filter(Boolean).join(' · '),
-        dossier_type: 'CREW_DETAIL',
+        document_type: 'CREW_DETAIL',
       }));
     push('crew', 'Crews', items);
   }
@@ -114,7 +114,7 @@ router.get('/search', (req, res) => {
         type: 'line',
         title: l.name,
         subtitle: [l.line_id, l.voltage_kv != null ? `${l.voltage_kv} kV` : null, regionName(l.region_id)].filter(Boolean).join(' · '),
-        dossier_type: 'LINE_DETAIL',
+        document_type: 'LINE_DETAIL',
       }));
     push('line', 'Transmission lines', items);
   }

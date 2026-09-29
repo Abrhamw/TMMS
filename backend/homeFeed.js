@@ -312,13 +312,11 @@ function executedTaskIds(user) {
   );
 }
 
+// The "In my area" history list follows the same command scope as every other
+// work surface, so a crew account never receives another crew's closed work and
+// a department manager is bounded to their department. Global roles stay open.
 function areaRows(user, rows) {
   if (isGlobal(user)) return rows;
-  if (isCrewUser(user)) {
-    const c = getUserCrew(user);
-    const rid = (c && c.region_id) || user.region_id;
-    return rows.filter((t) => t.region_id === rid);
-  }
   return visibleTasks(user, rows);
 }
 

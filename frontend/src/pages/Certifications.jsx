@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, fmtDate } from '../api';
-import { Page, Pill, Modal, ErrorNote, Loading, ConfirmButton, PrintButton, SearchField, useSearchFilter } from '../components';
+import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, ConfirmButton, PrintButton, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
 
 const CERT_TYPES = ['LIVE_LINE', 'HEIGHT_WORK', 'FIRST_AID', 'SWITCHING_AUTHORITY', 'SF6_HANDLING', 'HVDC_QUALIFIED', 'CONFINED_SPACE', 'HV_TESTING', 'TOWER_CLIMBING', 'DIGGER_OPERATOR'];
@@ -84,15 +84,15 @@ export default function Certifications() {
 
       <div className="filters">
         <SearchField value={query} onChange={setQuery} placeholder="Search certifications…" />
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+        <SearchSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
           <option value="">All statuses</option>
           <option value="VALID">VALID</option>
           <option value="EXPIRED">EXPIRED</option>
-        </select>
-        <select value={personFilter} onChange={(e) => setPersonFilter(e.target.value)}>
+        </SearchSelect>
+        <SearchSelect value={personFilter} onChange={(e) => setPersonFilter(e.target.value)}>
           <option value="">All personnel</option>
           {people.map((p) => <option key={p.id} value={p.id}>{p.first_name} {p.last_name}</option>)}
-        </select>
+        </SearchSelect>
         <span className="muted">{results.length} of {rows.length} certifications</span>
       </div>
 
@@ -134,21 +134,21 @@ export default function Certifications() {
           </>}>
           <div className="form-grid">
             <div className="field full"><label>Person</label>
-              <select value={form.person_id || ''} onChange={(e) => setForm({ ...form, person_id: e.target.value ? Number(e.target.value) : null })}>
+              <SearchSelect value={form.person_id || ''} onChange={(e) => setForm({ ...form, person_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">— select —</option>
                 {people.map((p) => <option key={p.id} value={p.id}>{p.first_name} {p.last_name} — {p.role || ''}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field full"><label>Certification type</label>
-              <select value={form.cert_type} onChange={(e) => setForm({ ...form, cert_type: e.target.value })}>
+              <SearchSelect value={form.cert_type} onChange={(e) => setForm({ ...form, cert_type: e.target.value })}>
                 {CERT_TYPES.map((t) => <option key={t}>{t}</option>)}
-              </select></div>
+              </SearchSelect></div>
             <div className="field full"><label>Issuing body</label><input value={form.issuing_body || ''} onChange={(e) => setForm({ ...form, issuing_body: e.target.value })} placeholder="e.g. NERC-Accredited" /></div>
             <div className="field"><label>Issued date</label><input type="date" value={form.issued_at || ''} onChange={(e) => setForm({ ...form, issued_at: e.target.value })} /></div>
             <div className="field"><label>Expires</label><input type="date" value={form.expires_at || ''} onChange={(e) => setForm({ ...form, expires_at: e.target.value })} /></div>
             <div className="field"><label>Status</label>
-              <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+              <SearchSelect value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
                 {STATUSES.map((s) => <option key={s}>{s}</option>)}
-              </select></div>
+              </SearchSelect></div>
           </div>
         </Modal>
       )}
