@@ -521,6 +521,9 @@ function initSchema() {
     thread_id INTEGER REFERENCES message(id),
     parent_id INTEGER REFERENCES message(id),
     forward_of_id INTEGER REFERENCES message(id),
+    action_required INTEGER NOT NULL DEFAULT 0,
+    due_date TEXT,
+    scheduled_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     sent_at TEXT
@@ -540,11 +543,33 @@ function initSchema() {
     person_id INTEGER REFERENCES person(id),
     kind TEXT NOT NULL DEFAULT 'TO',
     read_at TEXT,
+    delivered_at TEXT,
+    acknowledged_at TEXT,
     created_at TEXT NOT NULL,
     UNIQUE(message_id, person_id)
   );
   CREATE INDEX IF NOT EXISTS idx_message_recipient_person ON message_recipient(person_id, message_id);
   CREATE INDEX IF NOT EXISTS idx_message_recipient_message ON message_recipient(message_id);
+
+  -- Per-account mail labels (an account's own filing tags) and their
+  -- many-to-many assignment to messages. Labels are private to the account.
+  CREATE TABLE IF NOT EXISTS mail_label (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    color TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(owner_user_id, name)
+  );
+  CREATE TABLE IF NOT EXISTS message_label (
+    user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    message_id INTEGER NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+    label_id INTEGER NOT NULL REFERENCES mail_label(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, message_id, label_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_message_label_message ON message_label(message_id);
+  CREATE INDEX IF NOT EXISTS idx_message_label_label ON message_label(label_id);
 
   -- Per-account mailbox state (read receipt, archive filing) for directed mail.
   CREATE TABLE IF NOT EXISTS message_state (
@@ -744,6 +769,24 @@ function initSchema() {
   migrate('task', 'status_before_cancel', 'ALTER TABLE task ADD COLUMN status_before_cancel TEXT');
   migrate('message', 'parent_id', 'ALTER TABLE message ADD COLUMN parent_id INTEGER REFERENCES message(id)');
   migrate('message', 'forward_of_id', 'ALTER TABLE message ADD COLUMN forward_of_id INTEGER REFERENCES message(id)');
+  migrate('message', 'action_required', 'ALTER TABLE message ADD COLUMN action_required INTEGER NOT NULL DEFAULT 0');
+  migrate('message', 'due_date', 'ALTER TABLE message ADD COLUMN due_date TEXT');
+  migrate('message', 'scheduled_at', 'ALTER TABLE message ADD COLUMN scheduled_at TEXT');
+  migrate('message_recipient', 'delivered_at', 'ALTER TABLE message_recipient ADD COLUMN delivered_at TEXT');
+  migrate('message_recipient', 'acknowledged_at', 'ALTER TABLE message_recipient ADD COLUMN acknowledged_at TEXT');
+  // Everything already sent predates delivery tracking: treat a recipient as
+  // delivered only when that person actually has an active account to receive
+  // it, mirroring the live delivery rule (accountless people stay undelivered).
+  try {
+    db.prepare(
+      `UPDATE message_recipient SET delivered_at = COALESCE(
+         (SELECT sent_at FROM message m WHERE m.id = message_recipient.message_id),
+         (SELECT updated_at FROM message m WHERE m.id = message_recipient.message_id))
+       WHERE delivered_at IS NULL AND person_id IS NOT NULL
+         AND EXISTS (SELECT 1 FROM user u WHERE u.person_id = message_recipient.person_id AND u.active = 1)
+         AND (SELECT status FROM message m WHERE m.id = message_recipient.message_id) = 'SENT'`
+    ).run();
+  } catch (_) { /* non-fatal */ }
 
   // Indexes on columns that only exist after the migrate() calls above, so they
   // cannot live in the CREATE TABLE block on a fresh database.

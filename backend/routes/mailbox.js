@@ -297,7 +297,7 @@ const KIND_RANK = { TO: 0, CC: 1, BCC: 2 };
 // The addressed parties of a message, person-joined and ordered To, Cc, Bcc.
 function recipientRowsFor(messageId) {
   return db.prepare(
-    `SELECT r.person_id, r.kind, r.read_at, p.first_name, p.last_name
+    `SELECT r.person_id, r.kind, r.read_at, r.delivered_at, r.acknowledged_at, p.first_name, p.last_name
        FROM message_recipient r LEFT JOIN person p ON p.id = r.person_id
       WHERE r.message_id = ?
       ORDER BY CASE r.kind WHEN 'TO' THEN 0 WHEN 'CC' THEN 1 ELSE 2 END, r.id`
@@ -306,6 +306,8 @@ function recipientRowsFor(messageId) {
     name: [r.first_name, r.last_name].filter(Boolean).join(' ') || `Person ${r.person_id}`,
     kind: r.kind,
     read_at: r.read_at || null,
+    delivered_at: r.delivered_at || null,
+    acknowledged_at: r.acknowledged_at || null,
   }));
 }
 
@@ -504,6 +506,39 @@ function saveAttachments(messageId, list) {
   }
 }
 
+// A recipient is delivered when the mail has actually gone out and that person
+// has at least one active account to receive it; otherwise it stays pending (a
+// scheduled message) or undelivered (no reachable account).
+function deliverMessage(messageId, atIso) {
+  const now = atIso || new Date().toISOString();
+  const upd = db.prepare('UPDATE message_recipient SET delivered_at = COALESCE(delivered_at, ?) WHERE id = ?');
+  for (const r of db.prepare('SELECT id, person_id FROM message_recipient WHERE message_id = ?').all(Number(messageId))) {
+    if (r.person_id && primaryUserForPerson(r.person_id)) upd.run(now, r.id);
+  }
+}
+
+// Move scheduled (QUEUED) mail whose time has come into the Sent folder and
+// deliver it. Also run lazily when an account opens the mailbox so a scheduled
+// send that is already due goes out without waiting for the next sweep.
+function processOutbox(nowIso) {
+  const now = nowIso || new Date().toISOString();
+  const due = db.prepare(
+    "SELECT id FROM message WHERE status = 'QUEUED' AND (scheduled_at IS NULL OR scheduled_at <= ?)"
+  ).all(now);
+  for (const m of due) {
+    db.prepare("UPDATE message SET status = 'SENT', sent_at = ?, updated_at = ? WHERE id = ?").run(now, now, m.id);
+    deliverMessage(m.id, now);
+  }
+  return due.length;
+}
+
+function labelRowsFor(userId, messageId) {
+  return db.prepare(
+    `SELECT l.id, l.name, l.color FROM message_label ml JOIN mail_label l ON l.id = ml.label_id
+      WHERE ml.user_id = ? AND ml.message_id = ? ORDER BY l.name`
+  ).all(Number(userId), Number(messageId));
+}
+
 function mailRow(user, m, state) {
   const resolved = state || mailStateFor(user.id, m.id);
   const everyone = recipientRowsFor(m.id);
@@ -516,6 +551,12 @@ function mailRow(user, m, state) {
   const cc = visible.filter((r) => r.kind === 'CC');
   const bcc = visible.filter((r) => r.kind === 'BCC');
   const names = (rows) => rows.map((r) => r.name).join(', ');
+  const deliveryOf = (r) => (m.status !== 'SENT' ? 'PENDING' : (r.delivered_at ? 'DELIVERED' : 'UNDELIVERED'));
+  const receipt = (r) => ({
+    person_id: r.person_id, name: r.name, kind: r.kind,
+    read_at: r.read_at, delivered_at: r.delivered_at, acknowledged_at: r.acknowledged_at,
+    delivery: deliveryOf(r),
+  });
   return {
     key: `mail-${m.id}`,
     id: m.id,
@@ -528,6 +569,7 @@ function mailRow(user, m, state) {
     created_at: m.created_at,
     updated_at: m.updated_at,
     sent_at: m.sent_at || null,
+    scheduled_at: m.scheduled_at || null,
     actor: personLabel(m.sender_person_id),
     actor_key: `person-${m.sender_person_id}`,
     sender_person_id: m.sender_person_id,
@@ -538,8 +580,13 @@ function mailRow(user, m, state) {
     cc,
     bcc,
     my_kind: myKind ? myKind.kind : null,
-    // Per-recipient read receipts for the sender's own sent mail.
-    read_receipts: isSender ? visible.map((r) => ({ person_id: r.person_id, name: r.name, kind: r.kind, read_at: r.read_at })) : [],
+    // Per-recipient delivery/read/acknowledge receipts for the sender.
+    read_receipts: isSender ? visible.map(receipt) : [],
+    action_required: !!m.action_required,
+    due_date: m.due_date || null,
+    my_delivery: myKind ? deliveryOf(myKind) : null,
+    my_acknowledged: myKind ? !!myKind.acknowledged_at : null,
+    my_acknowledged_at: myKind ? (myKind.acknowledged_at || null) : null,
     category: m.category,
     priority: m.priority,
     status: m.status,
@@ -548,6 +595,7 @@ function mailRow(user, m, state) {
     thread_id: m.thread_id || null,
     parent_id: m.parent_id || null,
     forward_of_id: m.forward_of_id || null,
+    labels: labelRowsFor(user.id, m.id),
     attachments: attachmentRowsFor(m.id),
     tags: [m.category, m.priority !== 'NORMAL' ? m.priority : null].filter(Boolean),
     unread: incoming && m.status === 'SENT' && !resolved?.read_at,
@@ -555,27 +603,78 @@ function mailRow(user, m, state) {
   };
 }
 
-function mailFolders(user) {
-  const outgoing = db.prepare(
-    'SELECT * FROM message WHERE sender_user_id = ? ORDER BY COALESCE(sent_at, updated_at, created_at) DESC, id DESC'
-  ).all(user.id);
-  const incoming = user.person_id
-    ? db.prepare(
-      `SELECT m.* FROM message m JOIN message_recipient r ON r.message_id = m.id
-        WHERE r.person_id = ? ORDER BY COALESCE(m.sent_at, m.created_at) DESC, m.id DESC`
-    ).all(user.person_id)
-    : [];
-  const states = new Map(db.prepare('SELECT message_id, read_at, archived_at FROM message_state WHERE user_id = ?').all(user.id).map((s) => [s.message_id, s]));
-  const row = (m) => mailRow(user, m, states.get(m.id));
-  const archived = new Map();
-  for (const m of [...incoming, ...outgoing]) if (states.get(m.id)?.archived_at) archived.set(m.id, m);
-  return {
-    inbox: incoming.filter((m) => m.status === 'SENT' && !states.get(m.id)?.archived_at).map(row),
-    outbox: outgoing.filter((m) => m.status === 'QUEUED' && !states.get(m.id)?.archived_at).map(row),
-    sent: outgoing.filter((m) => m.status === 'SENT' && !states.get(m.id)?.archived_at).map(row),
-    drafts: outgoing.filter((m) => m.status === 'DRAFT' && !states.get(m.id)?.archived_at).map(row),
-    archive: [...archived.values()].sort((a, b) => String(b.sent_at || b.updated_at).localeCompare(String(a.sent_at || a.updated_at))).map(row),
-  };
+// Folder definitions. Each mail folder is a query over message + the caller's
+// own state, so large mailboxes page on the server instead of in the browser.
+const MAIL_FOLDER_DEFS = {
+  mailinbox: { direction: 'in', status: 'SENT', archived: false },
+  outbox: { direction: 'out', status: 'QUEUED', archived: false },
+  mailsent: { direction: 'out', status: 'SENT', archived: false },
+  drafts: { direction: 'out', status: 'DRAFT', archived: false },
+  archive: { direction: 'any', status: null, archived: true },
+  // Any message this account sent or received; used for label views.
+  mailany: { direction: 'any', status: null, archived: null },
+};
+
+function mailWhere(user, def, opts = {}) {
+  const params = [];
+  let sql;
+  if (def.direction === 'out') {
+    sql = 'FROM message m WHERE m.sender_user_id = ?';
+    params.push(user.id);
+  } else if (def.direction === 'in') {
+    sql = 'FROM message m JOIN message_recipient mrx ON mrx.message_id = m.id AND mrx.person_id = ? WHERE 1 = 1';
+    params.push(user.person_id || -1);
+  } else {
+    sql = 'FROM message m WHERE (m.sender_user_id = ? OR EXISTS (SELECT 1 FROM message_recipient mrx WHERE mrx.message_id = m.id AND mrx.person_id = ?))';
+    params.push(user.id, user.person_id || -1);
+  }
+  if (def.status) { sql += ' AND m.status = ?'; params.push(def.status); }
+  if (def.archived === true) {
+    sql += ' AND EXISTS (SELECT 1 FROM message_state s WHERE s.user_id = ? AND s.message_id = m.id AND s.archived_at IS NOT NULL)';
+  } else if (def.archived === false) {
+    sql += ' AND NOT EXISTS (SELECT 1 FROM message_state s WHERE s.user_id = ? AND s.message_id = m.id AND s.archived_at IS NOT NULL)';
+  }
+  if (def.archived === true || def.archived === false) params.push(user.id);
+  if (opts.q) {
+    const like = `%${String(opts.q).slice(0, 120)}%`;
+    sql += ` AND (m.subject LIKE ? OR m.body LIKE ?
+      OR EXISTS (SELECT 1 FROM person sp WHERE sp.id = m.sender_person_id AND (sp.first_name || ' ' || COALESCE(sp.last_name, '')) LIKE ?)
+      OR EXISTS (SELECT 1 FROM message_recipient rr JOIN person rp ON rp.id = rr.person_id WHERE rr.message_id = m.id AND (rp.first_name || ' ' || COALESCE(rp.last_name, '')) LIKE ?))`;
+    params.push(like, like, like, like);
+  }
+  if (opts.label) {
+    sql += ' AND EXISTS (SELECT 1 FROM message_label ml JOIN mail_label l ON l.id = ml.label_id WHERE ml.user_id = ? AND ml.message_id = m.id AND l.name = ?)';
+    params.push(user.id, String(opts.label));
+  }
+  if (opts.actionOnly) sql += ' AND m.action_required = 1';
+  return { sql, params };
+}
+
+function queryMailFolder(user, opts = {}) {
+  const folder = MAIL_FOLDER_DEFS[opts.folder] ? opts.folder : 'mailinbox';
+  const def = MAIL_FOLDER_DEFS[folder];
+  const page = Math.max(1, Number(opts.page) || 1);
+  const pageSize = Math.min(200, Math.max(1, Number(opts.pageSize) || 50));
+  const where = mailWhere(user, def, opts);
+  const total = db.prepare(`SELECT COUNT(*) c ${where.sql}`).get(...where.params).c;
+  const rows = db.prepare(
+    `SELECT m.* ${where.sql} ORDER BY COALESCE(m.sent_at, m.scheduled_at, m.updated_at, m.created_at) DESC, m.id DESC LIMIT ? OFFSET ?`
+  ).all(...where.params, pageSize, (page - 1) * pageSize).map((m) => mailRow(user, m));
+  return { folder, rows, total, page, page_size: pageSize, has_more: (page - 1) * pageSize + rows.length < total };
+}
+
+function mailCounts(user) {
+  const counts = {};
+  for (const folder of Object.keys(MAIL_FOLDER_DEFS)) {
+    const where = mailWhere(user, MAIL_FOLDER_DEFS[folder]);
+    counts[folder] = db.prepare(`SELECT COUNT(*) c ${where.sql}`).get(...where.params).c;
+  }
+  const inbox = mailWhere(user, MAIL_FOLDER_DEFS.mailinbox);
+  counts.mailinbox_unread = db.prepare(
+    `SELECT COUNT(*) c ${inbox.sql}
+       AND NOT EXISTS (SELECT 1 FROM message_state rs WHERE rs.user_id = ? AND rs.message_id = m.id AND rs.read_at IS NOT NULL)`
+  ).get(...inbox.params, user.id).c;
+  return counts;
 }
 
 function mailVisible(user, id) {
@@ -632,6 +731,9 @@ router.post('/mailbox/messages', (req, res) => {
   const now = new Date().toISOString();
   const primary = rec.to[0];
   const recipientUser = primary ? primaryUserForPerson(primary.person_id) : null;
+  // A queued message is a scheduled one: without an explicit time it is due now
+  // and the next sweep delivers it.
+  const scheduledAt = status === 'QUEUED' ? (body.scheduled_at || now) : null;
   const id = insertRow('message', {
     sender_user_id: req.user.id,
     sender_person_id: req.user.person_id || null,
@@ -645,6 +747,9 @@ router.post('/mailbox/messages', (req, res) => {
     entity_type: body.entity_type || null,
     entity_id: body.entity_id ? Number(body.entity_id) : null,
     link: body.link || null,
+    action_required: body.action_required ? 1 : 0,
+    due_date: body.due_date || null,
+    scheduled_at: scheduledAt,
     thread_id: validThreadId(body.thread_id),
     parent_id: validThreadId(body.parent_id || body.reply_to_id || body.in_reply_to_id),
     forward_of_id: validThreadId(body.forward_of_id),
@@ -655,6 +760,7 @@ router.post('/mailbox/messages', (req, res) => {
   saveRecipients(id, rec.list);
   if (body.attachments !== undefined) saveAttachments(id, sanitizeAttachments(body.attachments));
   if (body.forward_of_id) cloneAttachments(body.forward_of_id, id);
+  if (status === 'SENT') deliverMessage(id, now);
   res.status(201).json(mailRow(req.user, get('message', id)));
 });
 
@@ -679,7 +785,13 @@ router.put('/mailbox/messages/:id', (req, res) => {
   if (body.category !== undefined && MAIL_CATEGORIES.has(body.category)) patch.category = body.category;
   if (body.priority !== undefined && MAIL_PRIORITIES.has(body.priority)) patch.priority = body.priority;
   if (body.link !== undefined) patch.link = body.link || null;
-  if (body.status !== undefined && MAIL_STATUSES.has(body.status) && body.status !== 'SENT') patch.status = body.status;
+  if (body.action_required !== undefined) patch.action_required = body.action_required ? 1 : 0;
+  if (body.due_date !== undefined) patch.due_date = body.due_date || null;
+  if (body.scheduled_at !== undefined) patch.scheduled_at = body.scheduled_at || null;
+  if (body.status !== undefined && MAIL_STATUSES.has(body.status) && body.status !== 'SENT') {
+    patch.status = body.status;
+    if (body.status === 'QUEUED' && !body.scheduled_at && !m.scheduled_at) patch.scheduled_at = new Date().toISOString();
+  }
   patch.updated_at = new Date().toISOString();
   updateRow('message', m.id, patch);
   if (rec) saveRecipients(m.id, rec.list);
@@ -737,7 +849,8 @@ router.post('/mailbox/messages/:id/send', (req, res) => {
   if (!fresh.subject) return res.status(400).json({ error: 'A subject is required to send a message' });
   const addressed = recipientRowsFor(m.id);
   if (!addressed.some((r) => r.kind === 'TO')) return res.status(400).json({ error: 'A To recipient is required' });
-  updateRow('message', m.id, { status: 'SENT', sent_at: now, updated_at: now });
+  updateRow('message', m.id, { status: 'SENT', sent_at: now, updated_at: now, scheduled_at: null });
+  deliverMessage(m.id, now);
   res.json(mailRow(req.user, get('message', m.id)));
 });
 
@@ -871,6 +984,7 @@ router.get('/mailbox/attachments/catalog', (req, res) => {
 
 router.get('/mailbox', (req, res) => {
   const user = req.user;
+  processOutbox();
   const tasks = taskRows(user);
   // The inbox is everything open that reaches this account: `taskRows` already
   // applies the chain-of-command visibility (a crew sees its crew's work, a
@@ -883,8 +997,8 @@ router.get('/mailbox', (req, res) => {
   const history = tasks.filter((task) => CLOSED.has(task.status) && taskInvolvement(user, task));
   const messages = messagesFor(user, tasks);
   const unreadMessages = messages.filter((message) => message.unread);
-  const mail = mailFolders(user);
-  const mailUnread = mail.inbox.filter((message) => message.unread).length;
+  const counts = mailCounts(user);
+  const firstPage = (folder) => queryMailFolder(user, { folder, pageSize: 50 }).rows;
   res.json({
     inbox: inbox.map((task) => threadSummary(task, user)),
     sent: sent.map((task) => threadSummary(task, user)),
@@ -893,30 +1007,31 @@ router.get('/mailbox', (req, res) => {
     messages,
     unread_messages: unreadMessages,
     unread_count: unreadMessages.length,
-    mail_inbox: mail.inbox,
-    mail_outbox: mail.outbox,
-    mail_sent: mail.sent,
-    mail_drafts: mail.drafts,
-    mail_archive: mail.archive,
-    mail_unread_count: mailUnread,
+    mail_inbox: firstPage('mailinbox'),
+    mail_outbox: firstPage('outbox'),
+    mail_sent: firstPage('mailsent'),
+    mail_drafts: firstPage('drafts'),
+    mail_archive: firstPage('archive'),
+    mail_unread_count: counts.mailinbox_unread,
     mail_counts: {
-      inbox: mail.inbox.length,
-      outbox: mail.outbox.length,
-      sent: mail.sent.length,
-      drafts: mail.drafts.length,
-      archive: mail.archive.length,
-      unread: mailUnread,
+      inbox: counts.mailinbox,
+      outbox: counts.outbox,
+      sent: counts.mailsent,
+      drafts: counts.drafts,
+      archive: counts.archive,
+      unread: counts.mailinbox_unread,
     },
   });
 });
 
 router.get('/mailbox/summary', (req, res) => {
   const user = req.user;
+  processOutbox();
   const tasks = taskRows(user);
   const messages = messagesFor(user, tasks);
   const unread = messages.filter((message) => message.unread);
-  const mail = mailFolders(user);
-  const mailUnread = mail.inbox.filter((message) => message.unread).length;
+  const counts = mailCounts(user);
+  const mailUnread = counts.mailinbox_unread;
   const byKind = {};
   for (const message of messages) byKind[message.kind] = (byKind[message.kind] || 0) + 1;
   const unreadByKind = {};
@@ -928,13 +1043,105 @@ router.get('/mailbox/summary', (req, res) => {
     report_count: messages.filter((message) => message.kind === 'REPORT').length,
     by_kind: byKind,
     unread_by_kind: unreadByKind,
-    mail_inbox_count: mail.inbox.length,
-    mail_outbox_count: mail.outbox.length,
-    mail_sent_count: mail.sent.length,
-    mail_drafts_count: mail.drafts.length,
-    mail_archive_count: mail.archive.length,
+    mail_inbox_count: counts.mailinbox,
+    mail_outbox_count: counts.outbox,
+    mail_sent_count: counts.mailsent,
+    mail_drafts_count: counts.drafts,
+    mail_archive_count: counts.archive,
     mail_unread_count: mailUnread,
   });
+});
+
+// Paginated, searchable mail folder feed. Keeps the browser from loading an
+// entire mailbox at once and powers label/action filtering.
+router.get('/mailbox/folder', (req, res) => {
+  processOutbox();
+  const user = req.user;
+  const page = queryMailFolder(user, {
+    folder: String(req.query.folder || 'mailinbox'),
+    q: String(req.query.q || '').trim(),
+    label: String(req.query.label || '').trim(),
+    actionOnly: req.query.action === '1',
+    page: req.query.page,
+    pageSize: req.query.page_size,
+  });
+  res.json(page);
+});
+
+// The account's private filing labels.
+router.get('/mailbox/labels', (req, res) => {
+  const counts = new Map(db.prepare('SELECT label_id, COUNT(*) c FROM message_label WHERE user_id = ? GROUP BY label_id')
+    .all(req.user.id).map((r) => [r.label_id, r.c]));
+  const rows = db.prepare('SELECT id, name, color, created_at FROM mail_label WHERE owner_user_id = ? ORDER BY name')
+    .all(req.user.id).map((l) => ({ ...l, count: counts.get(l.id) || 0 }));
+  res.json(rows);
+});
+
+router.post('/mailbox/labels', (req, res) => {
+  const name = String((req.body && req.body.name) || '').trim().slice(0, 40);
+  if (!name) return res.status(400).json({ error: 'A label name is required' });
+  const color = req.body && req.body.color ? String(req.body.color).slice(0, 20) : null;
+  if (db.prepare('SELECT id FROM mail_label WHERE owner_user_id = ? AND name = ?').get(req.user.id, name)) {
+    return res.status(409).json({ error: 'A label with that name already exists' });
+  }
+  const id = insertRow('mail_label', { owner_user_id: req.user.id, name, color, created_at: new Date().toISOString() });
+  res.status(201).json({ id, name, color, count: 0 });
+});
+
+router.put('/mailbox/labels/:id', (req, res) => {
+  const label = db.prepare('SELECT * FROM mail_label WHERE id = ? AND owner_user_id = ?').get(Number(req.params.id), req.user.id);
+  if (!label) return res.status(404).json({ error: 'Label not found' });
+  const patch = {};
+  if (req.body && req.body.name !== undefined) {
+    const name = String(req.body.name).trim().slice(0, 40);
+    if (!name) return res.status(400).json({ error: 'A label name is required' });
+    patch.name = name;
+  }
+  if (req.body && req.body.color !== undefined) patch.color = req.body.color ? String(req.body.color).slice(0, 20) : null;
+  if (Object.keys(patch).length) updateRow('mail_label', label.id, patch);
+  res.json(db.prepare('SELECT id, name, color FROM mail_label WHERE id = ?').get(label.id));
+});
+
+router.delete('/mailbox/labels/:id', (req, res) => {
+  const label = db.prepare('SELECT * FROM mail_label WHERE id = ? AND owner_user_id = ?').get(Number(req.params.id), req.user.id);
+  if (!label) return res.status(404).json({ error: 'Label not found' });
+  db.prepare('DELETE FROM message_label WHERE label_id = ?').run(label.id);
+  db.prepare('DELETE FROM mail_label WHERE id = ?').run(label.id);
+  res.json({ ok: true, id: label.id });
+});
+
+// One message, for the reader when the list is paged.
+router.get('/mailbox/messages/:id', (req, res) => {
+  processOutbox();
+  const m = mailParticipant(req.user, req.params.id);
+  if (!m) return res.status(404).json({ error: 'Message not found' });
+  res.json(mailRow(req.user, m));
+});
+
+// Replace this account's labels on a message.
+router.put('/mailbox/messages/:id/labels', (req, res) => {
+  const m = loadMailVisible(req, res);
+  if (!m) return;
+  const ids = Array.isArray(req.body && req.body.label_ids) ? req.body.label_ids.map(Number).filter(Boolean) : [];
+  const owned = new Set(db.prepare('SELECT id FROM mail_label WHERE owner_user_id = ?').all(req.user.id).map((l) => l.id));
+  db.prepare('DELETE FROM message_label WHERE user_id = ? AND message_id = ?').run(req.user.id, m.id);
+  const now = new Date().toISOString();
+  for (const id of ids) {
+    if (owned.has(id)) db.prepare('INSERT OR IGNORE INTO message_label (user_id, message_id, label_id, created_at) VALUES (?, ?, ?, ?)').run(req.user.id, m.id, id, now);
+  }
+  res.json({ message_id: m.id, labels: labelRowsFor(req.user.id, m.id) });
+});
+
+// A recipient acknowledges an action-required message.
+router.put('/mailbox/messages/:id/acknowledge', (req, res) => {
+  const m = loadMailVisible(req, res);
+  if (!m) return;
+  if (!req.user.person_id) return res.status(400).json({ error: 'No person is linked to this account' });
+  const row = db.prepare('SELECT id FROM message_recipient WHERE message_id = ? AND person_id = ?').get(m.id, req.user.person_id);
+  if (!row) return res.status(403).json({ error: 'Only a recipient can acknowledge this message' });
+  const at = new Date().toISOString();
+  db.prepare('UPDATE message_recipient SET acknowledged_at = COALESCE(acknowledged_at, ?) WHERE id = ?').run(at, row.id);
+  res.json({ message_id: m.id, acknowledged_at: at });
 });
 
 router.get('/mailbox/:taskId', (req, res) => {
@@ -1008,3 +1215,5 @@ router.put('/mailbox/message/:messageKey/read', (req, res) => {
 });
 
 module.exports = router;
+// Exposed so the server can sweep scheduled mail on a timer.
+module.exports.processOutbox = processOutbox;

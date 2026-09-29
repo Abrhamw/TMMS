@@ -26,6 +26,18 @@ const FOLDERS = [
 
 const MAIL_FOLDERS = new Set(FOLDERS.filter((f) => f.mail).map((f) => f.key));
 
+// Server folder keys returned in `mail_counts`, for badge totals that hold even
+// when only the first page of a folder has been loaded.
+const MAIL_COUNT_KEYS = { mailinbox: 'inbox', outbox: 'outbox', mailsent: 'sent', drafts: 'drafts', archive: 'archive' };
+
+// Format an ISO timestamp for a `datetime-local` input.
+function toLocalInput(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function folderRows(data, folder) {
   if (!data) return [];
   switch (folder) {
@@ -51,6 +63,10 @@ function folderCount(data, folder) {
   if (folder === 'unread') return data.unread_count || 0;
   if (folder === 'messages') return data.message_count || 0;
   if (folder === 'reports') return data.report_count || 0;
+  // Prefer the server-side count so the badge is right even before the folder
+  // is opened (or when only its first page has loaded).
+  const countKey = MAIL_COUNT_KEYS[folder];
+  if (countKey && data.mail_counts && data.mail_counts[countKey] != null) return data.mail_counts[countKey];
   return folderRows(data, folder).length;
 }
 
@@ -100,6 +116,18 @@ export default function Mailbox() {
   const [listLimit, setListLimit] = useState(60);
   const [error, setError] = useState(null);
   const [loadingThread, setLoadingThread] = useState(false);
+  // Server-paged mail feed (labels + search + pagination live on the server so a
+  // large mailbox never ships to the browser in one payload).
+  const [labels, setLabels] = useState([]);
+  const [labelView, setLabelView] = useState(null);
+  const [labelManage, setLabelManage] = useState(false);
+  const [actionOnly, setActionOnly] = useState(false);
+  const [serverPage, setServerPage] = useState(null);
+  const [loadingPage, setLoadingPage] = useState(false);
+
+  async function loadLabels() {
+    try { setLabels(await api.get('/mailbox/labels') || []); } catch (_) { /* labels are optional */ }
+  }
 
   async function load() {
     try {
@@ -113,7 +141,47 @@ export default function Mailbox() {
     } catch (e) { setError(e.message); }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); loadLabels(); }, []);
+
+  // A mail folder or a label drives the server-paged feed; other folders are the
+  // read-time task/report stream handled client-side below.
+  const useServerFeed = MAIL_FOLDERS.has(folder) || !!labelView;
+
+  function serverParams(page) {
+    const params = new URLSearchParams({
+      folder: labelView ? 'mailany' : folder,
+      page: String(page),
+      page_size: '50',
+    });
+    if (query.trim()) params.set('q', query.trim());
+    if (labelView) params.set('label', labelView);
+    if (actionOnly) params.set('action', '1');
+    return params.toString();
+  }
+
+  useEffect(() => {
+    if (!useServerFeed) { setServerPage(null); return undefined; }
+    let alive = true;
+    setLoadingPage(true);
+    const timer = setTimeout(async () => {
+      try {
+        const result = await api.get(`/mailbox/folder?${serverParams(1)}`);
+        if (alive) setServerPage(result);
+      } catch (e) { if (alive) setError(e.message); }
+      finally { if (alive) setLoadingPage(false); }
+    }, 200);
+    return () => { alive = false; clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folder, labelView, query, actionOnly, data]);
+
+  async function loadMoreMail() {
+    if (!serverPage || loadingPage) return;
+    setLoadingPage(true);
+    try {
+      const result = await api.get(`/mailbox/folder?${serverParams(serverPage.page + 1)}`);
+      setServerPage((cur) => (cur ? { ...result, rows: [...cur.rows, ...result.rows] } : result));
+    } catch (e) { setError(e.message); } finally { setLoadingPage(false); }
+  }
 
   // Keep the rendered list bounded: with hundreds of messages, painting every
   // row at once makes the pane sluggish. Reset to the first page whenever the
@@ -134,7 +202,10 @@ export default function Mailbox() {
   useEffect(() => {
     setError(null);
     if (selectedMessageKey) {
-      const message = findMessage(data, selectedMessageKey);
+      // A message opened from a server-paged folder/label is not in the first
+      // `/mailbox` payload, so resolve it from the loaded feed first.
+      const message = (serverPage?.rows || []).find((m) => m.key === selectedMessageKey)
+        || findMessage(data, selectedMessageKey);
       if (!message) return;
       let alive = true;
       setLoadingThread(true);
@@ -145,7 +216,9 @@ export default function Mailbox() {
         setLoadingThread(false);
         if (message.unread) {
           api.put(`/mailbox/messages/${message.id}/read`, {}).then(() => {
-            if (alive) setData((current) => markMailRead(current, message.id));
+            if (!alive) return;
+            setData((current) => markMailRead(current, message.id));
+            setServerPage((cur) => (cur ? { ...cur, rows: cur.rows.map((m) => (m.id === message.id ? { ...m, unread: false } : m)) } : cur));
           }).catch(() => {});
         }
         return () => { alive = false; };
@@ -194,26 +267,55 @@ export default function Mailbox() {
     return () => { alive = false; };
   }, [selectedId, selectedMessageKey]);
 
-  const sourceRows = folderRows(data, folder);
+  const sourceRows = useServerFeed ? (serverPage?.rows || []) : folderRows(data, folder);
   const needle = query.trim().toLowerCase();
-  const rows = needle
-    ? sourceRows.filter((item) => {
+  const rows = useServerFeed || !needle
+    ? sourceRows
+    : sourceRows.filter((item) => {
       const text = [
         item.task_number, item.title, item.subject, item.body, item.report_code,
         item.actor, item.recipient, item.category, item.line_name, item.crew_name, item.status,
         (item.tags || []).join(' '), item.latest?.summary,
       ].filter(Boolean).join(' ').toLowerCase();
       return text.includes(needle);
-    })
-    : sourceRows;
-  const visibleRows = rows.slice(0, listLimit);
+    });
+  const visibleRows = useServerFeed ? rows : rows.slice(0, listLimit);
 
   function selectFolder(key) {
     setFolder(key);
+    setLabelView(null);
     setCompose(null);
     const nextRows = folderRows(data, key);
     if (isMessageFolder(key)) { setSelectedId(null); setSelectedMessageKey(nextRows?.[0]?.key || null); }
     else { setSelectedMessageKey(null); setSelectedId(nextRows?.[0]?.id || null); }
+  }
+
+  function selectLabel(name) {
+    setCompose(null);
+    setSelectedId(null);
+    setSelectedMessageKey(null);
+    setLabelView((cur) => (cur === name ? null : name));
+  }
+
+  // Replace this account's labels on a message and refresh the sidebar counts.
+  async function setMessageLabels(messageId, labelIds) {
+    try {
+      await api.put(`/mailbox/messages/${messageId}/labels`, { label_ids: labelIds });
+      if (mailMessage && mailMessage.id === messageId) {
+        setMailMessage((cur) => (cur ? { ...cur, labels: labels.filter((l) => labelIds.includes(l.id)) } : cur));
+      }
+      await loadLabels();
+      if (labelView) await load();
+    } catch (e) { setError(e.message); }
+  }
+
+  // A recipient confirms an action-required message.
+  async function acknowledge(messageId) {
+    try {
+      const result = await api.put(`/mailbox/messages/${messageId}/acknowledge`, {});
+      setMailMessage((cur) => (cur ? { ...cur, my_acknowledged: true, my_acknowledged_at: result.acknowledged_at } : cur));
+      setServerPage((cur) => (cur ? { ...cur, rows: cur.rows.map((m) => (m.id === messageId ? { ...m, my_acknowledged: true, my_acknowledged_at: result.acknowledged_at } : m)) } : cur));
+    } catch (e) { setError(e.message); }
   }
 
   async function withReload(fn, notice) {
@@ -280,8 +382,8 @@ export default function Mailbox() {
             <div className="mailbox-unread-total"><b>{data.unread_count || 0}</b> {t('mailboxUnreadTotal')}</div>
             <div className="mailbox-folders" role="tablist" aria-label="Mailbox folders">
               {folders.map((item) => (
-                <button key={item.key} className={'mail-folder' + (folder === item.key && !compose ? ' active' : '')}
-                  role="tab" aria-selected={folder === item.key && !compose}
+                <button key={item.key} className={'mail-folder' + (folder === item.key && !compose && !labelView ? ' active' : '')}
+                  role="tab" aria-selected={folder === item.key && !compose && !labelView}
                   onClick={() => selectFolder(item.key)}>
                   <span>{t(item.labelKey)}</span>
                   {item.key === 'mailinbox' && data.mail_unread_count > 0
@@ -290,9 +392,36 @@ export default function Mailbox() {
                 </button>
               ))}
             </div>
+            <div className="mail-labels">
+              <div className="mail-labels-head">
+                <span>{t('mailboxLabels')}</span>
+                <button type="button" className="btn btn-sm" onClick={() => setLabelManage((v) => !v)}>
+                  {labelManage ? t('mailboxDone') : t('mailboxManageLabels')}
+                </button>
+              </div>
+              {labelManage && <LabelManager labels={labels} onChanged={loadLabels} />}
+              {!labelManage && labels.map((l) => (
+                <button key={l.id} type="button" className={'mail-label' + (labelView === l.name ? ' active' : '')}
+                  onClick={() => selectLabel(l.name)}>
+                  <span className="mail-label-dot" style={{ background: l.color || '#64748b' }} />
+                  <span className="mail-label-name">{l.name}</span>
+                  <b>{l.count}</b>
+                </button>
+              ))}
+              {!labelManage && !labels.length && <div className="muted mail-labels-empty">{t('mailboxNoLabels')}</div>}
+            </div>
             <SearchField value={query} onChange={setQuery} placeholder={t('mailboxSearch')} />
+            <label className="mail-action-filter">
+              <input type="checkbox" checked={actionOnly} onChange={(e) => setActionOnly(e.target.checked)} />
+              {t('mailboxActionOnly')}
+            </label>
+            {useServerFeed && serverPage && (
+              <div className="muted mail-result-count">
+                {labelView ? t('mailboxLabelView') + ': ' + labelView : t('mailboxFolderResults')} · {serverPage.total}
+              </div>
+            )}
             <div className="mail-thread-list">
-              {visibleRows.map((item) => isMessageFolder(folder) ? (
+              {visibleRows.map((item) => isMessageFolder(folder) || labelView ? (
                 <button key={item.key} className={'mail-thread' + (selectedMessageKey === item.key && !compose ? ' active' : '')}
                   onClick={() => { setCompose(null); setSelectedId(null); setSelectedMessageKey(item.key); }}>
                   <div className="spread">
@@ -300,6 +429,7 @@ export default function Mailbox() {
                     <span className="mail-kind">{item.kind === 'MAIL' ? tagLabel(item.category) : item.kind === 'REPORT' ? t('mailboxKindReport') : item.kind === 'COMMENT' ? t('mailboxKindMessage') : t('mailboxKindUpdate')}</span>
                   </div>
                   {item.unread && <span className="mail-unread">{t('mailboxUnreadOne')}</span>}
+                  {item.action_required && <span className="mail-action-badge">{t('mailboxActionRequired')}</span>}
                   <div className="mail-thread-title">{item.subject}</div>
                   <div className="muted mail-thread-meta">{item.kind === 'MAIL' ? `${item.actor} · ${fmtDate(item.at)}` : `${item.actor} · ${fmtDate(item.at)}`}</div>
                   <TagChips tags={item.tags} />
@@ -316,12 +446,19 @@ export default function Mailbox() {
                   <div className="mail-thread-last"><b>{item.latest?.actor || 'System'}</b><span>{item.latest?.summary}</span></div>
                 </button>
               ))}
-              {!rows.length && <div className="empty mailbox-empty">{t('mailboxEmptyFolder')}</div>}
-              {rows.length > visibleRows.length && (
-                <button type="button" className="btn btn-sm mail-more" onClick={() => setListLimit((n) => n + 60)}>
-                  {t('mailboxShowMore')} ({rows.length - visibleRows.length} {t('mailboxRemaining')})
-                </button>
-              )}
+              {loadingPage && !visibleRows.length && <Loading />}
+              {!rows.length && !loadingPage && <div className="empty mailbox-empty">{t('mailboxEmptyFolder')}</div>}
+              {useServerFeed
+                ? (serverPage && serverPage.has_more && (
+                  <button type="button" className="btn btn-sm mail-more" disabled={loadingPage} onClick={loadMoreMail}>
+                    {t('mailboxShowMore')}
+                  </button>
+                ))
+                : (rows.length > visibleRows.length && (
+                  <button type="button" className="btn btn-sm mail-more" onClick={() => setListLimit((n) => n + 60)}>
+                    {t('mailboxShowMore')} ({rows.length - visibleRows.length} {t('mailboxRemaining')})
+                  </button>
+                ))}
             </div>
           </aside>
           <section className="mailbox-reader">
@@ -347,6 +484,9 @@ export default function Mailbox() {
                   category: mailMessage.category,
                   priority: mailMessage.priority,
                   attachments: mailMessage.attachments || [],
+                  action_required: mailMessage.action_required,
+                  due_date: mailMessage.due_date,
+                  scheduled_at: mailMessage.scheduled_at,
                 })}
                 onSend={() => withReload(() => api.post(`/mailbox/messages/${mailMessage.id}/send`, {}))}
                 onArchive={() => withReload(() => api.put(`/mailbox/messages/${mailMessage.id}/archive`, {}))}
@@ -354,6 +494,9 @@ export default function Mailbox() {
                 onOpenLink={() => { if (mailMessage.link) nav(mailMessage.link); }}
                 onOpenTask={(tid) => nav(`/tasks/${tid}`)}
                 onPreview={setPreview}
+                allLabels={labels}
+                onLabels={(ids) => setMessageLabels(mailMessage.id, ids)}
+                onAcknowledge={() => acknowledge(mailMessage.id)}
               />
             ) : reportDocument ? (
               <ReportReader report={reportDocument} onOpen={() => nav(`/reports?report=${reportDocument.id}`)} />
@@ -516,10 +659,15 @@ function MailAttachmentPreview({ attachment, onClose, onOpenTask }) {
   );
 }
 
-function MailReader({ message, me, onReply, onReplyAll, onForward, onEdit, onSend, onArchive, onUnarchive, onOpenLink, onPreview, onOpenTask }) {
+function MailReader({ message, me, onReply, onReplyAll, onForward, onEdit, onSend, onArchive, onUnarchive, onOpenLink, onPreview, onOpenTask, allLabels, onLabels, onAcknowledge }) {
   const isDraft = message.status === 'DRAFT' || message.status === 'QUEUED';
   const mineIsSender = message.sender_person_id === me.person_id;
   const attachments = message.attachments || [];
+  const labels = message.labels || [];
+  const labelIds = labels.map((l) => l.id);
+  const availableLabels = (allLabels || []).filter((l) => !labelIds.includes(l.id));
+  const isRecipient = !!message.my_kind;
+  const canAcknowledge = onAcknowledge && message.action_required && isRecipient;
   const linkedTaskId = (() => {
     const m = /\/tasks\/(\d+)/.exec(message.link || '');
     return m ? m[1] : null;
@@ -559,8 +707,38 @@ function MailReader({ message, me, onReply, onReplyAll, onForward, onEdit, onSen
           {cc.length > 0 && <span>{t('mailboxCc')}: {cc.map((r) => r.name).join(', ')}</span>}
           {bcc.length > 0 && <span>{t('mailboxBcc')}: {bcc.map((r) => r.name).join(', ')}</span>}
           {message.sent_at && <span>{t('mailboxSentAt')} {fmtDateTime(message.sent_at)}</span>}
+          {isDraft && message.scheduled_at && <span>{t('mailboxScheduledFor')} {fmtDateTime(message.scheduled_at)}</span>}
+          {message.action_required && message.due_date && <span className="mail-due">{t('mailboxDue')} {fmtDate(message.due_date)}</span>}
           <TagChips tags={message.tags} />
         </div>
+        {(message.action_required || labels.length > 0 || onLabels) && (
+          <div className="mail-reader-tags">
+            {message.action_required && (
+              <span className={'mail-action-banner' + (message.my_acknowledged ? ' done' : '')}>
+                {t('mailboxActionRequired')}
+                {canAcknowledge
+                  ? (message.my_acknowledged
+                    ? <span className="mail-ack-done"> · {t('mailboxAcknowledged')} {fmtDateTime(message.my_acknowledged_at)}</span>
+                    : <button type="button" className="btn btn-sm btn-primary" onClick={onAcknowledge}>{t('mailboxAcknowledge')}</button>)
+                  : null}
+              </span>
+            )}
+            {labels.map((l) => (
+              <span key={l.id} className="mail-label-chip" style={{ borderColor: l.color || '#64748b' }}>
+                <span className="mail-label-dot" style={{ background: l.color || '#64748b' }} />{l.name}
+                {onLabels && <button type="button" className="mail-attach-x" title={t('mailboxAttachRemove')}
+                  onClick={() => onLabels(labelIds.filter((id) => id !== l.id))}>{'×'}</button>}
+              </span>
+            ))}
+            {onLabels && availableLabels.length > 0 && (
+              <SearchSelect className="mail-label-add" value="" aria-label={t('mailboxAddLabel')}
+                onChange={(e) => { if (e.target.value) onLabels([...labelIds, Number(e.target.value)]); }}>
+                <option value="">{t('mailboxAddLabel')}</option>
+                {availableLabels.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </SearchSelect>
+            )}
+          </div>
+        )}
         {receipts.length > 0 && (
           <div className="mail-receipts">
             <span className="muted">{t('mailboxReadReceipts')}: {receiptRead}/{receipts.length}</span>
@@ -770,6 +948,9 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
   const [body, setBody] = useState(initial?.body || '');
   const [category, setCategory] = useState(initial?.category || 'GENERAL');
   const [priority, setPriority] = useState(initial?.priority || 'NORMAL');
+  const [actionRequired, setActionRequired] = useState(!!initial?.action_required);
+  const [dueDate, setDueDate] = useState(initial?.due_date || '');
+  const [schedule, setSchedule] = useState(initial?.scheduled_at ? toLocalInput(initial.scheduled_at) : '');
   const [attachments, setAttachments] = useState(() => (initial?.attachments || []).map((a) => ({
     id: a.id,
     kind: a.kind || 'FILE',
@@ -806,6 +987,9 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
     if (status !== 'DRAFT' && !to.length) { setErr(t('mailboxRecipientRequired')); return; }
     if (status === 'SENT' && !subject.trim()) { setErr(t('mailboxSubjectRequired')); return; }
     if (!subject.trim() && !body.trim()) { setErr(t('mailboxBodyRequired')); return; }
+    // A send with a future time is held in the Outbox and delivered when due.
+    const scheduledAt = schedule ? new Date(schedule).toISOString() : null;
+    const effectiveStatus = status === 'SENT' && scheduledAt && new Date(schedule) > new Date() ? 'QUEUED' : status;
     setBusy(true);
     try {
       const payload = {
@@ -816,7 +1000,10 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
         body: body.trim(),
         category,
         priority,
-        status,
+        status: effectiveStatus,
+        scheduled_at: scheduledAt,
+        action_required: actionRequired,
+        due_date: actionRequired && dueDate ? dueDate : null,
         thread_id: initial?.thread_id || null,
         parent_id: initial?.parent_id || null,
         attachments: attachments.map((a) => ({
@@ -833,7 +1020,7 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
       };
       if (initial?.editId) {
         await api.put(`/mailbox/messages/${initial.editId}`, payload);
-        if (status === 'SENT') await api.post(`/mailbox/messages/${initial.editId}/send`, {});
+        if (effectiveStatus === 'SENT') await api.post(`/mailbox/messages/${initial.editId}/send`, {});
       } else {
         await api.post('/mailbox/messages', payload);
       }
@@ -886,12 +1073,33 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
             </select>
           </div>
           <div className="field full"><label>{t('mailboxMessage')}</label><textarea value={body} onChange={(e) => setBody(e.target.value)} style={{ minHeight: 140 }} /></div>
+          <div className="field full mail-task-options">
+            <label className="mail-check">
+              <input type="checkbox" checked={actionRequired} onChange={(e) => setActionRequired(e.target.checked)} />
+              {t('mailboxActionRequired')}
+            </label>
+            {actionRequired && (
+              <label className="mail-due-field">
+                {t('mailboxDue')}
+                <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+              </label>
+            )}
+          </div>
+          <div className="field full">
+            <label>{t('mailboxScheduleSend')}</label>
+            <input type="datetime-local" value={schedule} onChange={(e) => setSchedule(e.target.value)} />
+            <span className="muted mail-schedule-hint">
+              {schedule ? t('mailboxScheduleHint') : t('mailboxScheduleNow')}
+            </span>
+          </div>
         </div>
       </div>
       <div className="mail-compose-actions">
         <button type="button" className="btn" disabled={busy} onClick={() => save('DRAFT')}>{t('mailboxSaveDraft')}</button>
         <button type="button" className="btn" disabled={busy} onClick={() => save('QUEUED')}>{t('mailboxQueue')}</button>
-        <button type="button" className="btn btn-primary" disabled={busy} onClick={() => save('SENT')}>{t('mailboxSend')}</button>
+        <button type="button" className="btn btn-primary" disabled={busy} onClick={() => save('SENT')}>
+          {schedule && new Date(schedule) > new Date() ? t('mailboxScheduleSend') : t('mailboxSend')}
+        </button>
       </div>
     </>
   );
@@ -914,5 +1122,58 @@ function ReportReader({ report, onOpen }) {
         <ReportView data={report.data} />
       </div>
     </>
+  );
+}
+
+// Create, rename and remove the account's private filing labels.
+function LabelManager({ labels, onChanged }) {
+  const [name, setName] = useState('');
+  const [editing, setEditing] = useState(null);
+  const [err, setErr] = useState(null);
+
+  async function create() {
+    if (!name.trim()) return;
+    try { await api.post('/mailbox/labels', { name: name.trim() }); setName(''); setErr(null); await onChanged(); }
+    catch (e) { setErr(e.message); }
+  }
+
+  async function rename(label) {
+    try { await api.put(`/mailbox/labels/${label.id}`, { name: editing.name }); setEditing(null); setErr(null); await onChanged(); }
+    catch (e) { setErr(e.message); }
+  }
+
+  async function remove(label) {
+    try { await api.del(`/mailbox/labels/${label.id}`); setErr(null); await onChanged(); }
+    catch (e) { setErr(e.message); }
+  }
+
+  return (
+    <div className="mail-label-manager">
+      {err && <div className="muted mail-label-err">{err}</div>}
+      <div className="mail-label-create">
+        <input value={name} maxLength={40} placeholder={t('mailboxNewLabel')}
+          onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') create(); }} />
+        <button type="button" className="btn btn-sm" onClick={create}>{t('mailboxAddLabel')}</button>
+      </div>
+      {labels.map((l) => (
+        <div key={l.id} className="mail-label-row">
+          <span className="mail-label-dot" style={{ background: l.color || '#64748b' }} />
+          {editing && editing.id === l.id ? (
+            <>
+              <input className="mail-label-rename" value={editing.name} maxLength={40}
+                onChange={(e) => setEditing({ id: l.id, name: e.target.value })}
+                onKeyDown={(e) => { if (e.key === 'Enter') rename(l); }} />
+              <button type="button" className="btn btn-sm" onClick={() => rename(l)}>{t('save')}</button>
+            </>
+          ) : (
+            <>
+              <span className="mail-label-name">{l.name}</span>
+              <button type="button" className="btn btn-sm" onClick={() => setEditing({ id: l.id, name: l.name })}>{t('edit')}</button>
+            </>
+          )}
+          <button type="button" className="btn btn-sm" onClick={() => remove(l)}>{t('delete')}</button>
+        </div>
+      ))}
+    </div>
   );
 }
