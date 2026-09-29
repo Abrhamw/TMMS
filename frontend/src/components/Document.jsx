@@ -196,15 +196,18 @@ function CrewDocument({ d }) {
         <table>
           <thead><tr><th>Person</th><th>Certification</th><th>Issued</th><th>Expires</th><th>Status</th></tr></thead>
           <tbody>
-            {(d.certs || []).map((c) => (
-              <tr key={c.id}>
-                <td>{c.person_id}</td>
-                <td>{c.cert_type}</td>
-                <td className="nowrap">{fmtDate(c.issued_at)}</td>
-                <td className="nowrap">{fmtDate(c.expires_at)}</td>
-                <td><Pill value={c.status} /></td>
-              </tr>
-            ))}
+            {(d.certs || []).map((c) => {
+              const who = [c.first_name, c.last_name].filter(Boolean).join(' ');
+              return (
+                <tr key={c.id}>
+                  <td>{who || `Person #${c.person_id}`}</td>
+                  <td>{c.cert_type}</td>
+                  <td className="nowrap">{fmtDate(c.issued_at)}</td>
+                  <td className="nowrap">{fmtDate(c.expires_at)}</td>
+                  <td><Pill value={c.status} /></td>
+                </tr>
+              );
+            })}
             {(d.certs || []).length === 0 && <tr><td colSpan={5} className="muted center">No certifications.</td></tr>}
           </tbody>
         </table>
