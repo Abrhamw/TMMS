@@ -3,6 +3,7 @@ import { SearchSelect, Page, Empty, ErrorNote, Loading, Modal, Pill } from '../c
 import { api, fmtDateTime } from '../api';
 import { t, setLanguage, LOCALES } from '../i18n';
 import { can, getStoredUser } from '../auth';
+import { peopleInRegion } from '../cascade';
 
 const ROLES = ['ADMIN', 'EXECUTIVE', 'VIEWER', 'AUDITOR', 'REGION_DIRECTOR', 'REGION_MANAGER', 'OT_MANAGER', 'SUBSTATION_MANAGER', 'TRANSMISSION_MANAGER', 'RELAY_SCADA_MANAGER', 'SUPERVISOR', 'PLANNER', 'DISPATCHER', 'CREW_LEAD', 'CREW_MEMBER', 'FIELD_CREW'];
 const LEGACY_ROLES = new Set(['SUBSTATION_MANAGER', 'TRANSMISSION_MANAGER', 'RELAY_SCADA_MANAGER']);
@@ -186,6 +187,13 @@ export default function Settings() {
   if (can(me, 'people:read')) tabs.push({ id: 'persons', label: t('persons') });
   if (isAdmin) tabs.push({ id: 'users', label: t('users') });
 
+  // The linked-person picker narrows to the account's region; a person already
+  // attached from another region is kept visible so the edit is not destructive.
+  const userFormPeople = peopleInRegion(people, userForm?.region_id);
+  const staleUserPerson = userForm?.person_id && !userFormPeople.some((p) => String(p.id) === String(userForm.person_id))
+    ? people.find((p) => String(p.id) === String(userForm.person_id))
+    : null;
+
   return (
     <Page title={t('settings')} crumbs="TMMS / System">
       <div className="tabs">
@@ -305,14 +313,17 @@ export default function Settings() {
                     {ROLES.map((r) => <option key={r}>{LEGACY_ROLES.has(r) ? `${r} (legacy)` : r}</option>)}
                   </SearchSelect></div>
                 <div className="field"><label>{t('region')}</label>
-                  <SearchSelect value={userForm.region_id} onChange={(e) => setUserForm({ ...userForm, region_id: e.target.value })}>
+                  <SearchSelect value={userForm.region_id} onChange={(e) => setUserForm({ ...userForm, region_id: e.target.value, person_id: '' })}>
                     <option value="">{t('allRegions')}</option>
                     {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
                   </SearchSelect></div>
                 <div className="field"><label>{t('linkedPerson')}</label>
                   <SearchSelect value={userForm.person_id} onChange={(e) => setUserForm({ ...userForm, person_id: e.target.value })}>
                     <option value="">— {t('none')} —</option>
-                    {people.map((p) => <option key={p.id} value={p.id}>{p.first_name} {p.last_name}</option>)}
+                    {userForm.person_id && !userFormPeople.some((p) => String(p.id) === String(userForm.person_id)) && (
+                      <option value={userForm.person_id}>{staleUserPerson ? `${staleUserPerson.first_name} ${staleUserPerson.last_name}` : `Person #${userForm.person_id}`}</option>
+                    )}
+                    {userFormPeople.map((p) => <option key={p.id} value={p.id}>{p.first_name} {p.last_name}</option>)}
                   </SearchSelect></div>
                 <div className="field"><label>{t('status')}</label>
                   <SearchSelect value={userForm.active ? 1 : 0} onChange={(e) => setUserForm({ ...userForm, active: Number(e.target.value) === 1 })}>

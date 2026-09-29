@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, fmtDate } from '../api';
 import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
-import { assetsInScope, linesInRegion, subsInRegion, towersForLine } from '../cascade';
+import { assetsInScope, crewsInRegion, linesInRegion, subsInRegion, towersInScope } from '../cascade';
 import { t } from '../i18n';
 
 const SCOPE = ['ASSET', 'SUBSTATION', 'LINE', 'LINE_TOWERS', 'TOWER', 'ASSET_CLASS'];
@@ -126,12 +126,11 @@ export default function Schedules() {
     () => assetsInScope(assets, { regionId: form?.region_id }, { subs, lines }),
     [assets, form?.region_id, subs, lines]
   );
-  const formTowers = useMemo(() => {
-    const base = form?.line_id ? towersForLine(towers, form.line_id) : towers;
-    if (!form?.region_id) return base;
-    const lineIds = new Set(linesInRegion(lines, form.region_id).map((l) => String(l.id)));
-    return base.filter((tw) => lineIds.has(String(tw.line_id)));
-  }, [towers, form?.line_id, form?.region_id, lines]);
+  const formTowers = useMemo(
+    () => towersInScope(towers, { regionId: form?.region_id, lineId: form?.line_id }, { lines }),
+    [towers, form?.region_id, form?.line_id, lines]
+  );
+  const formCrews = useMemo(() => crewsInRegion(crews, form?.region_id), [crews, form?.region_id]);
 
   async function toggleActive(s) {
     try {
@@ -401,7 +400,7 @@ export default function Schedules() {
             <div className="field"><label>{t('schedResponsibleCrew')}</label>
               <SearchSelect value={form.responsible_crew_id || ''} onChange={(e) => setForm({ ...form, responsible_crew_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">{t('schedNoneOption')}</option>
-                {crews.map((c) => (
+                {formCrews.map((c) => (
                   <option key={c.id} value={c.id} disabled={c.status === 'OFF_DUTY' || c.status === 'UNAVAILABLE'}>
                     {c.name} ({c.status}{c.open_task_count ? ` · ${c.open_task_count} active` : ''})
                   </option>

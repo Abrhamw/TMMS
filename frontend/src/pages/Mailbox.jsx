@@ -1229,21 +1229,21 @@ function MailCompose({ initial, me, onCancel, onSaved }) {
           <div className="field full"><label>{t('mailboxSubject')}</label><input value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
           <AttachmentField value={attachments} onChange={setAttachments} />
           <div className="field"><label>{t('mailboxCategory')}</label>
-            <select value={category} onChange={(e) => setCategory(e.target.value)}>
+            <SearchSelect value={category} onChange={(e) => setCategory(e.target.value)}>
               <option value="GENERAL">GENERAL</option>
               <option value="REPORT">REPORT</option>
               <option value="EXECUTION">EXECUTION</option>
               <option value="REQUEST">REQUEST</option>
               <option value="ALERT">ALERT</option>
-            </select>
+            </SearchSelect>
           </div>
           <div className="field"><label>{t('mailboxPriority')}</label>
-            <select value={priority} onChange={(e) => setPriority(e.target.value)}>
+            <SearchSelect value={priority} onChange={(e) => setPriority(e.target.value)}>
               <option value="LOW">LOW</option>
               <option value="NORMAL">NORMAL</option>
               <option value="HIGH">HIGH</option>
               <option value="URGENT">URGENT</option>
-            </select>
+            </SearchSelect>
           </div>
           <div className="field full"><label>{t('mailboxMessage')}</label><textarea value={body} onChange={(e) => setBody(e.target.value)} style={{ minHeight: 140 }} /></div>
           <div className="field full mail-task-options">

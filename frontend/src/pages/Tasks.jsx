@@ -3,7 +3,7 @@ import { api, fmtDate, STATUS_COLORS } from '../api';
 import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, Progress, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser, getStoredToken } from '../auth';
 import { KpiTile } from '../components/InfraVisuals';
-import { assetsInScope, linesInRegion, subsInRegion } from '../cascade';
+import { assetsInScope, crewsInRegion, linesInRegion, subsInRegion, towersInScope } from '../cascade';
 
 const TITLE = 'Maintenance Tasks';
 const CRUMBS = 'TMMS / Operations';
@@ -53,16 +53,29 @@ export default function Tasks() {
   // chosen substation or line narrows the assets to that exact parent.
   const filterSubs = useMemo(() => subsInRegion(subs, regionF), [subs, regionF]);
   const filterLines = useMemo(() => linesInRegion(lines, regionF), [lines, regionF]);
+  const filterTowers = useMemo(
+    () => towersInScope(towers, { regionId: regionF, lineId: lineF }, { lines }),
+    [towers, regionF, lineF, lines]
+  );
   const filterAssets = useMemo(
     () => assetsInScope(assets, { regionId: regionF, substationId: subF, lineId: lineF }, { subs, lines }),
     [assets, regionF, subF, lineF, subs, lines]
   );
   const formSubs = useMemo(() => subsInRegion(subs, form?.region_id), [subs, form?.region_id]);
   const formLines = useMemo(() => linesInRegion(lines, form?.region_id), [lines, form?.region_id]);
+  const formTowers = useMemo(
+    () => towersInScope(towers, { regionId: form?.region_id, lineId: form?.line_id }, { lines }),
+    [towers, form?.region_id, form?.line_id, lines]
+  );
   const formAssets = useMemo(
     () => assetsInScope(assets, { regionId: form?.region_id, substationId: form?.substation_id, lineId: form?.line_id }, { subs, lines }),
     [assets, form?.region_id, form?.substation_id, form?.line_id, subs, lines]
   );
+  // Crew pickers narrow to the selected region when one is chosen; with no
+  // region they keep showing every crew the user may assign.
+  const filterCrews = useMemo(() => crewsInRegion(crews, regionF), [crews, regionF]);
+  const formCrews = useMemo(() => crewsInRegion(crews, form?.region_id), [crews, form?.region_id]);
+  const bulkCrews = useMemo(() => crewsInRegion(assignableCrews, regionF), [assignableCrews, regionF]);
 
   const noteFor = (task, dispatch) => {
     if (!dispatch) return null;
@@ -237,7 +250,7 @@ export default function Tasks() {
         </SearchSelect>
         <SearchSelect value={towerF} onChange={(e) => { setTowerF(e.target.value); if (e.target.value) { const tw = towers.find((x) => x.id === Number(e.target.value)); if (tw && tw.line_id) setLineF(String(tw.line_id)); } }}>
           <option value="">All towers</option>
-          {(lineF ? towers.filter((tw) => tw.line_id === Number(lineF)) : towers).map((tw) => <option key={tw.id} value={tw.id}>{tw.tower_id}</option>)}
+          {(filterTowers).map((tw) => <option key={tw.id} value={tw.id}>{tw.tower_id}</option>)}
         </SearchSelect>
         <SearchSelect value={assetF} onChange={(e) => setAssetF(e.target.value)}>
           <option value="">All assets</option>
@@ -245,7 +258,7 @@ export default function Tasks() {
         </SearchSelect>
         <SearchSelect value={crewF} onChange={(e) => setCrewF(e.target.value)}>
           <option value="">All crews</option>
-          {crews.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          {filterCrews.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </SearchSelect>
       </div>
       <div className="card">
@@ -269,7 +282,7 @@ export default function Tasks() {
             {bulkMode === 'assign' && (
               <SearchSelect value={bulkVal} onChange={(e) => setBulkVal(e.target.value)}>
                 <option value="">Choose crew…</option>
-                {assignableCrews.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {bulkCrews.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </SearchSelect>
             )}
             <button className="btn btn-sm btn-primary" disabled={!bulkMode || (!bulkVal && bulkMode !== 'priority')} onClick={applyBulk}>Apply</button>
@@ -353,7 +366,7 @@ export default function Tasks() {
                 setForm({ ...form, tower_id: tid, line_id: tw ? tw.line_id : form.line_id });
               }}>
                 <option value="">— none —</option>
-                {(form.line_id ? towers.filter((tw) => tw.line_id === Number(form.line_id)) : towers).map((tw) => (
+                {(formTowers).map((tw) => (
                   <option key={tw.id} value={tw.id}>{tw.tower_id} ({tw.tower_number})</option>
                 ))}
               </SearchSelect></div>
@@ -391,7 +404,7 @@ export default function Tasks() {
             <div className="field"><label>Crew</label>
               <SearchSelect value={form.crew_id || ''} onChange={(e) => setForm({ ...form, crew_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">— none —</option>
-                {crews.map((c) => (
+                {formCrews.map((c) => (
                   <option key={c.id} value={c.id} disabled={c.status === 'OFF_DUTY' || c.status === 'UNAVAILABLE'}>
                     {c.name} ({c.status}{c.open_task_count ? ` · ${c.open_task_count} active` : ''})
                   </option>
