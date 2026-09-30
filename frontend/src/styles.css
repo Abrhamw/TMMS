@@ -466,7 +466,12 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
   .main-col { display: block !important; }
   .main, .content { padding: 0 !important; margin: 0 !important; }
   .content, .content-fill { display: block !important; height: auto !important; min-height: 0 !important; overflow: visible !important; }
-  .grid-2, .grid-3, .grid-4 { grid-template-columns: minmax(0, 1fr) !important; }
+  /* Keep the multi-up KPI / metric / photo groups readable on paper. Collapsing
+     every grid to a single column wasted most of each sheet (a 4-up card row
+     became four full-width rows) and pushed sections onto fresh pages. */
+  .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+  .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
   .card { box-shadow: none !important; border: 1px solid #ddd !important; break-inside: auto; }
   .modal-backdrop { display: none !important; }
   .modal-backdrop.print-area { display: block !important; position: static !important; background: none !important; padding: 0 !important; overflow: visible !important; }
@@ -479,16 +484,16 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
      sheet — on paper there is no scrolling, so every cell must wrap. */
   .tbl-wrap { overflow: visible !important; }
   table { width: 100% !important; table-layout: auto; font-size: 10px; }
-  th, td { padding: 5px 6px !important; vertical-align: top; overflow-wrap: anywhere; word-break: break-word; }
+  th, td { padding: 5px 6px !important; vertical-align: top; overflow-wrap: break-word; }
   th { white-space: normal !important; }
   thead { display: table-header-group; }
   tr { break-inside: avoid; }
-  .pill { white-space: normal !important; }
-  .target-split { grid-template-columns: minmax(0, 1fr) 220px; break-inside: avoid; }
+  /* Status pills are short labels — never let them split mid-word ("Assign ed"). */
+  .pill { white-space: nowrap !important; }
+  .target-split { grid-template-columns: minmax(0, 1fr); break-inside: avoid; }
   .target-split-map svg { break-inside: avoid; }
   .target-map { break-inside: avoid; }
   .target-map-caption { font-size: 10px; overflow-wrap: anywhere; }
-  .target-split { grid-template-columns: minmax(0, 1fr); }
   .target-split-map .target-map svg { width: 100% !important; max-width: 640px; max-height: 300px; margin: 0 auto; }
   .note { break-inside: avoid; }
   .equip-item { break-inside: avoid; }
@@ -1129,6 +1134,7 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
 
 @media print {
   .exec-toggle { display: none !important; }
+  .exec-title .mono { white-space: nowrap; }
   .exec-card { break-inside: auto; }
   .exec-card.open { break-inside: avoid; }
   .exec-outcomes { break-after: avoid; }
@@ -1223,8 +1229,13 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
 @media print {
   .analytics { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   .analytics .kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .analytics-charts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .chart-card, .eval-card, .finding, .rec { break-inside: avoid; }
+  /* Charts flow full-width on paper: a 2-up grid left a dangling half-empty
+     card on the next sheet and, because each card refused to split, the whole
+     row jumped to a fresh page leaving the previous one half blank. */
+  .analytics-charts { display: block; }
+  .chart-card { break-inside: auto; margin-bottom: 10px; }
+  .eval-card { break-inside: auto; }
+  .finding, .rec, .bar-row, .donut-card { break-inside: avoid; }
   .chart-title, .eval-head, .section-title { break-after: avoid; }
   .bar-track { background: #eef2ff !important; }
 }

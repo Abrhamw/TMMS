@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, fmtDate, fmtMoney } from '../api';
 import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, MoneyCard, SearchField, useSearchFilter } from '../components';
@@ -214,11 +214,18 @@ export default function Reports() {
 
   // Deep link from the mailbox: /reports?report=<id> opens the saved report in
   // the reader, and /reports?document=<TYPE>&id=<id> opens an entity document.
-  // The query params are cleared afterwards so the URL stays clean.
+  // A handled-key ref dedupes the StrictMode double-invoke while the query
+  // params are cleared afterwards so the URL stays clean — clearing the params
+  // re-runs this effect, so we must not cancel the in-flight load on cleanup
+  // (that left the reader blank).
+  const deepLinkRef = useRef('');
   useEffect(() => {
     const dtype = searchParams.get('document');
     const did = searchParams.get('id');
     if (dtype && did) {
+      const key = `doc:${dtype}:${did}`;
+      if (deepLinkRef.current === key) return undefined;
+      deepLinkRef.current = key;
       setView(null);
       setDocuments([]);
       openDocument(dtype, did);
@@ -227,13 +234,15 @@ export default function Reports() {
     }
     const rid = searchParams.get('report');
     if (!rid) return undefined;
-    let alive = true;
+    const key = `rep:${rid}`;
+    if (deepLinkRef.current === key) return undefined;
+    deepLinkRef.current = key;
     setDocuments([]);
     api.get(`/reports/${encodeURIComponent(rid)}`)
-      .then((res) => { if (alive) setView(res); })
-      .catch((e) => { if (alive) setError(e.message); });
+      .then((res) => setView(res))
+      .catch((e) => setError(e.message));
     setSearchParams({}, { replace: true });
-    return () => { alive = false; };
+    return undefined;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
