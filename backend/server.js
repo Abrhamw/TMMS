@@ -104,4 +104,16 @@ setInterval(() => { try { mailboxRouter.processOutbox(); } catch (_) { /* non-fa
 try { reportsRouter.runReportSchedules(); } catch (_) { /* non-fatal */ }
 setInterval(() => { try { reportsRouter.runReportSchedules(); } catch (_) { /* non-fatal */ } }, 5 * 60 * 1000);
 
+// Asset-condition monitoring agent: revalue every evidence-bearing asset, log
+// condition drift and raise a revaluation report when assets degrade. Idempotent
+// (snapshots are only appended on change), so re-running is cheap and quiet.
+function runAssetMonitor() {
+  try {
+    const r = reportsRouter.runAssetMonitor();
+    if (r.changed) console.log(`[asset-monitor] evaluated ${r.evaluated}, changed ${r.changed}, degraded ${r.degraded.length}, improved ${r.improved.length}`);
+  } catch (_) { /* non-fatal */ }
+}
+runAssetMonitor();
+setInterval(runAssetMonitor, 6 * 3600 * 1000);
+
 module.exports = app;

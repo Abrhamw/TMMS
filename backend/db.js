@@ -455,8 +455,25 @@ function initSchema() {
     created_at TEXT NOT NULL
   );
 
-  CREATE TABLE IF NOT EXISTS audit_log (
+  -- Evidence-based condition history written by the asset monitoring agent.
+  -- Each row is one revaluation result per asset; the agent only appends a row
+  -- when the suggested rating or recommendation actually changes, so the table
+  -- is a change log rather than a per-run dump.
+  CREATE TABLE IF NOT EXISTS asset_health_snapshot (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id INTEGER NOT NULL REFERENCES asset(id),
+    captured_at TEXT NOT NULL,
+    condition_rating REAL,
+    suggested_rating REAL,
+    health_index REAL,
+    remaining_useful_life_years REAL,
+    recommendation TEXT,
+    source TEXT NOT NULL DEFAULT 'AGENT',
+    reasons TEXT,
+    report_id INTEGER REFERENCES report(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS audit_log (    id INTEGER PRIMARY KEY AUTOINCREMENT,
     actor TEXT NOT NULL DEFAULT 'system',
     action TEXT NOT NULL,
     entity TEXT NOT NULL,

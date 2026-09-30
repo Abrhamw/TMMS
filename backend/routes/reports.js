@@ -10,6 +10,8 @@ const { deriveCrewStatus } = require('../crewStatus');
 const { taskReadiness, crewReadiness, personPerformanceRows, crewRosterPersonIds } = require('../readiness');
 const { targetHeadline, resolveTarget } = require('../target');
 const { sendMail } = require('../mail');
+const { buildAnalytics } = require('../analytics');
+const { recentRevaluationData, revalueAssets, changesToData, monitorSummary } = require('../assetMonitor');
 
 function moneyStr(v, code) {
   try {
@@ -130,7 +132,21 @@ function checklistsWithItems(executions) {
   });
 }
 
+// Attach a normalised analytics + expert-evaluation block to every report so
+// charts, KPI tiles and the graded narrative are available to the viewer,
+// exports and shared/printed copies alike.
 function compute(reportType, params, user) {
+  const data = computeRaw(reportType, params, user);
+  try {
+    const analytics = buildAnalytics(reportType, data);
+    if (analytics) data.analytics = analytics;
+  } catch (_) {
+    // Analytics is best-effort: a report still renders if a rule throws.
+  }
+  return data;
+}
+
+function computeRaw(reportType, params, user) {
   const start = params.period_start || null;
   const end = params.period_end || null;
   const scope = commandScope(user);
@@ -866,6 +882,8 @@ function compute(reportType, params, user) {
         financial: { kind: 'cost', ...data, currency: code },
       };
     }
+    case 'ASSET_REVALUATION':
+      return recentRevaluationData();
     default:
       return { title: reportType, rows: [] };
   }
@@ -942,6 +960,59 @@ function createReport(params, user) {
     parameters: JSON.stringify({ ...params, data }),
   });
   return { id, data };
+}
+
+// Persist a revaluation report from a change set produced by the monitoring
+// agent. Unlike createReport this is a global, scope-less report (the agent is
+// not tied to a region) and its data is built directly from the change set.
+function createRevaluationReport(changes, meta = {}) {
+  if (!changes || !changes.length) return null;
+  const data = changesToData(changes, meta);
+  const analytics = buildAnalytics('ASSET_REVALUATION', data);
+  if (analytics) data.analytics = analytics;
+  const now = new Date().toISOString();
+  const code = nextCode(`RPT-${now.slice(0, 4)}`, 'report', 'report_code', 4);
+  const template = list('report_template').find((t) => t.report_type === 'ASSET_REVALUATION');
+  const id = insertRow('report', {
+    report_code: code,
+    report_type: 'ASSET_REVALUATION',
+    title: data.title,
+    period_start: now,
+    period_end: now,
+    scope_region_id: null,
+    template_id: template ? template.id : null,
+    status: 'READY',
+    format: 'HTML',
+    generated_at: now,
+    parameters: JSON.stringify({ report_type: 'ASSET_REVALUATION', data }),
+  });
+  return { id, data };
+}
+
+// --- Asset-condition monitoring agent --------------------------------------
+
+router.get('/asset-monitor', (req, res) => {
+  if (!can(req, 'report:read')) return res.status(403).json({ error: 'Forbidden: requires report:read' });
+  res.json({ summary: monitorSummary(), recent: recentRevaluationData({ days: 180 }).changes.slice(0, 25) });
+});
+
+router.post('/asset-monitor/run', (req, res) => {
+  if (!can(req, 'report:write')) return res.status(403).json({ error: 'Forbidden: requires report:write' });
+  const result = runAssetMonitor();
+  audit(req.user, 'REVALUE', 'asset_monitor', null, { changed: result.changed, degraded: result.degraded.length });
+  res.json({ ...result, summary: monitorSummary() });
+});
+
+// Shared by the manual trigger and the background sweeper. Injects the change
+// set into a revaluation report when assets degrade and links the snapshot rows.
+function runAssetMonitor() {
+  return revalueAssets({
+    source: 'AGENT',
+    onDegraded: (degraded, meta) => {
+      const r = createRevaluationReport(degraded, meta);
+      return r ? r.id : null;
+    },
+  });
 }
 
 router.post('/reports/generate', (req, res) => {
@@ -1097,3 +1168,5 @@ function runReportSchedules(nowIso = new Date().toISOString()) {
 
 module.exports = router;
 module.exports.runReportSchedules = runReportSchedules;
+module.exports.runAssetMonitor = runAssetMonitor;
+module.exports.createRevaluationReport = createRevaluationReport;

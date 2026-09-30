@@ -703,6 +703,7 @@ function ensureReportTemplates() {
     { name: 'Maintenance Cost Report', report_type: 'MAINTENANCE_COST', description: 'Recorded maintenance spend over a period, by region, asset and event type.' },
     { name: 'Crew Readiness Report', report_type: 'CREW_READINESS', description: 'Per-crew dispatch readiness: roster, certification coverage, unmet skill/cert requirements and KPIs.' },
     { name: 'Person Performance Report', report_type: 'PERSON_PERFORMANCE', description: 'Per-person execution KPIs: completed work, on-time rate, findings and GPS violations.' },
+    { name: 'Asset Condition Revaluation', report_type: 'ASSET_REVALUATION', description: 'Monitoring-agent change log: assets whose evidence-based condition suggestion moved, with the recommended action.' },
   ];
   for (const r of rows) {
     if (!db.prepare('SELECT id FROM report_template WHERE report_type = ?').get(r.report_type)) {

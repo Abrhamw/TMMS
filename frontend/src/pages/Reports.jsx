@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { api, fmtDate, fmtMoney } from '../api';
 import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, MoneyCard, SearchField, useSearchFilter } from '../components';
 import { BarRow, KpiTile } from '../components/InfraVisuals';
+import AnalyticsBlock from '../components/AnalyticsBlock';
 import { can, getStoredUser } from '../auth';
 import { assetsInScope, linesInRegion } from '../cascade';
 import DocumentReport from '../components/DocumentReport';
@@ -130,6 +131,8 @@ export default function Reports() {
   const [shareNote, setShareNote] = useState('');
   const [shareBusy, setShareBusy] = useState(false);
   const [shareErr, setShareErr] = useState(null);
+  const [monitor, setMonitor] = useState(null);
+  const [monitorBusy, setMonitorBusy] = useState(false);
   const { query, setQuery, results: reportRows } = useSearchFilter(reports);
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -218,12 +221,21 @@ export default function Reports() {
   };
 
   const loadSchedules = () => api.get('/report-schedules').then(setSchedules).catch(() => {});
+  const loadMonitor = () => api.get('/asset-monitor').then(setMonitor).catch(() => {});
+  const runMonitor = () => {
+    setMonitorBusy(true);
+    api.post('/asset-monitor/run', {})
+      .then(() => { loadMonitor(); load(); })
+      .catch((e) => setError(e.message))
+      .finally(() => setMonitorBusy(false));
+  };
   const toggleSchedule = (s) => api.patch(`/report-schedules/${s.id}`, { active: !s.active })
     .then(() => loadSchedules()).catch((e) => setError(e.message));
   const load = () => {
     api.get('/report-templates').then(setTemplates).catch((e) => setError(e.message));
     api.get('/reports').then(setReports).catch(() => {});
     loadSchedules();
+    loadMonitor();
   };
   useEffect(() => {
     load();
@@ -355,6 +367,45 @@ export default function Reports() {
           {analysisTemplates.map((t) => <TemplateCard key={t.report_type} t={t} onPick={startReport} />)}
         </div>
       </div>
+
+      {monitor && (
+        <div className="card card-pad mt">
+          <div className="card-head">
+            <h3>Asset condition monitoring</h3>
+            <div className="chip-row">
+              <span className="ref-note">Revaluation agent · {monitor.summary?.last_run_at ? `last run ${fmtDate(monitor.summary.last_run_at)}` : 'not run yet'}</span>
+              {canGenerate && <button type="button" className="btn btn-sm btn-primary" disabled={monitorBusy} onClick={runMonitor}>{monitorBusy ? 'Revaluing…' : 'Run revaluation'}</button>}
+            </div>
+          </div>
+          <div className="kpi-strip">
+            <KpiTile label="Assets evaluated" value={monitor.summary?.candidate_assets ?? 0} sub="carrying field evidence" />
+            <KpiTile label="Condition changes (30d)" value={monitor.summary?.assets_changed_30d ?? 0} />
+            <KpiTile label="Degraded (180d)" value={monitor.summary?.degraded ?? 0} tone={monitor.summary?.degraded ? 'bad' : 'ok'} />
+            <KpiTile label="Snapshots logged" value={monitor.summary?.snapshots ?? 0} />
+          </div>
+          {(() => {
+            const degradations = (monitor.recent || []).filter((c) => c.delta < 0);
+            return degradations.length ? (
+              <div className="tbl-wrap mt">
+                <table>
+                  <thead><tr><th>Asset</th><th>Region</th><th>Recorded</th><th>Suggested</th><th>Recommended action</th></tr></thead>
+                  <tbody>
+                    {degradations.map((c) => (
+                      <tr key={c.asset_pk} className="row-link" title="View asset details" onClick={() => openDocument('ASSET_DETAIL', c.asset_pk, c.asset_name)}>
+                        <td><b>{c.asset_code}</b> · {c.asset_name}</td>
+                        <td>{c.region || '—'}</td>
+                        <td>{c.from_rating ?? '—'}</td>
+                        <td className="bad">{c.to_rating ?? '—'}</td>
+                        <td>{c.recommendation_label || c.recommendation}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : <p className="muted mt" style={{ fontSize: 13 }}>No degraded assets in the last 180 days. Run the agent to reassess evidence-bearing assets.</p>;
+          })()}
+        </div>
+      )}
 
       <div className="grid grid-2 mt">
         <div className="card card-pad">
@@ -607,6 +658,16 @@ function TemplateCard({ t, onPick }) {
 }
 
 function ReportView({ data, onOpenEntity }) {
+  if (!data) return <div className="muted">No data</div>;
+  return (
+    <div>
+      {data.analytics && !data.document ? <AnalyticsBlock a={data.analytics} /> : null}
+      <ReportBody data={data} onOpenEntity={onOpenEntity} />
+    </div>
+  );
+}
+
+function ReportBody({ data, onOpenEntity }) {
   const canDrill = typeof onOpenEntity === 'function';
   const ENTITY_KEYS = { crew_id: 'CREW_DETAIL', task_id: 'TASK_DETAIL', asset_pk: 'ASSET_DETAIL', line_id: 'LINE_DETAIL' };
   const linkRow = (entity) => (canDrill && entity && entity.id != null
@@ -841,6 +902,30 @@ function ReportView({ data, onOpenEntity }) {
               </tr>
             ))}
             {(data.overdue_tasks || []).length === 0 && <tr><td colSpan={4} className="empty">No overdue tasks</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+  if (Array.isArray(data.changes)) {
+    const rows = data.changes;
+    return (
+      <div>
+        <p><b>{data.totals?.changed ?? rows.length}</b> condition change(s) — {data.totals?.degraded ?? 0} degraded, {data.totals?.improved ?? 0} improved.</p>
+        <table>
+          <thead><tr><th>Asset</th><th>Region</th><th>Recorded</th><th>Suggested</th><th>Change</th><th>Recommended action</th></tr></thead>
+          <tbody>
+            {rows.map((c, i) => (
+              <tr key={`${c.asset_pk}-${i}`} {...linkRow({ type: 'ASSET_DETAIL', id: c.asset_pk, label: c.asset_name })}>
+                <td><b>{c.asset_code}</b> · {c.asset_name}</td>
+                <td>{c.region || '—'}</td>
+                <td>{c.from_rating ?? '—'}</td>
+                <td>{c.to_rating ?? '—'}</td>
+                <td className={c.delta < 0 ? 'bad' : c.delta > 0 ? 'ok' : undefined}>{c.delta > 0 ? `+${c.delta}` : c.delta}</td>
+                <td>{c.recommendation_label || c.recommendation || '—'}</td>
+              </tr>
+            ))}
+            {rows.length === 0 && <tr><td colSpan={6} className="empty">No condition changes recorded.</td></tr>}
           </tbody>
         </table>
       </div>

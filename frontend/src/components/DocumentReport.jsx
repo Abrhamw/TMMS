@@ -6,6 +6,7 @@ import { getStoredToken } from '../auth';
 import { formatChecklistResponse, formatChecklistResult } from '../checklistFormat';
 import DocumentGeo from './DocumentGeo';
 import TargetProfile from './TargetProfile';
+import AnalyticsBlock from './AnalyticsBlock';
 
 // Detail-document renderer for the entity profiles (ASSET / CREW / TASK / LINE /
 // PERSON). Laid out as a single full-width column so a wide table can never
@@ -21,6 +22,7 @@ export default function DocumentReport({ data, onOpenEntity }) {
   const sid = (key) => `${uid}-${key}`;
   return (
     <div className="profile">
+      {data.analytics ? <AnalyticsBlock a={data.analytics} /> : null}
       {metricRows.length > 0 && (
         <div className="tbl-wrap mb">
           <table>
