@@ -262,6 +262,11 @@ export default function Mailbox() {
       return () => { alive = false; };
     }
     if (!selectedId) { setThread(null); setReportDocument(null); setMailMessage(null); return; }
+    // Opening a task must drop any previously opened mail/report, otherwise the
+    // reader keeps rendering the stale message and its "Open task" action is
+    // never reachable.
+    setMailMessage(null);
+    setReportDocument(null);
     let alive = true;
     setLoadingThread(true);
     api.put(`/mailbox/${selectedId}/read`, {}).then(() => {
@@ -878,7 +883,7 @@ function MailReader({ message, me, onReply, onReplyAll, onForward, onEdit, onSen
                   title={t('mailboxPreview')}
                   onClick={() => onPreview(a)}>
                   <span className="mail-attach-chip-label">{a.label || a.file_name}</span>
-                  <span className="muted mail-attach-chip-kind">{a.has_file ? t('mailboxAttachDownload') : t('mailboxAttachOpen')}</span>
+                  <span className="mail-attach-chip-kind">{a.has_file ? t('mailboxAttachDownload') : t('mailboxAttachOpen')}</span>
                 </button>
               ))}
             </div>

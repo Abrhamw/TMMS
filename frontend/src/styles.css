@@ -889,7 +889,7 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
 .mail-attach-x:hover { background: #dc2626; color: #fff; }
 .mail-attach-chip-btn { background: #fff; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
 .mail-attach-chip-btn:hover { border-color: var(--primary); color: var(--primary); }
-.mail-attach-chip-kind { flex: none; font-size: 10px; }
+.mail-attach-chip-kind { flex: none; font-size: 10px; color: var(--primary); font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
 .mail-attach-picker { display: grid; grid-template-columns: minmax(120px, 180px) minmax(0, 1fr); gap: 8px; align-items: start; margin-top: 4px; }
 .mail-attach-picker input[type="file"] { min-width: 0; }
 .mail-attach-results { max-height: 180px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
