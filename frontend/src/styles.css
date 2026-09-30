@@ -1114,6 +1114,7 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
 /* Checklist executions: every execution shows a summary row; its item detail is
    revealed only when the reader selects it (checkbox or Show/Hide). */
 .exec-list { display: flex; flex-direction: column; gap: 8px; }
+.exec-outcomes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 4px 2px 8px; border-bottom: 1px solid var(--border); }
 .exec-tools { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12px; }
 .exec-card { padding: 10px 12px; }
 .exec-card.open { border-color: var(--accent-border); }

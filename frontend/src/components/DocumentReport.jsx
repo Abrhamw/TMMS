@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 import { fmtDate, fmtDateTime, STATUS_COLORS } from '../api';
 import { Pill, CondPill, Progress } from '../components';
+import { BarRow } from '../components/InfraVisuals';
 import { getStoredToken } from '../auth';
 import { formatChecklistResponse, formatChecklistResult } from '../checklistFormat';
 import DocumentGeo from './DocumentGeo';
@@ -450,8 +451,16 @@ function ExecRows({ rows }) {
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
+  const passCount = rows.filter((e) => e.result === 'PASS').length;
+  const failCount = rows.filter((e) => e.result === 'FAIL').length;
+  const otherCount = rows.length - passCount - failCount;
   return (
     <div className="exec-list">
+      <div className="exec-outcomes">
+        <BarRow label="Passed" value={passCount} max={rows.length} color="#16a34a" />
+        <BarRow label="Failed" value={failCount} max={rows.length} color="#dc2626" />
+        <BarRow label="Incomplete" value={otherCount} max={rows.length} color="#d97706" />
+      </div>
       <div className="exec-tools no-print">
         <span className="muted">All executions are listed with title and result. Select an execution to include its checklist detail in the report.</span>
         <button type="button" className="btn btn-sm" onClick={() => setSelected(allSelected ? new Set() : new Set(rows.map((e) => e.id)))}>
