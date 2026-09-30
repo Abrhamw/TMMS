@@ -129,7 +129,7 @@ function build(document) {
   return null;
 }
 
-export default function DocumentGeo({ document, title = 'Location map' }) {
+export default function DocumentGeo({ document, title = 'Location map', showTitle = true }) {
   const geo = build(document);
   if (!geo) return null;
   const hasGeometry = geo.markers.length > 0 || geo.polylines.length > 0 || geo.circles.length > 0 || geo.polygons.length > 0;
@@ -150,7 +150,7 @@ export default function DocumentGeo({ document, title = 'Location map' }) {
   ].filter(Boolean);
   return (
     <div className="target-map">
-      <h4 className="section-title">{title}</h4>
+      {showTitle && <h4 className="section-title">{title}</h4>}
       <StaticMap
         width={640}
         height={300}

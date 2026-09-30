@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { fmtDate, fmtDateTime, STATUS_COLORS } from '../api';
 import { Pill, CondPill, Progress } from '../components';
 import { getStoredToken } from '../auth';
@@ -6,37 +6,66 @@ import { formatChecklistResponse, formatChecklistResult } from '../checklistForm
 import DocumentGeo from './DocumentGeo';
 import TargetProfile from './TargetProfile';
 
-// Detail-document renderer for the entity reports (ASSET / CREW / TASK / LINE).
-// Shows the metric rows produced by the backend plus the structured document
-// sections: executions with the articulated checklist, findings, attachments,
-// GPS validations, past/future related tasks and (for lines) the tower fleet.
-// A task report carries the descriptive target/governance block, with the
-// route map beside the work-location detail, so the location and the dispatch
-// notes are read first.
+// Detail-document renderer for the entity dossiers (ASSET / CREW / TASK / LINE /
+// PERSON). Laid out as a single full-width column so a wide table can never
+// collide with a neighbouring column (the old two-column grid let report tables
+// overflow into each other). A light "on this page" strip jumps between the
+// sections, and every checklist execution is listed with its title and result
+// while its item detail is shown only when the reader selects it.
 export default function DocumentReport({ data, onOpenEntity }) {
+  const uid = useId();
   if (!data) return <div className="muted">No data</div>;
   const metricRows = (data.rows || []).filter((r) => r && 'label' in r);
   const document = data.document || {};
+  const sid = (key) => `${uid}-${key}`;
   return (
-    <div>
+    <div className="dossier">
       {metricRows.length > 0 && (
-        <table className="mb">
-          <thead><tr><th>Metric</th><th>Value</th></tr></thead>
-          <tbody>{metricRows.map((r, i) => <tr key={i}><td>{r.label}</td><td><b>{r.value}</b></td></tr>)}</tbody>
-        </table>
+        <div className="tbl-wrap mb">
+          <table>
+            <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+            <tbody>{metricRows.map((r, i) => <tr key={i}><td>{r.label}</td><td><b>{r.value}</b></td></tr>)}</tbody>
+          </table>
+        </div>
       )}
-      {document.entity !== 'TASK' && <DocumentGeo document={document} />}
-      <DocumentSections document={document} onOpenEntity={onOpenEntity} />
+      {document.entity !== 'TASK' && (
+        <section id={sid('map')} className="card card-pad doc-sec">
+          <h4 className="doc-sec-title">Location map</h4>
+          <DocumentGeo document={document} showTitle={false} />
+        </section>
+      )}
+      <DocumentSections document={document} onOpenEntity={onOpenEntity} sid={sid} />
     </div>
   );
 }
 
-function Section({ title, children, hint }) {
+const scrollToSec = (id) => {
+  const el = typeof document !== 'undefined' ? document.getElementById(id) : null;
+  if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
+// Renders the ordered section list plus the "on this page" jump strip. Items are
+// filtered to the sections that actually carry data for this entity.
+function Sections({ items }) {
+  const real = items.filter((it) => it && it.body);
+  if (!real.length) return null;
   return (
-    <div className="mt">
-      <h4 className="section-title">{title}{hint && <span className="muted" style={{ fontWeight: 400, marginLeft: 8 }}>{hint}</span>}</h4>
-      {children}
-    </div>
+    <>
+      {real.length >= 3 && (
+        <nav className="doc-toc no-print" aria-label="Document sections">
+          <span className="doc-toc-label">On this page</span>
+          {real.map((it) => (
+            <button key={it.key} type="button" className="doc-toc-link" onClick={() => scrollToSec(it.id)}>{it.title}</button>
+          ))}
+        </nav>
+      )}
+      {real.map((it) => (
+        <section key={it.key} id={it.id} className="card card-pad doc-sec">
+          <h4 className="doc-sec-title">{it.title}{it.hint ? <span className="muted doc-sec-hint">{it.hint}</span> : null}</h4>
+          {it.body}
+        </section>
+      ))}
+    </>
   );
 }
 
@@ -45,65 +74,51 @@ function PillText({ value }) {
   return color ? <span style={{ fontWeight: 700, color }}>{value}</span> : <b>{value}</b>;
 }
 
-function DocumentSections({ document, onOpenEntity }) {
+function DocumentSections({ document, onOpenEntity, sid }) {
   if (!document) return <div className="muted">No document data</div>;
   const totals = document.totals || {};
   if (document.entity === 'ASSET') {
     const a = document.asset || {};
     return (
-      <div className="grid grid-2">
-        <div className="card card-pad">
-          <b>{document.entity_name}</b>
-          <div className="kv mt" style={{ gridTemplateColumns: '130px 1fr', fontSize: 13 }}>
-            <span className="k">Asset ID</span><span className="mono">{a.asset_id}</span>
-            <span className="k">Condition</span><span><CondPill rating={a.condition_rating} /></span>
-            <span className="k">Health / RUL</span><span>{a.health_index != null ? `${a.health_index}%` : '—'} / {a.remaining_useful_life_years ?? '—'} yr</span>
-            <span className="k">Lifecycle</span><span>{a.lifecycle_status}</span>
-            <span className="k">Operational</span><span>{a.operational_status}</span>
-            <span className="k">Criticality</span><span>{a.criticality}</span>
+      <Sections items={[
+        {
+          key: 'facts', id: sid('facts'), title: 'Asset facts',
+          body: (
+            <div className="kv" style={{ gridTemplateColumns: '150px 1fr', fontSize: 13 }}>
+              <span className="k">Asset ID</span><span className="mono">{a.asset_id}</span>
+              <span className="k">Condition</span><span><CondPill rating={a.condition_rating} /></span>
+              <span className="k">Health / RUL</span><span>{a.health_index != null ? `${a.health_index}%` : '—'} / {a.remaining_useful_life_years ?? '—'} yr</span>
+              <span className="k">Lifecycle</span><span>{a.lifecycle_status}</span>
+              <span className="k">Operational</span><span>{a.operational_status}</span>
+              <span className="k">Criticality</span><span>{a.criticality}</span>
+            </div>
+          ),
+        },
+        { key: 'components', id: sid('components'), title: 'Components / parts', body: (document.components || []).length > 0 && (
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr><th>Part</th><th>Material</th><th>Qty</th><th>Condition</th></tr></thead>
+              <tbody>{document.components.map((c) => (
+                <tr key={c.id}><td>{c.component_type} · {c.name}</td><td>{c.material || '—'}</td><td>{c.quantity}</td><td><CondPill rating={c.condition_rating ?? c.corrosion_rating} /></td></tr>
+              ))}</tbody>
+            </table>
           </div>
-          {(document.tasks_future || []).length > 0 && (
-            <Section title="Upcoming work" hint={`${(document.tasks_future || []).length} task(s)`}>
-              <TaskRows tasks={document.tasks_future} onOpenEntity={onOpenEntity} />
-            </Section>
-          )}
-          {(document.tasks_past || []).length > 0 && (
-            <Section title="Historical tasks" hint={`${(document.tasks_past || []).length} task(s)`}>
-              <TaskRows tasks={document.tasks_past} onOpenEntity={onOpenEntity} />
-            </Section>
-          )}
-          {(document.gps_violations || []).length > 0 && (
-            <Section title="GPS violations" hint={`${(document.gps_violations || []).length} event(s)`}>
-              <GpsRows rows={document.gps_violations} />
-            </Section>
-          )}
-          {(document.components || []).length > 0 && (
-            <Section title="Components / parts">
-              <table>
-                <thead><tr><th>Part</th><th>Material</th><th>Qty</th><th>Condition</th></tr></thead>
-                <tbody>{document.components.map((c) => (
-                  <tr key={c.id}><td>{c.component_type} · {c.name}</td><td>{c.material || '—'}</td><td>{c.quantity}</td><td><CondPill rating={c.condition_rating ?? c.corrosion_rating} /></td></tr>
-                ))}</tbody>
-              </table>
-            </Section>
-          )}
-          {(document.history || []).length > 0 && (
-            <Section title="Maintenance history">
-              <table>
-                <thead><tr><th>When</th><th>Event</th><th>Crew</th></tr></thead>
-                <tbody>{document.history.map((e) => (
-                  <tr key={e.id}><td>{fmtDateTime(e.performed_at)}</td><td>{e.event_type} {e.task_id ? <span className="muted">#{e.task_id}</span> : null}</td><td>{e.crew_name || e.crew_code || '—'}</td></tr>
-                ))}</tbody>
-              </table>
-            </Section>
-          )}
-        </div>
-        <div>
-          <Section title="Checklist executions" hint={`${(document.executions || []).length} · ${totals.completed_tasks ?? '—'} completed task(s)`}>
-            <ExecRows rows={document.executions} />
-          </Section>
-        </div>
-      </div>
+        ) },
+        { key: 'future', id: sid('future'), title: 'Upcoming work', hint: `${(document.tasks_future || []).length} task(s)`, body: (document.tasks_future || []).length > 0 && <TaskRows tasks={document.tasks_future} onOpenEntity={onOpenEntity} /> },
+        { key: 'past', id: sid('past'), title: 'Historical tasks', hint: `${(document.tasks_past || []).length} task(s)`, body: (document.tasks_past || []).length > 0 && <TaskRows tasks={document.tasks_past} onOpenEntity={onOpenEntity} /> },
+        { key: 'history', id: sid('history'), title: 'Maintenance history', body: (document.history || []).length > 0 && (
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr><th>When</th><th>Event</th><th>Crew</th></tr></thead>
+              <tbody>{document.history.map((e) => (
+                <tr key={e.id}><td>{fmtDateTime(e.performed_at)}</td><td>{e.event_type} {e.task_id ? <span className="muted">#{e.task_id}</span> : null}</td><td>{e.crew_name || e.crew_code || '—'}</td></tr>
+              ))}</tbody>
+            </table>
+          </div>
+        ) },
+        { key: 'gps', id: sid('gps'), title: 'GPS violations', hint: `${(document.gps_violations || []).length} event(s)`, body: (document.gps_violations || []).length > 0 && <GpsRows rows={document.gps_violations} /> },
+        { key: 'exec', id: sid('exec'), title: 'Checklist executions', hint: `${(document.executions || []).length}`, body: <ExecRows rows={document.executions} /> },
+      ]} />
     );
   }
   if (document.entity === 'CREW') {
@@ -111,15 +126,20 @@ function DocumentSections({ document, onOpenEntity }) {
     const leader = (document.members || []).find((m) => m.role === 'CREW_LEADER')
       || (document.members || []).find((m) => m.person_id === c.leader_person_id);
     return (
-      <div className="grid grid-2">
-        <div className="card card-pad">
-          <b>{document.entity_name}</b>
-          <div className="kv mt" style={{ gridTemplateColumns: '130px 1fr', fontSize: 13 }}>
-            <span className="k">Code</span><span className="mono">{c.crew_code}</span>
-            <span className="k">Type</span><span>{c.crew_type}</span>
-            <span className="k">Leader</span><span>{leader ? [leader.first_name, leader.last_name].filter(Boolean).join(' ') : '—'}</span>
-          </div>
-          <Section title="Members & certifications" hint={`${(document.members || []).length} member(s), ${(document.certs || []).length} cert(s)`}>            <table>
+      <Sections items={[
+        {
+          key: 'facts', id: sid('facts'), title: 'Crew facts',
+          body: (
+            <div className="kv" style={{ gridTemplateColumns: '150px 1fr', fontSize: 13 }}>
+              <span className="k">Code</span><span className="mono">{c.crew_code}</span>
+              <span className="k">Type</span><span>{c.crew_type}</span>
+              <span className="k">Leader</span><span>{leader ? [leader.first_name, leader.last_name].filter(Boolean).join(' ') : '—'}</span>
+            </div>
+          ),
+        },
+        { key: 'members', id: sid('members'), title: 'Members & certifications', hint: `${(document.members || []).length} member(s), ${(document.certs || []).length} cert(s)`, body: (
+          <div className="tbl-wrap">
+            <table>
               <thead><tr><th>Member</th><th>Role</th><th>Cert / expiry</th></tr></thead>
               <tbody>
                 {(document.members || []).map((m) => (
@@ -129,24 +149,18 @@ function DocumentSections({ document, onOpenEntity }) {
                     <td>
                       {(document.certs || []).filter((crt) => crt.person_id === m.person_id).map((crt, i) => (
                         <div key={i}>{crt.cert_type || crt.name} → <PillText value={crt.status} /> <span className="muted">({fmtDate(crt.expires_at)})</span></div>
-                      )) || '—'}
+                      ))}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </Section>
-          <Section title="Task history" hint={`${(document.tasks || []).length} task(s)`}>
-            <TaskRows tasks={document.tasks} onOpenEntity={onOpenEntity} />
-          </Section>
-          {document.readiness && <CrewReadiness readiness={document.readiness} onOpenEntity={onOpenEntity} />}
-        </div>
-        <div>
-          <Section title="Checklist executions" hint={`${(document.executions || []).length}`}>
-            <ExecRows rows={document.executions} />
-          </Section>
-        </div>
-      </div>
+          </div>
+        ) },
+        { key: 'tasks', id: sid('tasks'), title: 'Task history', hint: `${(document.tasks || []).length} task(s)`, body: (document.tasks || []).length > 0 ? <TaskRows tasks={document.tasks} onOpenEntity={onOpenEntity} /> : <div className="muted" style={{ fontSize: 13 }}>None</div> },
+        { key: 'readiness', id: sid('readiness'), title: 'Crew readiness', body: document.readiness && <CrewReadiness readiness={document.readiness} onOpenEntity={onOpenEntity} /> },
+        { key: 'exec', id: sid('exec'), title: 'Checklist executions', hint: `${(document.executions || []).length}`, body: <ExecRows rows={document.executions} /> },
+      ]} />
     );
   }
   if (document.entity === 'TASK') {
@@ -154,94 +168,87 @@ function DocumentSections({ document, onOpenEntity }) {
     const target = document.target || {};
     const crew = document.crew;
     return (
-      <div className="grid grid-2">
-        <div className="card card-pad">
-          <b>{document.entity_name}</b>
-          <div className="kv mt" style={{ gridTemplateColumns: '130px 1fr', fontSize: 13 }}>
-            <span className="k">Type</span><span>{t.task_type}</span>
-            <span className="k">Priority</span><span style={{ fontWeight: 700 }}>{t.priority}</span>
-            <span className="k">Status</span><span><Pill value={t.status} /></span>
-            <span className="k">Result</span><span>{t.result || '—'}</span>
-            <span className="k">Crew</span><span>{crew ? `${crew.name} (${crew.crew_code})` : '—'}</span>
-            <span className="k">Checklist</span><span>{document.template?.name || '—'}</span>
-            <span className="k">Due</span><span>{fmtDateTime(t.due_date)}</span>
-            <span className="k">Target</span><span>{target.substation?.name || (target.tower ? `${target.line?.name} · ${target.tower.tower_id}` : target.line?.name) || target.asset?.name || '—'}</span>
-            <span className="k">Created</span><span>{fmtDateTime(t.created_at)}</span>
-            {t.cancel_reason && <>
-              <span className="k">Cancellation record</span>
-              <span>{t.cancel_reason} · {t.cancelled_by_name || 'Unknown user'} · {fmtDateTime(t.cancelled_at)}</span>
-            </>}
-          </div>
-          <TargetProfile target={target} readiness={document.dispatch_audit} workflow={document.workflow} />
-          <p className="muted mt" style={{ fontSize: 13 }}>{t.description || 'No description.'}</p>
-          {document.summary && (
-            <div className="grid grid-4 mt" style={{ gap: 8 }}>
+      <Sections items={[
+        {
+          key: 'facts', id: sid('facts'), title: 'Task facts',
+          body: (
+            <div className="kv" style={{ gridTemplateColumns: '150px 1fr', fontSize: 13 }}>
+              <span className="k">Type</span><span>{t.task_type}</span>
+              <span className="k">Priority</span><span style={{ fontWeight: 700 }}>{t.priority}</span>
+              <span className="k">Status</span><span><Pill value={t.status} /></span>
+              <span className="k">Result</span><span>{t.result || '—'}</span>
+              <span className="k">Crew</span><span>{crew ? `${crew.name} (${crew.crew_code})` : '—'}</span>
+              <span className="k">Checklist</span><span>{document.template?.name || '—'}</span>
+              <span className="k">Due</span><span>{fmtDateTime(t.due_date)}</span>
+              <span className="k">Target</span><span>{target.substation?.name || (target.tower ? `${target.line?.name} · ${target.tower.tower_id}` : target.line?.name) || target.asset?.name || '—'}</span>
+              <span className="k">Created</span><span>{fmtDateTime(t.created_at)}</span>
+              {t.cancel_reason && <>
+                <span className="k">Cancellation record</span>
+                <span>{t.cancel_reason} · {t.cancelled_by_name || 'Unknown user'} · {fmtDateTime(t.cancelled_at)}</span>
+              </>}
+            </div>
+          ),
+        },
+        { key: 'target', id: sid('target'), title: 'Target profile', body: <TargetProfile target={target} readiness={document.dispatch_audit} workflow={document.workflow} /> },
+        { key: 'desc', id: sid('desc'), title: 'Description', body: <p className="muted" style={{ fontSize: 13, margin: 0 }}>{t.description || 'No description.'}</p> },
+        {
+          key: 'summary', id: sid('summary'), title: 'Outcome summary',
+          body: document.summary && (
+            <div className="grid grid-4" style={{ gap: 8 }}>
               <Mini label="Executions" v={document.summary.executions} />
               <Mini label="Failures" v={document.summary.fail} warn={document.summary.fail > 0} />
               <Mini label="Findings" v={document.summary.findings} />
               <Mini label="Photos" v={document.summary.attachments} />
             </div>
-          )}
-          {document.dispatch_audit && <DispatchAudit audit={document.dispatch_audit} />}
-          <Section title="Findings" hint={`${(document.findings || []).length}`}>
-            <FindingsRows findings={document.findings} />
-          </Section>
-          <Section title="Attachments / photos" hint={`${(document.attachments || []).length}`}>
-            <AttachmentsGrid attachments={document.attachments} taskId={t.id} />
-          </Section>
-          {(document.gps_validations || []).length > 0 && (
-            <Section title="GPS validations">
-              <GpsRows rows={document.gps_validations} />
-            </Section>
-          )}
-        </div>
-        <div>
-          <Section title="Checklist executions" hint={`${(document.executions || []).length}`}>
-            <ExecRows rows={document.executions} />
-          </Section>
-        </div>
-      </div>
+          ),
+        },
+        { key: 'audit', id: sid('audit'), title: 'Dispatch readiness', body: document.dispatch_audit && <DispatchAudit audit={document.dispatch_audit} /> },
+        { key: 'findings', id: sid('findings'), title: 'Findings', hint: `${(document.findings || []).length}`, body: <FindingsRows findings={document.findings} /> },
+        { key: 'attachments', id: sid('attachments'), title: 'Attachments / photos', hint: `${(document.attachments || []).length}`, body: <AttachmentsGrid attachments={document.attachments} taskId={t.id} /> },
+        { key: 'gps', id: sid('gps'), title: 'GPS validations', body: (document.gps_validations || []).length > 0 && <GpsRows rows={document.gps_validations} /> },
+        { key: 'exec', id: sid('exec'), title: 'Checklist executions', hint: `${(document.executions || []).length}`, body: <ExecRows rows={document.executions} /> },
+      ]} />
     );
   }
   if (document.entity === 'LINE') {
     const l = document.line || {};
     return (
-      <div className="grid grid-2">
-        <div className="card card-pad">
-          <b>{document.entity_name}</b>
-          <div className="kv mt" style={{ gridTemplateColumns: '130px 1fr', fontSize: 13 }}>
-            <span className="k">Route</span><span>{document.from_substation?.name} → {document.to_substation?.name}</span>
-            <span className="k">Voltage</span><span>{l.voltage_kv} kV</span>
-            <span className="k">Length</span><span>{l.length_km} km</span>
-            <span className="k">Status</span><span><Pill value={l.operational_status} /></span>
-          </div>
-          {totals.towers != null && (
-            <div className="grid grid-4 mt" style={{ gap: 8 }}>
-              <Mini label="Towers" v={totals.towers} />
-              <Mini label="Assets" v={totals.assets} />
-              <Mini label="Open tasks" v={totals.open_tasks} />
-              <Mini label="Overdue" v={totals.overdue_tasks} warn={totals.overdue_tasks > 0} />
-            </div>
-          )}
-          <Section title="Related maintenance tasks" hint={`${totals.tasks ?? (document.tasks || []).length} · ${(document.tasks_past || []).length} past / ${(document.tasks_future || []).length} upcoming`}>
-            <TaskRows tasks={document.tasks} onOpenEntity={onOpenEntity} />
-          </Section>
-          {(document.gps_violations || []).length > 0 && (
-            <Section title="GPS violations">
-              <GpsRows rows={document.gps_violations} />
-            </Section>
-          )}
-        </div>
-        <div>
-          <Section title={`Tower fleet (${(document.towers || []).length})`}>
+      <Sections items={[
+        {
+          key: 'facts', id: sid('facts'), title: 'Line facts',
+          body: (
+            <>
+              <div className="kv" style={{ gridTemplateColumns: '150px 1fr', fontSize: 13 }}>
+                <span className="k">Route</span><span>{document.from_substation?.name} → {document.to_substation?.name}</span>
+                <span className="k">Voltage</span><span>{l.voltage_kv} kV</span>
+                <span className="k">Length</span><span>{l.length_km} km</span>
+                <span className="k">Status</span><span><Pill value={l.operational_status} /></span>
+              </div>
+              {totals.towers != null && (
+                <div className="grid grid-4 mt" style={{ gap: 8 }}>
+                  <Mini label="Towers" v={totals.towers} />
+                  <Mini label="Assets" v={totals.assets} />
+                  <Mini label="Open tasks" v={totals.open_tasks} />
+                  <Mini label="Overdue" v={totals.overdue_tasks} warn={totals.overdue_tasks > 0} />
+                </div>
+              )}
+            </>
+          ),
+        },
+        { key: 'tasks', id: sid('tasks'), title: 'Related maintenance tasks', hint: `${totals.tasks ?? (document.tasks || []).length} · ${(document.tasks_past || []).length} past / ${(document.tasks_future || []).length} upcoming`, body: <TaskRows tasks={document.tasks} onOpenEntity={onOpenEntity} /> },
+        { key: 'gps', id: sid('gps'), title: 'GPS violations', body: (document.gps_violations || []).length > 0 && <GpsRows rows={document.gps_violations} /> },
+        { key: 'towers', id: sid('towers'), title: `Tower fleet (${(document.towers || []).length})`, body: (
+          <div className="tbl-wrap">
             <table>
               <thead><tr><th>Tower</th><th>Type</th><th>km</th><th>Corrosion</th><th>Parts</th></tr></thead>
               <tbody>{(document.towers || []).map((tw) => (
                 <tr key={tw.id}><td className="mono">{tw.tower_id}</td><td>{tw.tower_type}</td><td>{tw.km_marker}</td><td><CondPill rating={tw.corrosion_rating} /></td><td>{tw.component_count ?? 0}</td></tr>
               ))}</tbody>
             </table>
-          </Section>
-          <Section title="Line assets" hint={`${(document.assets || []).length}`}>
+          </div>
+        ) },
+        { key: 'assets', id: sid('assets'), title: 'Line assets', hint: `${(document.assets || []).length}`, body: (
+          <div className="tbl-wrap">
             <table>
               <thead><tr><th>Asset</th><th>Type</th><th>Condition</th></tr></thead>
               <tbody>{(document.assets || []).map((a) => (
@@ -250,38 +257,41 @@ function DocumentSections({ document, onOpenEntity }) {
                 </tr>
               ))}</tbody>
             </table>
-          </Section>
-          {(document.executions || []).length > 0 && (
-            <Section title="Completed maintenance executions">
-              <ExecRows rows={document.executions} />
-            </Section>
-          )}
-        </div>
-      </div>
+          </div>
+        ) },
+        { key: 'exec', id: sid('exec'), title: 'Completed maintenance executions', hint: `${(document.executions || []).length}`, body: (document.executions || []).length > 0 ? <ExecRows rows={document.executions} /> : <div className="muted" style={{ fontSize: 13 }}>None</div> },
+      ]} />
     );
   }
   if (document.entity === 'PERSON') {
     const p = document.person || {};
     const perf = document.performance;
     return (
-      <div className="grid grid-2">
-        <div className="card card-pad">
-          <b>{document.entity_name}</b>
-          <div className="kv mt" style={{ gridTemplateColumns: '130px 1fr', fontSize: 13 }}>
-            <span className="k">Role</span><span>{p.role || '—'}</span>
-            <span className="k">Title</span><span>{p.title || '—'}</span>
-            <span className="k">Crews</span><span>{(document.crews || []).map((c) => `${c.name} (${c.crew_code})`).join(', ') || '—'}</span>
-            <span className="k">Leads</span><span>{(document.led_crews || []).map((c) => c.name).join(', ') || '—'}</span>
-          </div>
-          {perf && (
-            <div className="grid grid-4 mt" style={{ gap: 8 }}>
+      <Sections items={[
+        {
+          key: 'facts', id: sid('facts'), title: 'Person facts',
+          body: (
+            <div className="kv" style={{ gridTemplateColumns: '150px 1fr', fontSize: 13 }}>
+              <span className="k">Role</span><span>{p.role || '—'}</span>
+              <span className="k">Title</span><span>{p.title || '—'}</span>
+              <span className="k">Crews</span><span>{(document.crews || []).map((c) => `${c.name} (${c.crew_code})`).join(', ') || '—'}</span>
+              <span className="k">Leads</span><span>{(document.led_crews || []).map((c) => c.name).join(', ') || '—'}</span>
+            </div>
+          ),
+        },
+        {
+          key: 'perf', id: sid('perf'), title: 'Performance',
+          body: perf && (
+            <div className="grid grid-4" style={{ gap: 8 }}>
               <Mini label="Executions" v={perf.tasks} />
               <Mini label="Completed" v={perf.completed} />
               <Mini label="Checklist pass %" v={perf.checklist_pass_rate} />
               <Mini label="Overdue" v={perf.overdue} warn={perf.overdue > 0} />
             </div>
-          )}
-          <Section title="Certifications" hint={`${(document.certs || []).length}`}>
+          ),
+        },
+        { key: 'certs', id: sid('certs'), title: 'Certifications', hint: `${(document.certs || []).length}`, body: (
+          <div className="tbl-wrap">
             <table>
               <thead><tr><th>Cert</th><th>Status</th><th>Expires</th></tr></thead>
               <tbody>
@@ -291,22 +301,12 @@ function DocumentSections({ document, onOpenEntity }) {
                 {(document.certs || []).length === 0 && <tr><td colSpan={3} className="muted">No certifications.</td></tr>}
               </tbody>
             </table>
-          </Section>
-          <Section title="Findings raised" hint={`${(document.findings || []).length}`}>
-            <FindingsRows findings={document.findings} />
-          </Section>
-          {(document.gps_validations || []).length > 0 && (
-            <Section title="GPS validations">
-              <GpsRows rows={document.gps_validations} />
-            </Section>
-          )}
-        </div>
-        <div>
-          <Section title="Checklist executions" hint={`${(document.executions || []).length}`}>
-            <ExecRows rows={document.executions} />
-          </Section>
-        </div>
-      </div>
+          </div>
+        ) },
+        { key: 'findings', id: sid('findings'), title: 'Findings raised', hint: `${(document.findings || []).length}`, body: <FindingsRows findings={document.findings} /> },
+        { key: 'gps', id: sid('gps'), title: 'GPS validations', body: (document.gps_validations || []).length > 0 && <GpsRows rows={document.gps_validations} /> },
+        { key: 'exec', id: sid('exec'), title: 'Checklist executions', hint: `${(document.executions || []).length}`, body: <ExecRows rows={document.executions} /> },
+      ]} />
     );
   }
   return <pre className="muted" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(document, null, 2)}</pre>;
@@ -323,18 +323,17 @@ function Warnings({ items }) {
 
 // Dispatch readiness for a task: the checklist's derived team / skill / cert
 // requirements, the resolved crew's coverage and the advisory equipment list.
+// The dossier wraps this in its own section header, so no inner title here.
 function DispatchAudit({ audit }) {
   const req = audit.requirements;
   const crew = audit.crew;
   if (!req) {
     return (
-      <Section title="Dispatch readiness">
-        <div className="muted" style={{ fontSize: 13 }}>No checklist template is linked, so no capability requirements were derived.</div>
-      </Section>
+      <div className="muted" style={{ fontSize: 13 }}>No checklist template is linked, so no capability requirements were derived.</div>
     );
   }
   return (
-    <Section title="Dispatch readiness" hint={req.skills.join(', ') || '—'}>
+    <div>
       <div className="grid grid-2 mt" style={{ gap: 8 }}>
         <Mini label="Team size" v={req.min_team_size || '—'} />
         <Mini label="Required certs" v={(req.required_certs || []).length} warn={audit.eligible === false} />
@@ -355,7 +354,7 @@ function DispatchAudit({ audit }) {
       {(audit.missing_skills || []).length > 0 && <div style={{ fontSize: 13 }}>Missing skills: {audit.missing_skills.join(', ')}</div>}
       {audit.team_shortfall > 0 && <div style={{ fontSize: 13 }}>Team short by {audit.team_shortfall}</div>}
       <Warnings items={audit.warnings} />
-    </Section>
+    </div>
   );
 }
 
@@ -366,7 +365,7 @@ function CrewReadiness({ readiness, onOpenEntity }) {
   const cs = readiness.cert_status || {};
   const clickable = typeof onOpenEntity === 'function';
   return (
-    <Section title="Crew readiness" hint={`${cs.valid ?? 0}/${cs.total ?? 0} cert(s) valid`}>
+    <div>
       <div className="grid grid-4 mt" style={{ gap: 8 }}>
         <Mini label="Members" v={readiness.crew?.member_count ?? 0} />
         <Mini label="Valid certs" v={cs.valid ?? 0} />
@@ -382,30 +381,33 @@ function CrewReadiness({ readiness, onOpenEntity }) {
       </div>
       <Warnings items={readiness.warnings} />
       {(readiness.open_tasks || []).length > 0 && (
-        <table className="mt">
-          <thead><tr><th>Open task</th><th>Status</th><th>Ready</th><th>Gaps</th></tr></thead>
-          <tbody>{readiness.open_tasks.map((a) => {
-            const gaps = [
-              ...(a.missing_skills || []).map((s) => `skill: ${s}`),
-              ...(a.missing_certs || []).map((c) => `cert: ${c}`),
-              ...((a.equipment_to_secure || []).length ? [`equipment: ${a.equipment_to_secure.join(', ')}`] : []),
-            ];
-            return (
-              <tr key={a.task_id} {...(clickable ? { className: 'row-link', title: 'Click to view task details', onClick: () => onOpenEntity('TASK_DETAIL', a.task_id, a.task_number) } : {})}>
-                <td><b>{a.task_number}</b><br /><span className="muted">{a.title}</span></td>
-                <td><Pill value={a.status} /></td>
-                <td>{a.eligible === true ? <span className="ok">Ready</span> : a.eligible === false ? <span className="warn">Warnings</span> : <span className="muted">—</span>}</td>
-                <td className="muted" style={{ fontSize: 12 }}>{gaps.join('; ') || '—'}</td>
-              </tr>
-            );
-          })}</tbody>
-        </table>
+        <div className="tbl-wrap mt">
+          <table>
+            <thead><tr><th>Open task</th><th>Status</th><th>Ready</th><th>Gaps</th></tr></thead>
+            <tbody>{readiness.open_tasks.map((a) => {
+              const gaps = [
+                ...(a.missing_skills || []).map((s) => `skill: ${s}`),
+                ...(a.missing_certs || []).map((c) => `cert: ${c}`),
+                ...((a.equipment_to_secure || []).length ? [`equipment: ${a.equipment_to_secure.join(', ')}`] : []),
+              ];
+              return (
+                <tr key={a.task_id} {...(clickable ? { className: 'row-link', title: 'Click to view task details', onClick: () => onOpenEntity('TASK_DETAIL', a.task_id, a.task_number) } : {})}>
+                  <td><b>{a.task_number}</b><br /><span className="muted">{a.title}</span></td>
+                  <td><Pill value={a.status} /></td>
+                  <td>{a.eligible === true ? <span className="ok">Ready</span> : a.eligible === false ? <span className="warn">Warnings</span> : <span className="muted">—</span>}</td>
+                  <td className="muted" style={{ fontSize: 12 }}>{gaps.join('; ') || '—'}</td>
+                </tr>
+              );
+            })}</tbody>
+          </table>
+        </div>
       )}
-    </Section>
+    </div>
   );
 }
 
-function Mini({ label, v, warn }) {  return (
+function Mini({ label, v, warn }) {
+  return (
     <div className="card card-pad" style={{ padding: '8px 10px', textAlign: 'center', borderColor: warn ? '#fca5a5' : undefined }}>
       <div style={{ fontSize: 20, fontWeight: 800, color: warn ? '#dc2626' : 'inherit' }}>{v ?? 0}</div>
       <div className="muted" style={{ fontSize: 11 }}>{label}</div>
@@ -417,53 +419,89 @@ function TaskRows({ tasks, onOpenEntity }) {
   if (!tasks || !tasks.length) return <div className="muted" style={{ fontSize: 13 }}>None</div>;
   const clickable = typeof onOpenEntity === 'function';
   return (
-    <table>
-      <thead><tr><th>Task</th><th>Status</th><th>Progress</th><th>Result</th><th>Due</th><th>Crew</th><th>Findings</th></tr></thead>
-      <tbody>{tasks.map((t) => (
-        <tr key={t.id} {...(clickable ? { className: 'row-link', title: 'Click to view task details', onClick: () => onOpenEntity('TASK_DETAIL', t.id, t.task_number) } : {})}>
-          <td><b>{t.task_number}</b><br /><span className="muted">{t.title}</span></td>
-          <td><Pill value={t.status} /></td>
-          <td>{t.progress_graded > 0 ? <Progress pct={t.progress_pct} graded={t.progress_graded} passed={t.progress_passed} /> : <span className="muted">—</span>}</td>
-          <td>{t.result || '—'}</td>
-          <td>{fmtDate(t.due_date)}</td>
-          <td>{t.crew ? t.crew.crew_code : '—'}</td>
-          <td>{t.findings_count || 0}</td>
-        </tr>
-      ))}</tbody>
-    </table>
+    <div className="tbl-wrap">
+      <table>
+        <thead><tr><th>Task</th><th>Status</th><th>Progress</th><th>Result</th><th>Due</th><th>Crew</th><th>Findings</th></tr></thead>
+        <tbody>{tasks.map((t) => (
+          <tr key={t.id} {...(clickable ? { className: 'row-link', title: 'Click to view task details', onClick: () => onOpenEntity('TASK_DETAIL', t.id, t.task_number) } : {})}>
+            <td><b>{t.task_number}</b><br /><span className="muted">{t.title}</span></td>
+            <td><Pill value={t.status} /></td>
+            <td>{t.progress_graded > 0 ? <Progress pct={t.progress_pct} graded={t.progress_graded} passed={t.progress_passed} /> : <span className="muted">—</span>}</td>
+            <td>{t.result || '—'}</td>
+            <td>{fmtDate(t.due_date)}</td>
+            <td>{t.crew ? t.crew.crew_code : '—'}</td>
+            <td>{t.findings_count || 0}</td>
+          </tr>
+        ))}</tbody>
+      </table>
+    </div>
   );
 }
 
+// Every execution is listed with its title and result so the report is complete.
+// The checklist item detail is only rendered for executions the reader selects,
+// which keeps the default dossier compact (and the printout short).
 function ExecRows({ rows }) {
+  const [selected, setSelected] = useState(() => new Set());
   if (!rows || !rows.length) return <div className="muted" style={{ fontSize: 13 }}>No executions</div>;
+  const allSelected = rows.every((e) => selected.has(e.id));
+  const toggle = (id) => setSelected((cur) => {
+    const next = new Set(cur);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
   return (
-    <div>
+    <div className="exec-list">
+      <div className="exec-tools no-print">
+        <span className="muted">All executions are listed with title and result. Select an execution to include its checklist detail in the report.</span>
+        <button type="button" className="btn btn-sm" onClick={() => setSelected(allSelected ? new Set() : new Set(rows.map((e) => e.id)))}>
+          {allSelected ? 'Hide all details' : 'Show all details'}
+        </button>
+      </div>
       {rows.map((e) => {
-        const fails = (e.items || []).filter((i) => i.result === 'FAIL');
+        const show = selected.has(e.id);
+        const items = e.items || [];
+        const pass = items.filter((i) => i.result === 'PASS').length;
+        const fails = items.filter((i) => i.result === 'FAIL');
         return (
-          <div key={e.id} className="card card-pad" style={{ padding: 10, marginBottom: 8 }}>
-            <div className="spread" style={{ flexWrap: 'wrap', gap: '4px 10px' }}>
-              <b className="mono">EX-{String(e.id).padStart(5, '0')}</b>
-              <span className="muted">{e.template_name || `template ${e.template_id}`}</span>
-              <Pill value={e.result || 'INCOMPLETE'} />
-              <span className="muted">{fmtDateTime(e.submitted_at)}</span>
-              <span className="muted">{(e.items || []).length} item(s) · {(e.items || []).filter((i) => i.result === 'PASS').length} pass</span>
+          <div key={e.id} className={'exec-card card' + (show ? ' open' : '')}>
+            <div className="exec-head">
+              <label className="exec-toggle no-print" title="Include checklist detail for this execution">
+                <input type="checkbox" checked={show} onChange={() => toggle(e.id)} />
+                <span className="sr-only">Include detail</span>
+              </label>
+              <div className="exec-title">
+                <b className="mono">EX-{String(e.id).padStart(5, '0')}</b>
+                <span>{e.template_name || `template ${e.template_id}`}</span>
+              </div>
+              <div className="exec-meta">
+                <Pill value={e.result || 'INCOMPLETE'} />
+                <span className="muted">{fmtDateTime(e.submitted_at)}</span>
+                <span className="muted">{items.length} item(s) · {pass} pass</span>
+                <button type="button" className="btn btn-xs no-print" onClick={() => toggle(e.id)}>{show ? 'Hide detail' : 'Show detail'}</button>
+              </div>
             </div>
             {e.notes && <p className="muted" style={{ fontSize: 12, margin: '4px 0 0' }}>{e.notes}</p>}
-            {(e.items || []).length > 0 && (
-              <table style={{ marginTop: 6 }}>
-                <thead><tr><th>#</th><th>Instruction</th><th>Result</th><th>Response recorded</th></tr></thead>
-                <tbody>{(e.items || []).map((it) => (
-                  <tr key={it.id}>
-                    <td>{it.sequence}</td>
-                    <td>{it.instruction}{it.critical_step ? <span className="bad" style={{ fontSize: 11, marginLeft: 6 }}>critical</span> : null}</td>
-                    <td>{it.result === 'FAIL' ? <span style={{ color: '#dc2626', fontWeight: 700 }}>{formatChecklistResult(it.result)}</span> : it.result === 'PASS' ? <span style={{ color: '#15803d', fontWeight: 700 }}>{formatChecklistResult(it.result)}</span> : <span className="muted">{formatChecklistResult(it.result)}</span>}</td>
-                    <td className="muted" style={{ fontSize: 12 }}>{formatChecklistResponse(it)}</td>
-                  </tr>
-                ))}</tbody>
-              </table>
+            {show && (
+              <>
+                {items.length > 0 ? (
+                  <div className="tbl-wrap">
+                    <table style={{ marginTop: 6 }}>
+                      <thead><tr><th>#</th><th>Instruction</th><th>Result</th><th>Response recorded</th></tr></thead>
+                      <tbody>{items.map((it) => (
+                        <tr key={it.id}>
+                          <td>{it.sequence}</td>
+                          <td>{it.instruction}{it.critical_step ? <span className="bad" style={{ fontSize: 11, marginLeft: 6 }}>critical</span> : null}</td>
+                          <td>{it.result === 'FAIL' ? <span style={{ color: '#dc2626', fontWeight: 700 }}>{formatChecklistResult(it.result)}</span> : it.result === 'PASS' ? <span style={{ color: '#15803d', fontWeight: 700 }}>{formatChecklistResult(it.result)}</span> : <span className="muted">{formatChecklistResult(it.result)}</span>}</td>
+                          <td className="muted" style={{ fontSize: 12 }}>{formatChecklistResponse(it)}</td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                ) : <div className="muted" style={{ fontSize: 12 }}>No checklist items recorded on this execution.</div>}
+                {fails.length > 0 && <div className="alert alert-error mt" style={{ fontSize: 12 }}>{fails.length} failing item(s) on this execution</div>}
+              </>
             )}
-            {fails.length > 0 && <div className="alert alert-error mt" style={{ fontSize: 12 }}>{fails.length} failing item(s) on this execution</div>}
           </div>
         );
       })}
@@ -492,18 +530,20 @@ function FindingsRows({ findings }) {
 
 function GpsRows({ rows }) {
   return (
-    <table>
-      <thead><tr><th>Result</th><th>Measured</th><th>Distance</th><th>Tolerance</th><th>When</th></tr></thead>
-      <tbody>{rows.map((g, i) => (
-        <tr key={i}>
-          <td><b style={{ color: g.result === 'PASS' ? '#15803d' : g.result === 'FAIL' ? '#dc2626' : '#92400e' }}>{g.result}</b></td>
-          <td className="mono">{g.measured_lat != null ? `${Number(g.measured_lat).toFixed(6)}, ${Number(g.measured_lng).toFixed(6)}` : '—'}</td>
-          <td>{g.distance_m != null ? `${Math.round(g.distance_m)} m` : '—'}</td>
-          <td>{g.tolerance_m != null ? `${g.tolerance_m} m` : '—'}</td>
-          <td>{fmtDateTime(g.validated_at)}</td>
-        </tr>
-      ))}</tbody>
-    </table>
+    <div className="tbl-wrap">
+      <table>
+        <thead><tr><th>Result</th><th>Measured</th><th>Distance</th><th>Tolerance</th><th>When</th></tr></thead>
+        <tbody>{rows.map((g, i) => (
+          <tr key={i}>
+            <td><b style={{ color: g.result === 'PASS' ? '#15803d' : g.result === 'FAIL' ? '#dc2626' : '#92400e' }}>{g.result}</b></td>
+            <td className="mono">{g.measured_lat != null ? `${Number(g.measured_lat).toFixed(6)}, ${Number(g.measured_lng).toFixed(6)}` : '—'}</td>
+            <td>{g.distance_m != null ? `${Math.round(g.distance_m)} m` : '—'}</td>
+            <td>{g.tolerance_m != null ? `${g.tolerance_m} m` : '—'}</td>
+            <td>{fmtDateTime(g.validated_at)}</td>
+          </tr>
+        ))}</tbody>
+      </table>
+    </div>
   );
 }
 
@@ -553,7 +593,7 @@ function Thumb({ a, taskId }) {
       ) : (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
           <span className="pill" style={{ background: '#e0f2fe', color: '#0369a1' }}>{a.mime || 'FILE'}</span>
-          <button className="btn btn-sm" onClick={openFile}>View</button>
+          <button className="btn btn-sm no-print" onClick={openFile}>Open</button>
         </div>
       )}
       <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{a.file_name} · {Math.round((a.size_bytes || 0) / 1024)} KB</div>

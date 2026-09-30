@@ -1098,4 +1098,38 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
 .inline-edit:focus { outline: 2px solid var(--primary); outline-offset: 0; border-color: var(--primary); }
 .edit-dot { display: inline-block; width: 7px; height: 7px; margin-left: 5px; border-radius: 50%; background: #d97706; vertical-align: middle; }
 
+/* Dossier (entity detail documents): a single full-width column of section
+   cards. Wide tables are wrapped in .tbl-wrap so they scroll on screen and
+   wrap on paper instead of colliding with a neighbouring column. */
+.dossier { display: flex; flex-direction: column; gap: 14px; }
+.doc-sec { scroll-margin-top: 12px; }
+.doc-sec-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 14px; font-weight: 700; margin: 0 0 10px; color: var(--text); }
+.doc-sec-hint { font-size: 12px; font-weight: 500; }
+.doc-toc { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 8px 10px; background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: var(--radius); }
+.doc-toc-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-right: 4px; }
+.doc-toc-link { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--accent-border); background: #fff; color: var(--accent); cursor: pointer; }
+.doc-toc-link:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* Checklist executions: every execution shows a summary row; its item detail is
+   revealed only when the reader selects it (checkbox or Show/Hide). */
+.exec-list { display: flex; flex-direction: column; gap: 8px; }
+.exec-tools { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+.exec-card { padding: 10px 12px; }
+.exec-card.open { border-color: var(--accent-border); }
+.exec-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.exec-toggle { display: inline-flex; align-items: center; margin: 0; cursor: pointer; }
+.exec-toggle input { width: 16px; height: 16px; margin: 0; cursor: pointer; }
+.exec-title { display: flex; align-items: baseline; gap: 8px; flex: 1 1 200px; min-width: 0; font-size: 13px; }
+.exec-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+
+@media print {
+  .exec-toggle { display: none !important; }
+  .exec-card { break-inside: auto; }
+  .exec-card.open { break-inside: avoid; }
+  .doc-sec { break-inside: auto; }
+  .doc-toc { display: none !important; }
+}
+
+
 
