@@ -1,6 +1,6 @@
 const express = require('express');
 const { db, list, get, insertRow, nextCode } = require('../util');
-const { can, isGlobal, audit } = require('../auth');
+const { can, isGlobal, hasPerm, audit } = require('../auth');
 const { taskVisible, canViewCrew, commandScope } = require('../authority');
 const { listForTask } = require('./attachments');
 const { taskProgress } = require('../taskProgress');
@@ -1030,7 +1030,11 @@ router.post('/reports/document/share', (req, res) => {
   const note = String(req.body.note || '').slice(0, 2000);
   const path = `/reports?document=${encodeURIComponent(type)}&id=${id}`;
   let sent = 0;
+  let skipped = 0;
   for (const pid of recipients) {
+    // Only share with someone who can open reports (report:read); the entity
+    // scope itself is enforced when the recipient loads the deep link.
+    if (!reportRecipientAllowed(pid, null)) { skipped += 1; continue; }
     try {
       sendMail({
         senderUserId: req.user.id,
@@ -1045,8 +1049,8 @@ router.post('/reports/document/share', (req, res) => {
       sent += 1;
     } catch (_) { /* skip a bad recipient */ }
   }
-  audit(req.user, 'SHARE', 'report', null, { document: type, entity_id: id, recipients: sent });
-  res.json({ sent });
+  audit(req.user, 'SHARE', 'report', null, { document: type, entity_id: id, recipients: sent, skipped });
+  res.json({ sent, skipped });
 });
 
 router.get('/reports/:id', (req, res) => {
@@ -1177,6 +1181,28 @@ function userForSchedule(userId) {
   return u && u.active ? u : null;
 }
 
+// Resolve the active account that would receive mail addressed to a person, or
+// null when the person holds no account. Used to decide whether a report may be
+// shared with someone.
+function activeUserForPerson(personId) {
+  if (!personId) return null;
+  return db.prepare(
+    'SELECT id, username, role, region_id, person_id, active FROM user WHERE person_id = ? AND active = 1 ORDER BY id LIMIT 1'
+  ).get(Number(personId)) || null;
+}
+
+// A report may only be emailed to someone who can actually open it: they must
+// hold report:read and their region scope must cover the report. Global roles
+// (ADMIN/EXECUTIVE/VIEWER/AUDITOR) pass the scope check; everyone else must
+// match the report's region. Returns the user when allowed, else null.
+function reportRecipientAllowed(personId, report) {
+  const u = activeUserForPerson(personId);
+  if (!u) return null;
+  if (!hasPerm(u, 'report:read')) return null;
+  if (!isGlobal(u) && report && report.scope_region_id && Number(report.scope_region_id) !== Number(u.region_id)) return null;
+  return u;
+}
+
 router.get('/report-schedules', (req, res) => {
   if (!can(req, 'report:read')) return res.status(403).json({ error: 'Forbidden: requires report:read' });
   const rows = list('report_schedule')
@@ -1234,7 +1260,12 @@ router.post('/reports/:id/share', (req, res) => {
   const note = String(req.body?.note || '').slice(0, 2000);
   const body = `${note ? `${note}\n\n` : ''}${r.title}\nOpen the report: /reports?report=${r.id}`;
   let sent = 0;
+  const skipped = [];
   for (const pid of recipients) {
+    // Only deliver to a person who can actually open the report: a report-reader
+    // whose region scope covers it. Out-of-scope or unauthorised recipients are
+    // skipped rather than leaked the report.
+    if (!reportRecipientAllowed(pid, r)) { skipped.push(pid); continue; }
     const m = sendMail({
       senderUserId: req.user.id,
       senderPersonId: req.user.person_id,
@@ -1248,8 +1279,8 @@ router.post('/reports/:id/share', (req, res) => {
     });
     if (m) sent += 1;
   }
-  audit(req.user, 'SHARE', 'report', r.id, { recipients: sent });
-  res.json({ sent });
+  audit(req.user, 'SHARE', 'report', r.id, { recipients: sent, skipped: skipped.length });
+  res.json({ sent, skipped: skipped.length, skipped_recipients: skipped });
 });
 
 // Generate every due scheduled report, then roll the schedule forward. Called
@@ -1270,6 +1301,9 @@ function runReportSchedules(nowIso = new Date().toISOString()) {
       try { shareTo = typeof s.share_to === 'string' ? JSON.parse(s.share_to) : (s.share_to || []); } catch (_) { shareTo = []; }
       const fresh = get('report', id);
       for (const pid of (shareTo || [])) {
+        // Deliver only to recipients who can open the report (report:read within
+        // its region scope); silently skip anyone out of scope.
+        if (!reportRecipientAllowed(Number(pid), fresh)) continue;
         sendMail({
           senderUserId: s.created_by,
           recipientPersonId: Number(pid),

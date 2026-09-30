@@ -85,6 +85,7 @@ export default function Reports() {
   const [shareNote, setShareNote] = useState('');
   const [shareBusy, setShareBusy] = useState(false);
   const [shareErr, setShareErr] = useState(null);
+  const [shareResult, setShareResult] = useState(null);
   const [monitor, setMonitor] = useState(null);
   const [monitorBusy, setMonitorBusy] = useState(false);
   const { query, setQuery, results: reportRows } = useSearchFilter(reports);
@@ -270,11 +271,17 @@ export default function Reports() {
     try {
       setShareBusy(true);
       setShareErr(null);
+      setShareResult(null);
       const recipients = [...shareTo];
-      if (shareTarget.kind === 'document') {
-        await api.post('/reports/document/share', { type: shareTarget.type, id: shareTarget.id, recipients, note: shareNote });
-      } else {
-        await api.post(`/reports/${shareTarget.id}/share`, { recipients, note: shareNote });
+      const raw = shareTarget.kind === 'document'
+        ? await api.post('/reports/document/share', { type: shareTarget.type, id: shareTarget.id, recipients, note: shareNote })
+        : await api.post(`/reports/${shareTarget.id}/share`, { recipients, note: shareNote });
+      const res = raw?.data ?? raw;
+      const skipped = res?.skipped || 0;
+      if (skipped > 0) {
+        // Keep the dialog open so the sender sees who could not receive it.
+        setShareResult(`Sent to ${res?.sent || 0} recipient(s). ${skipped} skipped — no report access or outside the report's region scope.`);
+        return;
       }
       setShareTarget(null);
       setShareTo(new Set());
@@ -562,6 +569,7 @@ export default function Reports() {
                 {top ? <button className="btn" onClick={popDocument}>{documents.length > 1 ? 'Back' : (view ? 'Back to report' : 'Close')}</button> : null}
                 {canShare ? (
                   <button className="btn" onClick={() => {
+                    setShareResult(null);
                     if (top) setShareTarget({ kind: 'document', type: top.type, id: top.id, label: top.data?.title || top.label });
                     else setShareTarget({ kind: 'report', id: view.id, label: view.title });
                   }}>Share</button>
@@ -587,6 +595,7 @@ export default function Reports() {
             <button className="btn btn-primary" disabled={shareBusy || shareTo.size === 0} onClick={submitShare}>{shareBusy ? 'Sending…' : `Send to ${shareTo.size}`}</button>
           </>}>
           {shareErr && <ErrorNote error={shareErr} />}
+          {shareResult && <div className="alert alert-success">{shareResult}</div>}
           <div className="field"><label>Note (optional)</label><textarea rows={3} value={shareNote} onChange={(e) => setShareNote(e.target.value)} placeholder="Add a message for the recipients…" /></div>
           <div className="field"><label>Recipients</label>
             <div className="share-list">
