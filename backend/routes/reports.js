@@ -437,7 +437,7 @@ function compute(reportType, params, user) {
     }
     case 'ASSET_DETAIL': {
       const a = get('asset', Number(params.asset_id), ['metadata']);
-      if (!a) return { title: 'Asset Detail Document', rows: [{ label: 'Error', value: 'Asset not found' }] };
+      if (!a) return { title: 'Asset Detail Profile', rows: [{ label: 'Error', value: 'Asset not found' }] };
       const hi = a.health_index ?? (a.condition_rating ? Math.max(1, Math.min(100, Math.round(a.condition_rating * 10))) : null);
       const rul = a.remaining_useful_life_years ?? (a.condition_rating ? Math.round((a.condition_rating / 10) * 40 * 10) / 10 : null);
       const aEnriched = { ...a, health_index: hi, remaining_useful_life_years: rul };
@@ -445,8 +445,8 @@ function compute(reportType, params, user) {
       const line = a.line_id ? get('transmission_line', a.line_id, ['route_json']) : null;
       const tower = a.tower_id ? get('tower', a.tower_id) : null;
       const aRegion = sub ? sub.region_id : line ? line.region_id : tower ? (get('transmission_line', tower.line_id)?.region_id ?? null) : null;
-      if (!scope.global && !scope.assetIds.has(a.id)) return scopeError('Asset Detail Document');
-      if (scope.global && outOfScope(aRegion)) return scopeError('Asset Detail Document');
+      if (!scope.global && !scope.assetIds.has(a.id)) return scopeError('Asset Detail Profile');
+      if (scope.global && outOfScope(aRegion)) return scopeError('Asset Detail Profile');
       // Carry the crew name so the printed maintenance history names the crew
       // instead of leaking a raw foreign-key id onto the page.
       const history = db.prepare(
@@ -520,12 +520,12 @@ function compute(reportType, params, user) {
           document[key] = document[key].map((t) => ({ ...t, ...taskProgress(t.id) }));
         }
       }
-      return { title: `Asset Detail Document — ${a.name || a.asset_id}`, rows, document };
+      return { title: `Asset Detail Profile — ${a.name || a.asset_id}`, rows, document };
     }
     case 'TASK_DETAIL': {
       const t = get('task', Number(params.task_id));
-      if (!t) return { title: 'Task Detail Document', rows: [{ label: 'Error', value: 'Task not found' }] };
-      if (!taskVisible(user, t)) return scopeError('Task Detail Document');
+      if (!t) return { title: 'Task Detail Profile', rows: [{ label: 'Error', value: 'Task not found' }] };
+      if (!taskVisible(user, t)) return scopeError('Task Detail Profile');
       const crew = t.crew_id ? get('crew', t.crew_id) : null;
       const region = t.region_id ? get('region', t.region_id) : null;
       const resolved = resolveTarget({ task: t });
@@ -580,7 +580,7 @@ function compute(reportType, params, user) {
         gps_fail: gps_validations.filter((v) => v.result === 'FAIL' || v.result === 'MANUAL_REVIEW').length,
       };
       return {
-        title: `Task Detail Document — ${targetHeadline({ taskType: t.task_type, taskTitle: t.title, target: resolved })}`,
+        title: `Task Detail Profile — ${targetHeadline({ taskType: t.task_type, taskTitle: t.title, target: resolved })}`,
         rows,
         document: {
           entity: 'TASK',
@@ -607,9 +607,9 @@ function compute(reportType, params, user) {
     }
     case 'LINE_DETAIL': {
       const l = get('transmission_line', Number(params.line_id), ['route_json']);
-      if (!l) return { title: 'Line Detail Document', rows: [{ label: 'Error', value: 'Line not found' }] };
-      if (!scope.global && !scope.lineIds.has(l.id)) return scopeError('Line Detail Document');
-      if (scope.global && outOfScope(l.region_id)) return scopeError('Line Detail Document');
+      if (!l) return { title: 'Line Detail Profile', rows: [{ label: 'Error', value: 'Line not found' }] };
+      if (!scope.global && !scope.lineIds.has(l.id)) return scopeError('Line Detail Profile');
+      if (scope.global && outOfScope(l.region_id)) return scopeError('Line Detail Profile');
       const region = l.region_id ? get('region', l.region_id) : null;
       const fromSub = l.from_substation_id ? get('substation', l.from_substation_id) : null;
       const toSub = l.to_substation_id ? get('substation', l.to_substation_id) : null;
@@ -699,12 +699,12 @@ function compute(reportType, params, user) {
           document[key] = document[key].map((t) => ({ ...t, ...taskProgress(t.id) }));
         }
       }
-      return { title: `Line Detail Document — ${l.name}`, rows, document };
+      return { title: `Line Detail Profile — ${l.name}`, rows, document };
     }
     case 'CREW_DETAIL': {
       const c = get('crew', Number(params.crew_id));
-      if (!c) return { title: 'Crew Detail Document', rows: [{ label: 'Error', value: 'Crew not found' }] };
-      if (!canViewCrew(user, c)) return scopeError('Crew Detail Document');
+      if (!c) return { title: 'Crew Detail Profile', rows: [{ label: 'Error', value: 'Crew not found' }] };
+      if (!canViewCrew(user, c)) return scopeError('Crew Detail Profile');
       const leader = c.leader_person_id ? get('person', c.leader_person_id) : null;
       const members = db.prepare(
         `SELECT cm.*, p.first_name, p.last_name, p.title FROM crew_member cm JOIN person p ON p.id = cm.person_id WHERE cm.crew_id = ? AND cm.active = 1 ORDER BY cm.skill_level DESC`
@@ -761,12 +761,12 @@ function compute(reportType, params, user) {
           document[key] = document[key].map((t) => ({ ...t, ...taskProgress(t.id) }));
         }
       }
-      return { title: `Crew Detail Document — ${c.name}`, rows, document };
+      return { title: `Crew Detail Profile — ${c.name}`, rows, document };
     }
     case 'PERSON_DETAIL': {
       const p = get('person', Number(params.person_id));
-      if (!p) return { title: 'Person Detail Document', rows: [{ label: 'Error', value: 'Person not found' }] };
-      if (!personVisible(user, scope, p.id)) return scopeError('Person Detail Document');
+      if (!p) return { title: 'Person Detail Profile', rows: [{ label: 'Error', value: 'Person not found' }] };
+      if (!personVisible(user, scope, p.id)) return scopeError('Person Detail Profile');
       const crews = db.prepare(
         `SELECT c.id, c.name, c.crew_code, c.crew_type, cm.role, cm.skill_level, cm.active
            FROM crew_member cm JOIN crew c ON c.id = cm.crew_id
@@ -819,7 +819,7 @@ function compute(reportType, params, user) {
         gps_validations: gps,
         performance: perf,
       };
-      return { title: `Person Detail Document — ${name}`, rows, document };
+      return { title: `Person Detail Profile — ${name}`, rows, document };
     }
     case 'ASSET_VALUATION': {
       const parts = reportRegionIds().map((rid) => computeRegionValuation(rid, scope));

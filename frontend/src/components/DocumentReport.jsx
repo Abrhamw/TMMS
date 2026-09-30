@@ -6,7 +6,7 @@ import { formatChecklistResponse, formatChecklistResult } from '../checklistForm
 import DocumentGeo from './DocumentGeo';
 import TargetProfile from './TargetProfile';
 
-// Detail-document renderer for the entity dossiers (ASSET / CREW / TASK / LINE /
+// Detail-document renderer for the entity profiles (ASSET / CREW / TASK / LINE /
 // PERSON). Laid out as a single full-width column so a wide table can never
 // collide with a neighbouring column (the old two-column grid let report tables
 // overflow into each other). A light "on this page" strip jumps between the
@@ -19,7 +19,7 @@ export default function DocumentReport({ data, onOpenEntity }) {
   const document = data.document || {};
   const sid = (key) => `${uid}-${key}`;
   return (
-    <div className="dossier">
+    <div className="profile">
       {metricRows.length > 0 && (
         <div className="tbl-wrap mb">
           <table>
@@ -323,7 +323,7 @@ function Warnings({ items }) {
 
 // Dispatch readiness for a task: the checklist's derived team / skill / cert
 // requirements, the resolved crew's coverage and the advisory equipment list.
-// The dossier wraps this in its own section header, so no inner title here.
+// The profile wraps this in its own section header, so no inner title here.
 function DispatchAudit({ audit }) {
   const req = audit.requirements;
   const crew = audit.crew;
@@ -440,7 +440,7 @@ function TaskRows({ tasks, onOpenEntity }) {
 
 // Every execution is listed with its title and result so the report is complete.
 // The checklist item detail is only rendered for executions the reader selects,
-// which keeps the default dossier compact (and the printout short).
+// which keeps the default profile compact (and the printout short).
 function ExecRows({ rows }) {
   const [selected, setSelected] = useState(() => new Set());
   if (!rows || !rows.length) return <div className="muted" style={{ fontSize: 13 }}>No executions</div>;

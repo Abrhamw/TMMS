@@ -695,10 +695,10 @@ function ensureWorkbookChecklists() {
 // they appear in the Reports page alongside the original eight.
 function ensureReportTemplates() {
   const rows = [
-    { name: 'Asset Detail Document', report_type: 'ASSET_DETAIL', description: 'Full per-asset record, condition, history, checklist executions, GPS and open tasks.' },
-    { name: 'Crew Detail Document', report_type: 'CREW_DETAIL', description: 'Full per-crew roster, certifications, task history and utilization.' },
-    { name: 'Task Detail Document', report_type: 'TASK_DETAIL', description: 'Single task record: who performed it, executed checklist, findings, photos and verification.' },
-    { name: 'Line Detail Document', report_type: 'LINE_DETAIL', description: 'Single transmission line: towers, assets, related maintenance tasks, executions and GPS coverage.' },
+    { name: 'Asset Detail Profile', report_type: 'ASSET_DETAIL', description: 'Full per-asset record, condition, history, checklist executions, GPS and open tasks.' },
+    { name: 'Crew Detail Profile', report_type: 'CREW_DETAIL', description: 'Full per-crew roster, certifications, task history and utilization.' },
+    { name: 'Task Detail Profile', report_type: 'TASK_DETAIL', description: 'Single task record: who performed it, executed checklist, findings, photos and verification.' },
+    { name: 'Line Detail Profile', report_type: 'LINE_DETAIL', description: 'Single transmission line: towers, assets, related maintenance tasks, executions and GPS coverage.' },
     { name: 'Asset Valuation Report', report_type: 'ASSET_VALUATION', description: 'Replacement cost (RCN) and condition-adjusted value of the registered population, by region, family and type.' },
     { name: 'Maintenance Cost Report', report_type: 'MAINTENANCE_COST', description: 'Recorded maintenance spend over a period, by region, asset and event type.' },
     { name: 'Crew Readiness Report', report_type: 'CREW_READINESS', description: 'Per-crew dispatch readiness: roster, certification coverage, unmet skill/cert requirements and KPIs.' },

@@ -2,11 +2,58 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, fmtDate, fmtMoney } from '../api';
 import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, MoneyCard, SearchField, useSearchFilter } from '../components';
+import { KpiTile } from '../components/InfraVisuals';
 import { can, getStoredUser } from '../auth';
 import { assetsInScope, linesInRegion } from '../cascade';
 import DocumentReport from '../components/DocumentReport';
 
 const DOCUMENT_TYPES = ['ASSET_DETAIL', 'CREW_DETAIL', 'PERSON_DETAIL', 'TASK_DETAIL', 'LINE_DETAIL'];
+// Person profiles have no seed template but are reachable from the entity
+// picker, so offer a card for them alongside the templated ones.
+const PERSON_PROFILE = { id: 'person_profile', report_type: 'PERSON_DETAIL', name: 'Person Detail Profile', description: 'Per-person record: crews, certifications, findings and executions.' };
+
+const PERIOD_OPTIONS = [
+  { key: 'Month', label: 'Month' },
+  { key: 'Quarter', label: 'Quarter' },
+  { key: 'HalfYear', label: 'Half year' },
+  { key: 'Year', label: 'Year' },
+];
+const PERIOD_SUB = {
+  Month: 'in this fiscal month',
+  Quarter: 'in this fiscal quarter',
+  HalfYear: 'in this fiscal half year',
+  Year: 'in this fiscal year to date',
+};
+
+function addMonths(date, n) {
+  const d = new Date(date.getTime());
+  const day = d.getDate();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + n);
+  const dim = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, dim));
+  return d;
+}
+// The reporting year is anchored to Hamle 1 (7 July, Ethiopian calendar). The
+// selected period is the current fiscal month/quarter/half/year, and KPIs are
+// counted over [start, end).
+function fiscalYearStart(now) {
+  const anchor = new Date(now.getFullYear(), 6, 7);
+  return now >= anchor ? anchor : new Date(now.getFullYear() - 1, 6, 7);
+}
+function fiscalPeriodRange(period, now = new Date()) {
+  const fyStart = fiscalYearStart(now);
+  const monthsIn = (now.getFullYear() - fyStart.getFullYear()) * 12 + (now.getMonth() - fyStart.getMonth());
+  let offset = 0;
+  let span = 1;
+  if (period === 'Quarter') { span = 3; offset = Math.floor(monthsIn / 3) * 3; }
+  else if (period === 'HalfYear') { span = 6; offset = Math.floor(monthsIn / 6) * 6; }
+  else if (period === 'Year') { span = 12; offset = 0; }
+  const start = addMonths(fyStart, offset);
+  const end = addMonths(start, span);
+  return { start, end };
+}
+const dayFmt = (d) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
 export default function Reports() {
   const canGenerate = can(getStoredUser(), 'report:write');
@@ -22,9 +69,41 @@ export default function Reports() {
   const [perfScope, setPerfScope] = useState('crew');
   const [perf, setPerf] = useState(null);
   const [perfErr, setPerfErr] = useState(null);
+  const [perfExpanded, setPerfExpanded] = useState(false);
+  const [period, setPeriod] = useState('Month');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [regionFilter, setRegionFilter] = useState('');
   const [documents, setDocuments] = useState([]);
   const { query, setQuery, results: reportRows } = useSearchFilter(reports);
   const [searchParams, setSearchParams] = useSearchParams();
+
+  const range = useMemo(() => fiscalPeriodRange(period), [period]);
+  const rangeLabel = `${dayFmt(range.start)} → ${dayFmt(new Date(range.end.getTime() - 864e5))}`;
+  const kpis = useMemo(() => {
+    let total = 0;
+    let docs = 0;
+    for (const r of reports) {
+      const t = r.generated_at ? new Date(r.generated_at) : null;
+      if (!t || t < range.start || t >= range.end) continue;
+      total += 1;
+      if (DOCUMENT_TYPES.includes(r.report_type)) docs += 1;
+    }
+    return { total, docs, analysis: total - docs };
+  }, [reports, range]);
+
+  const profileTemplates = useMemo(() => {
+    const list = templates.filter((t) => DOCUMENT_TYPES.includes(t.report_type));
+    return list.some((t) => t.report_type === 'PERSON_DETAIL') ? list : [...list, PERSON_PROFILE];
+  }, [templates]);
+  const analysisTemplates = useMemo(() => templates.filter((t) => !DOCUMENT_TYPES.includes(t.report_type)), [templates]);
+  const modalTemplates = useMemo(() => [...profileTemplates, ...analysisTemplates], [profileTemplates, analysisTemplates]);
+  const recent = useMemo(() => [...reports].sort((a, b) => (b.id || 0) - (a.id || 0)).slice(0, 6), [reports]);
+  const filteredReports = useMemo(() => reportRows.filter((r) => {
+    if (typeFilter === 'profile' && !DOCUMENT_TYPES.includes(r.report_type)) return false;
+    if (typeFilter === 'analysis' && DOCUMENT_TYPES.includes(r.report_type)) return false;
+    if (regionFilter && String(r.scope_region_id || '') !== regionFilter) return false;
+    return true;
+  }), [reportRows, typeFilter, regionFilter]);
 
   // Click-through drill-down: push an entity document onto the stack and fetch
   // its read-only detail (scoped to the caller). Clicking an entity inside a
@@ -38,6 +117,16 @@ export default function Reports() {
       .catch((e) => setDocuments((d) => d.map((x) => (x.key === key ? { ...x, error: e.message, loading: false } : x))));
   }
   const popDocument = () => setDocuments((d) => d.slice(0, -1));
+  const openReport = (id) => {
+    setDocuments([]);
+    api.get(`/reports/${id}`).then(setView).catch((e) => setError(e.message));
+  };
+  const startReport = (report_type) => setGenForm({
+    report_type,
+    period_start: new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10),
+    period_end: new Date().toISOString().slice(0, 10),
+    scope_region_id: '',
+  });
 
   const load = () => {
     api.get('/report-templates').then(setTemplates).catch((e) => setError(e.message));
@@ -101,87 +190,131 @@ export default function Reports() {
 
   return (
     <Page title="Operational & Compliance Reports" crumbs="TMMS / Validation & Compliance"
-      actions={canGenerate ? <button className="btn btn-primary" onClick={() => setGenForm({ report_type: templates[0]?.report_type || 'MAINTENANCE_COMPLETION', period_start: new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10), period_end: new Date().toISOString().slice(0, 10), scope_region_id: '' })}>+ Generate Report</button> : null}>
+      actions={canGenerate ? <button className="btn btn-primary" onClick={() => startReport(templates[0]?.report_type || 'MAINTENANCE_COST')}>+ Generate Report</button> : null}>
       {error && <ErrorNote error={error} />}
 
-      {canPerf && (
-        <div className="mt mb">
-          <div className="spread">
-            <h3 className="section-title">Field Team Performance</h3>
-            <div>
-              <button className={`btn btn-sm${perfScope === 'crew' ? ' btn-primary' : ''}`} onClick={() => setPerfScope('crew')}>By crew</button>{' '}
-              <button className={`btn btn-sm${perfScope === 'person' ? ' btn-primary' : ''}`} onClick={() => setPerfScope('person')}>By person</button>
-            </div>
-          </div>
-          {perfErr && <ErrorNote error={perfErr} />}
-          {!perf && !perfErr && <Loading />}
-          {perf && (
-            <div className="card">
-              <div className="tbl-wrap">
-                <table>
-                  <thead><tr><th>{perfScope === 'crew' ? 'Crew' : 'Person'}</th><th>Tasks</th><th>Completed</th><th>Rate</th><th>On time</th><th>On-time rate</th><th>Open</th><th>Overdue</th><th>Avg cycle (h)</th><th>Findings</th><th>GPS viol.</th></tr></thead>
-                  <tbody>
-                    {perf.map((r) => {
-                      const detailType = perfScope === 'crew' ? 'CREW_DETAIL' : 'PERSON_DETAIL';
-                      return (
-                        <tr key={r.id} className="row-link"
-                          onClick={() => openDocument(detailType, r.id, r.name)}
-                          title={`Click to view ${perfScope} details`}>
-                          <td><b>{r.name}</b></td>
-                          <td>{r.tasks}</td>
-                          <td>{r.completed}</td>
-                          <td>{r.completion_rate}%</td>
-                          <td>{r.on_time}</td>
-                          <td>{r.on_time_rate}%</td>
-                          <td>{r.open ?? 0}</td>
-                          <td className={r.overdue ? 'bad' : undefined}>{r.overdue ?? 0}</td>
-                          <td>{r.avg_cycle_hours != null ? r.avg_cycle_hours : '—'}</td>
-                          <td>{r.findings}</td>
-                          <td>{r.gps_violations}</td>
-                        </tr>
-                      );
-                    })}
-                    {perf.length === 0 && <tr><td colSpan={11} className="muted center">No data for this scope.</td></tr>}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+      <div className="period-bar">
+        <div className="seg" role="group" aria-label="Report period">
+          {PERIOD_OPTIONS.map((p) => (
+            <button key={p.key} type="button" className={period === p.key ? 'on' : ''} onClick={() => setPeriod(p.key)}>{p.label}</button>
+          ))}
         </div>
-      )}
-
-      <h3 className="section-title">Available Report Templates</h3>
-      <div className="grid grid-4">
-        {templates.map((t) => (
-          <div key={t.id} className="card card-pad" style={{ cursor: 'pointer' }} onClick={() => setGenForm({ report_type: t.report_type, period_start: new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10), period_end: new Date().toISOString().slice(0, 10), scope_region_id: '' })}>
-            <b>{t.name}</b>
-            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{t.description || '—'}</div>
-          </div>
-        ))}
+        <span className="period-range">Showing <b>{rangeLabel}</b></span>
+        <span className="ref-note">Periods anchored to Hamle 1 (7 July) - Ethiopian fiscal calendar</span>
       </div>
 
-      <h3 className="section-title">Generated Reports</h3>
+      <div className="kpi-strip">
+        <KpiTile label="Reports generated" value={kpis.total} sub={PERIOD_SUB[period]} tone="ok" />
+        <KpiTile label="Entity profiles" value={kpis.docs} sub="asset / crew / person / task / line" />
+        <KpiTile label="Analysis &amp; compliance" value={kpis.analysis} sub="cost / valuation / readiness / performance" />
+        <KpiTile label="Report templates" value={templates.length} sub="not period-scoped" />
+      </div>
+
+      <h3 className="section-title">Report templates <span className="hint">click a template to start a report</span></h3>
+      <div className="card card-pad mb">
+        <div className="card-head"><h3>Entity profiles</h3><span className="muted">one record, complete history</span></div>
+        <div className="grid grid-4">
+          {profileTemplates.map((t) => <TemplateCard key={t.report_type} t={t} onPick={startReport} />)}
+        </div>
+      </div>
+      <div className="card card-pad">
+        <div className="card-head"><h3>Analysis &amp; compliance</h3><span className="muted">period &amp; portfolio</span></div>
+        <div className="grid grid-3">
+          {analysisTemplates.map((t) => <TemplateCard key={t.report_type} t={t} onPick={startReport} />)}
+        </div>
+      </div>
+
+      <div className="grid grid-2 mt">
+        <div className="card card-pad">
+          <div className="card-head"><h3>Recent reports</h3><span className="muted">latest {recent.length}</span></div>
+          <div className="recent-list">
+            {recent.map((r) => (
+              <button key={r.id} type="button" className="recent-item" onClick={() => openReport(r.id)}>
+                <span className={`pill ${DOCUMENT_TYPES.includes(r.report_type) ? 'pill-doc' : 'pill-analysis'}`}>{r.report_type.replace(/_DETAIL$/, '').replace(/_/g, ' ')}</span>
+                <span className="recent-main"><b>{r.title}</b><span className="muted">{r.report_code} · {fmtDate(r.generated_at)}</span></span>
+                <span className="link">View</span>
+              </button>
+            ))}
+            {recent.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No reports generated yet</div>}
+          </div>
+        </div>
+
+        {canPerf && (
+          <div className="card card-pad">
+            <div className="card-head"><h3>Field team performance</h3>
+              <div className="chip-row">
+                <button type="button" className={`chip${perfScope === 'crew' ? ' chip-on' : ''}`} onClick={() => setPerfScope('crew')}>By crew</button>
+                <button type="button" className={`chip${perfScope === 'person' ? ' chip-on' : ''}`} onClick={() => setPerfScope('person')}>By person</button>
+              </div>
+            </div>
+            {perfErr && <ErrorNote error={perfErr} />}
+            {!perf && !perfErr && <Loading />}
+            {perf && (
+              <>
+                <div className="tbl-wrap">
+                  <table>
+                    <thead><tr><th>{perfScope === 'crew' ? 'Crew' : 'Person'}</th><th>Tasks</th><th>Rate</th><th>On time</th><th>Overdue</th></tr></thead>
+                    <tbody>
+                      {(perfExpanded ? perf : perf.slice(0, 5)).map((r) => {
+                        const detailType = perfScope === 'crew' ? 'CREW_DETAIL' : 'PERSON_DETAIL';
+                        return (
+                          <tr key={r.id} className="row-link" title={`Click to view ${perfScope} details`} onClick={() => openDocument(detailType, r.id, r.name)}>
+                            <td><b>{r.name}</b></td>
+                            <td>{r.tasks}</td>
+                            <td>{r.completion_rate}%</td>
+                            <td>{r.on_time_rate}%</td>
+                            <td className={r.overdue ? 'bad' : undefined}>{r.overdue ?? 0}</td>
+                          </tr>
+                        );
+                      })}
+                      {perf.length === 0 && <tr><td colSpan={5} className="muted center">No data for this scope.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+                {perf.length > 5 && (
+                  <div className="mt">
+                    <button className="btn btn-sm" onClick={() => setPerfExpanded((v) => !v)}>
+                      {perfExpanded ? 'Show less' : `View full performance table (${perf.length})`}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      <h3 className="section-title">Generated reports <span className="hint">{reports.length} total</span></h3>
       <div className="filters">
         <SearchField value={query} onChange={setQuery} placeholder="Search reports…" />
-        <span className="muted" style={{ fontSize: 12 }}>{reportRows.length} of {reports.length}</span>
+        <SearchSelect value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+          <option value="">All types</option>
+          <option value="profile">Entity profiles</option>
+          <option value="analysis">Analysis &amp; compliance</option>
+        </SearchSelect>
+        <SearchSelect value={regionFilter} onChange={(e) => setRegionFilter(e.target.value)}>
+          <option value="">All regions</option>
+          {regions.map((r) => <option key={r.id} value={String(r.id)}>{r.name}</option>)}
+        </SearchSelect>
+        <span className="muted" style={{ fontSize: 12 }}>{filteredReports.length} of {reports.length}</span>
       </div>
       <div className="card">
         <div className="tbl-wrap">
           <table>
             <thead><tr><th>Code</th><th>Title</th><th>Type</th><th>Period</th><th>Generated</th><th></th></tr></thead>
             <tbody>
-              {reportRows.map((r) => (
+              {filteredReports.map((r) => (
                 <tr key={r.id}>
                   <td className="mono">{r.report_code}</td>
                   <td><b>{r.title}</b></td>
                   <td>{r.report_type}</td>
                   <td className="nowrap">{fmtDate(r.period_start)} → {fmtDate(r.period_end)}</td>
                   <td className="nowrap">{fmtDate(r.generated_at)}</td>
-                  <td><button className="btn btn-sm" onClick={() => { setDocuments([]); api.get(`/reports/${r.id}`).then(setView).catch((e) => setError(e.message)); }}>View</button></td>
+                  <td><button className="btn btn-sm" onClick={() => openReport(r.id)}>View</button></td>
                 </tr>
               ))}
-              {reportRows.length === 0 && (
-                <tr><td colSpan="6" className="muted center">{query ? 'No reports match your search' : 'No reports generated yet'}</td></tr>
+              {filteredReports.length === 0 && (
+                <tr><td colSpan="6" className="muted center">{query || typeFilter || regionFilter ? 'No reports match your filters' : 'No reports generated yet'}</td></tr>
               )}
             </tbody>
           </table>
@@ -197,7 +330,7 @@ export default function Reports() {
           <div className="form-grid">
             <div className="field full"><label>Report type</label>
               <SearchSelect value={genForm.report_type} onChange={(e) => setGenForm({ ...genForm, report_type: e.target.value })}>
-                {templates.map((t) => <option key={t.id} value={t.report_type}>{t.name}</option>)}
+                {modalTemplates.map((t) => <option key={t.report_type} value={t.report_type}>{t.name}</option>)}
               </SearchSelect></div>
             {DOCUMENT_TYPES.includes(genForm.report_type) ? (
               <EntityPicker type={genForm.report_type} form={genForm} lists={entityLists} setForm={setGenForm} />
@@ -219,7 +352,7 @@ export default function Reports() {
       {(view || documents.length > 0) && (() => {
         const top = documents[documents.length - 1];
         return (
-          <Modal title={top ? (top.data?.title || top.label || 'Entity Document') : (view?.title || view?.data?.title || 'Report')}
+          <Modal title={top ? (top.data?.title || top.label || 'Entity Profile') : (view?.title || view?.data?.title || 'Report')}
             onClose={() => (top ? popDocument() : setView(null))} wide printable
             footer={top ? (
               <>
@@ -236,6 +369,18 @@ export default function Reports() {
         );
       })()}
     </Page>
+  );
+}
+
+function TemplateCard({ t, onPick }) {
+  const initials = (t.report_type || '').split('_').filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+  return (
+    <button type="button" className="card card-pad tpl-card" onClick={() => onPick(t.report_type)}>
+      <span className="tpl-ico">{initials}</span>
+      <b>{t.name}</b>
+      <span className="tpl-desc">{t.description || '—'}</span>
+      <span className="tpl-go">Generate →</span>
+    </button>
   );
 }
 

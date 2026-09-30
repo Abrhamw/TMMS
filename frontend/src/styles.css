@@ -1098,10 +1098,10 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
 .inline-edit:focus { outline: 2px solid var(--primary); outline-offset: 0; border-color: var(--primary); }
 .edit-dot { display: inline-block; width: 7px; height: 7px; margin-left: 5px; border-radius: 50%; background: #d97706; vertical-align: middle; }
 
-/* Dossier (entity detail documents): a single full-width column of section
+/* Entity profile documents: a single full-width column of section
    cards. Wide tables are wrapped in .tbl-wrap so they scroll on screen and
    wrap on paper instead of colliding with a neighbouring column. */
-.dossier { display: flex; flex-direction: column; gap: 14px; }
+.profile { display: flex; flex-direction: column; gap: 14px; }
 .doc-sec { scroll-margin-top: 12px; }
 .doc-sec-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 14px; font-weight: 700; margin: 0 0 10px; color: var(--text); }
 .doc-sec-hint { font-size: 12px; font-weight: 500; }
@@ -1133,3 +1133,37 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
 
 
 
+
+/* Reports landing (dashboard direction): fiscal-period selector, KPI strip and
+   clickable template/recent cards. */
+.period-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; background: #fff; box-shadow: var(--shadow); }
+.seg button { font: inherit; font-size: 13px; padding: 7px 14px; border: 0; border-right: 1px solid var(--border); background: #fff; color: var(--muted); cursor: pointer; }
+.seg button:last-child { border-right: 0; }
+.seg button.on { background: var(--primary); color: #fff; font-weight: 600; }
+.period-range { font-size: 12px; color: var(--muted); }
+.period-range b { color: var(--text); }
+.ref-note { font-size: 11px; color: var(--muted); background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: 999px; padding: 3px 10px; }
+.section-title .hint { font-size: 12px; font-weight: 500; color: var(--muted); text-transform: none; letter-spacing: 0; margin-left: auto; }
+
+.tpl-card { display: flex; flex-direction: column; gap: 8px; text-align: left; cursor: pointer; transition: .12s; font: inherit; }
+.tpl-card:hover { border-color: var(--accent-border); box-shadow: 0 4px 14px rgba(67, 56, 202, .12); transform: translateY(-1px); }
+.tpl-ico { width: 34px; height: 34px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 12px; border: 1px solid var(--accent-border); }
+.tpl-card b { font-size: 13px; }
+.tpl-desc { font-size: 11.5px; color: var(--muted); line-height: 1.35; }
+.tpl-go { margin-top: auto; font-size: 11.5px; color: var(--accent); font-weight: 600; }
+
+.pill-doc { background: #eef2ff; color: #4338ca; }
+.pill-analysis { background: #ecfdf5; color: #047857; }
+
+.recent-list { display: flex; flex-direction: column; }
+.recent-item { display: flex; align-items: center; gap: 10px; padding: 9px 4px; border: 0; border-bottom: 1px solid var(--border); background: none; text-align: left; font: inherit; cursor: pointer; width: 100%; }
+.recent-item:last-child { border-bottom: 0; }
+.recent-item:hover { background: var(--accent-soft); }
+.recent-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.recent-main b { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent-main .muted { font-size: 11px; }
+
+@media print {
+  .period-bar, .tpl-go, .recent-list .link { display: none !important; }
+}
