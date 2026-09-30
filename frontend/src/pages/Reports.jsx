@@ -743,23 +743,28 @@ function ReportBody({ data, onOpenEntity, hideSummary }) {
     );
   }
   if (data.checklist_compliance) {
+    const certRegions = (data.region_cert_status || []).filter((r) => r.total > 0);
     return (
       <div>
-        <div className="grid grid-2">
-          {!hideSummary && <>
-            <MoneyCard label="Checklist compliance" value={data.checklist_compliance} />
-            <MoneyCard label="GPS validation pass rate" value={data.gps_pass_rate} />
-            <MoneyCard label="Certifications" value={data.expired_certs} sub={`of ${data.total_certs} expired`} />
-          </>}
-          <div className="card card-pad">
-            <div className="card-head"><h3 className="card-title">Region cert status</h3></div>
-            <div className="tbl-wrap">
-              <table><thead><tr><th>Region</th><th>Expired</th><th>Total</th></tr></thead><tbody>
-                {(data.region_cert_status || []).map((r, i) => <tr key={i}><td>{r.region}</td><td>{r.expired}</td><td>{r.total}</td></tr>)}
-              </tbody></table>
-            </div>
+        {(!hideSummary || certRegions.length > 0) && (
+          <div className="grid grid-2">
+            {!hideSummary && <>
+              <MoneyCard label="Checklist compliance" value={data.checklist_compliance} />
+              <MoneyCard label="GPS validation pass rate" value={data.gps_pass_rate} />
+              <MoneyCard label="Certifications" value={data.expired_certs} sub={`of ${data.total_certs} expired`} />
+            </>}
+            {certRegions.length > 0 && (
+              <div className="card card-pad">
+                <div className="card-head"><h3 className="card-title">Region cert status</h3></div>
+                <div className="tbl-wrap">
+                  <table><thead><tr><th>Region</th><th>Expired</th><th>Total</th></tr></thead><tbody>
+                    {certRegions.map((r, i) => <tr key={i}><td>{r.region}</td><td>{r.expired}</td><td>{r.total}</td></tr>)}
+                  </tbody></table>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
+        )}
         {(data.execution_summary || []).length > 0 && (
           <>
             <h3 className="section-title">Checklist executions ({data.execution_summary.length})</h3>
@@ -828,6 +833,12 @@ function ReportBody({ data, onOpenEntity, hideSummary }) {
                 ))}
               </tbody>
             </table>
+            {data.missed_equipment_no_date > 0 && (
+              <p className="muted" style={{ fontSize: 12 }}>
+                A further {data.missed_equipment_no_date} in-service asset(s) have no maintenance date set and are not listed here — assign
+                schedules to bring them under preventive maintenance.
+              </p>
+            )}
           </>
         )}
       </div>

@@ -47,6 +47,15 @@ const scrollToSec = (id) => {
   if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 };
 
+// Long entity lists (a transmission line can carry dozens of tasks, towers and
+// assets) are capped in the printed profile so the document stays readable.
+// The analytics header and metric table always carry the full totals.
+const LIST_CAP = 25;
+function CappedNote({ shown, total, label }) {
+  if (!total || total <= shown) return null;
+  return <div className="muted mt" style={{ fontSize: 12 }}>Showing {shown} of {total} {label} — the full list is available in the application.</div>;
+}
+
 // Renders the ordered section list plus the "on this page" jump strip. Items are
 // filtered to the sections that actually carry data for this entity.
 function Sections({ items }) {
@@ -166,30 +175,53 @@ function DocumentSections({ document, onOpenEntity, sid }) {
     );
   }
   if (document.entity === 'LINE') {
+    const openStates = ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION'];
+    const lineTasks = [...(document.tasks || [])].sort((a, b) => {
+      const ra = openStates.includes(a.status) ? 0 : 1;
+      const rb = openStates.includes(b.status) ? 0 : 1;
+      if (ra !== rb) return ra - rb;
+      return String(a.due_date || '').localeCompare(String(b.due_date || ''));
+    });
+    const towerList = document.towers || [];
+    const assetList = document.assets || [];
+    const tasksShown = lineTasks.slice(0, LIST_CAP);
+    const towersShown = towerList.slice(0, LIST_CAP);
+    const assetsShown = assetList.slice(0, LIST_CAP);
     return (
       <Sections items={[
-        { key: 'tasks', id: sid('tasks'), title: 'Related maintenance tasks', hint: `${totals.tasks ?? (document.tasks || []).length} · ${(document.tasks_past || []).length} past / ${(document.tasks_future || []).length} upcoming`, body: <TaskRows tasks={document.tasks} onOpenEntity={onOpenEntity} /> },
-        { key: 'gps', id: sid('gps'), title: 'GPS violations', body: (document.gps_violations || []).length > 0 && <GpsRows rows={document.gps_violations} /> },
-        { key: 'towers', id: sid('towers'), title: `Tower fleet (${(document.towers || []).length})`, body: (
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr><th>Tower</th><th>Type</th><th>km</th><th>Corrosion</th><th>Parts</th></tr></thead>
-              <tbody>{(document.towers || []).map((tw) => (
-                <tr key={tw.id}><td className="mono">{tw.tower_id}</td><td>{tw.tower_type}</td><td>{tw.km_marker}</td><td><CondPill rating={tw.corrosion_rating} /></td><td>{tw.component_count ?? 0}</td></tr>
-              ))}</tbody>
-            </table>
+        { key: 'tasks', id: sid('tasks'), title: 'Related maintenance tasks', hint: `${totals.tasks ?? lineTasks.length} · ${(document.tasks_past || []).length} past / ${(document.tasks_future || []).length} upcoming`, body: (
+          <div>
+            <TaskRows tasks={tasksShown} onOpenEntity={onOpenEntity} />
+            <CappedNote shown={tasksShown.length} total={lineTasks.length} label="tasks" />
           </div>
         ) },
-        { key: 'assets', id: sid('assets'), title: 'Line assets', hint: `${(document.assets || []).length}`, body: (
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr><th>Asset</th><th>Type</th><th>Condition</th></tr></thead>
-              <tbody>{(document.assets || []).map((a) => (
-                <tr key={a.id} {...(typeof onOpenEntity === 'function' ? { className: 'row-link', title: 'Click to view asset details', onClick: () => onOpenEntity('ASSET_DETAIL', a.id, a.asset_id) } : {})}>
-                  <td className="mono">{a.asset_id}</td><td>{a.asset_type}{a.sub_type ? ` (${a.sub_type})` : ''}</td><td><CondPill rating={a.condition_rating} /></td>
-                </tr>
-              ))}</tbody>
-            </table>
+        { key: 'gps', id: sid('gps'), title: 'GPS violations', body: (document.gps_violations || []).length > 0 && <GpsRows rows={document.gps_violations} /> },
+        { key: 'towers', id: sid('towers'), title: `Tower fleet (${towerList.length})`, body: (
+          <div>
+            <div className="tbl-wrap">
+              <table>
+                <thead><tr><th>Tower</th><th>Type</th><th>km</th><th>Corrosion</th><th>Parts</th></tr></thead>
+                <tbody>{towersShown.map((tw) => (
+                  <tr key={tw.id}><td className="mono">{tw.tower_id}</td><td>{tw.tower_type}</td><td>{tw.km_marker}</td><td><CondPill rating={tw.corrosion_rating} /></td><td>{tw.component_count ?? 0}</td></tr>
+                ))}</tbody>
+              </table>
+            </div>
+            <CappedNote shown={towersShown.length} total={towerList.length} label="towers" />
+          </div>
+        ) },
+        { key: 'assets', id: sid('assets'), title: 'Line assets', hint: `${assetList.length}`, body: (
+          <div>
+            <div className="tbl-wrap">
+              <table>
+                <thead><tr><th>Asset</th><th>Type</th><th>Condition</th></tr></thead>
+                <tbody>{assetsShown.map((a) => (
+                  <tr key={a.id} {...(typeof onOpenEntity === 'function' ? { className: 'row-link', title: 'Click to view asset details', onClick: () => onOpenEntity('ASSET_DETAIL', a.id, a.asset_id) } : {})}>
+                    <td className="mono">{a.asset_id}</td><td>{a.asset_type}{a.sub_type ? ` (${a.sub_type})` : ''}</td><td><CondPill rating={a.condition_rating} /></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+            <CappedNote shown={assetsShown.length} total={assetList.length} label="assets" />
           </div>
         ) },
         { key: 'exec', id: sid('exec'), title: 'Completed maintenance executions', hint: `${(document.executions || []).length}`, body: (document.executions || []).length > 0 ? <ExecRows rows={document.executions} /> : <div className="muted" style={{ fontSize: 13 }}>None</div> },

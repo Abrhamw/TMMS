@@ -381,15 +381,6 @@ function computeRaw(reportType, params, user) {
           due: a.next_maintenance_at || null,
           detail: 'Maintenance overdue',
         })))
-        .concat(assetNoDate.map((a) => ({
-          kind: 'ASSET',
-          id: a.id,
-          asset_pk: a.id,
-          label: a.name || a.asset_id,
-          asset_type: a.asset_type || null,
-          due: null,
-          detail: 'No maintenance date set',
-        })))
         .concat(schedulesOverdue.map((s) => ({
           kind: 'SCHEDULE',
           id: s.id,
@@ -399,7 +390,11 @@ function computeRaw(reportType, params, user) {
           detail: `Schedule overdue (${s.frequency})`,
         })))
         .sort((a, b) => new Date(a.due || 0) - new Date(b.due || 0));
-      const missed_equipment = missed_equipment_all.slice(0, 200);
+      // Undated assets are deliberately excluded: they are a schedule gap, not a
+      // passed due date, and there can be tens of thousands of them — listing
+      // them by the hundred buried the genuine overdues. They are surfaced via
+      // the missed_equipment_no_date KPI and its dedicated finding instead.
+      const missed_equipment = missed_equipment_all.slice(0, 100);
 
       return {
         title: 'Compliance / Audit Report',
