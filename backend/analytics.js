@@ -95,8 +95,8 @@ function maintenanceCompletion(a, d) {
   const onTime = onTimeRaw.includes('%') ? Number(onTimeRaw.replace('%', '')) : null;
   a.kpis = [
     { label: 'Total tasks', value: total },
-    { label: 'Completed', value: done, sub: `${rate}% completion`, tone: rate >= 85 ? 'ok' : rate >= 70 ? 'warn' : 'bad' },
-    { label: 'On-time', value: onTime == null ? 'N/A' : `${onTime}%`, tone: onTime == null ? undefined : onTime >= 85 ? 'ok' : onTime >= 70 ? 'warn' : 'bad' },
+    { label: 'Completed', value: done, sub: `${rate}% completion`, tone: rate >= T.completionTarget ? 'ok' : rate >= T.completionFloor ? 'warn' : 'bad' },
+    { label: 'On-time', value: onTime == null ? 'N/A' : `${onTime}%`, tone: onTime == null ? undefined : onTime >= T.onTimeTarget ? 'ok' : onTime >= T.onTimeFloor ? 'warn' : 'bad' },
     { label: 'Outstanding', value: Math.max(0, total - done), sub: 'not completed in period' },
   ];
   const statusItems = Object.entries(d.by_status || {}).map(([label, value]) => ({ label, value }));
@@ -127,15 +127,14 @@ function assetCondition(a, d) {
   const poor = (byKey.poor ? byKey.poor.count : 0) + (byKey.critical ? byKey.critical.count : 0);
   const critical = byKey.critical ? byKey.critical.count : 0;
   const total = d.total_assets || (good + fair + poor);
-  const midpoint = ((byKey.good?.min + byKey.good?.max) / 2);
   let weighted = 0;
   for (const b of d.buckets || []) weighted += ((b.min + b.max) / 2) * b.count;
   const avg = total ? round1(weighted / total) : 0;
-  void midpoint;
+  const poorShare = pct(poor, total);
   a.kpis = [
     { label: 'Assets assessed', value: total },
-    { label: 'Average condition', value: `${avg} / 10`, tone: avg >= 7 ? 'ok' : avg >= 5.5 ? 'warn' : 'bad' },
-    { label: 'At risk (1-5)', value: poor, sub: `${pct(poor, total)}% of population`, tone: poor && pct(poor, total) > 15 ? 'bad' : poor ? 'warn' : 'ok' },
+    { label: 'Average condition', value: `${avg} / 10`, tone: avg >= T.conditionTarget ? 'ok' : avg >= T.conditionFloor ? 'warn' : 'bad' },
+    { label: 'At risk (1-5)', value: poor, sub: `${poorShare}% of population`, tone: poorShare > T.poorShareAlert ? 'bad' : poor ? 'warn' : 'ok' },
     { label: 'Critical (1-3)', value: critical, tone: critical ? 'bad' : 'ok' },
   ];
   a.donuts.push({ title: 'Condition mix', good, fair, poor, labels: ['Good (8-10)', 'Fair (6-7)', 'Poor (1-5)'] });
@@ -145,7 +144,6 @@ function assetCondition(a, d) {
   const ev = newEval();
   ev.score = total ? Math.round((avg / 10) * 100) : null;
   ev.grade = gradeFor(ev.score);
-  const poorShare = pct(poor, total);
   if (poorShare > T.poorShareAlert) ev.findings.push(finding('critical', `${poorShare}% of the assessed fleet (${poor} assets) is at condition 1-5 — a renewals liability, not a maintenance backlog.`));
   else if (poorShare > T.poorShareWarn) ev.findings.push(finding('high', `${poorShare}% of the fleet (${poor} assets) sits below condition 6 and should be watched for further decline.`));
   else if (poor) ev.findings.push(finding('medium', `${poor} asset(s) are below condition 6 — schedule targeted inspection before the next cycle.`));
@@ -173,7 +171,8 @@ function crewUtilization(a, d) {
   ];
   if (rows.length) {
     const max = Math.max(120, ...utils);
-    a.bars.push({ title: 'Utilisation by crew', max, items: rows.slice(0, 15).map((r) => ({ label: r.name, value: Number(r.utilization) || 0, sub: `${r.completed_tasks}/${r.assigned_tasks} done`, valueText: `${r.utilization}%` })) });
+    const ranked = [...rows].sort((x, y) => (Number(y.utilization) || 0) - (Number(x.utilization) || 0)).slice(0, 15);
+    a.bars.push({ title: 'Utilisation by crew', max, items: ranked.map((r) => ({ label: r.name, value: Number(r.utilization) || 0, sub: `${r.completed_tasks}/${r.assigned_tasks} done`, valueText: `${r.utilization}%` })) });
   }
   const ev = newEval();
   if (overloaded.length) ev.findings.push(finding('high', `${overloaded.length} crew(s) exceed ${T.utilizationHigh}% utilisation — schedule risk and fatigue exposure.`));
@@ -181,6 +180,7 @@ function crewUtilization(a, d) {
   if (!overloaded.length && !idle.length) ev.findings.push(finding('ok', `Crew utilisation is balanced (${avg}% average) across the reporting scope.`));
   if (avg < 35) ev.findings.push(finding('medium', `Average utilisation of ${avg}% suggests under-loaded capacity.`));
   if (overloaded.length) ev.recommendations.push(recommendation('high', 'Re-balance work from over-capacity crews to under-utilised crews.'));
+  if (idle.length) ev.recommendations.push(recommendation('medium', `Reassign open work to the ${idle.length} under-utilised crew(s) before adding capacity.`));
   ev.recommendations.push(recommendation('medium', 'Level the dispatch plan so utilisation stays inside the 40-90% band.'));
   a.evaluation = ev;
   return a;
@@ -199,7 +199,8 @@ function crewReadiness(a, d) {
     { label: 'Expired certs', value: expired, tone: expired ? 'bad' : 'ok' },
   ];
   if (rows.length) {
-    a.bars.push({ title: 'At-risk tasks by crew', items: rows.slice(0, 15).map((r) => ({ label: r.crew, value: Number(r.at_risk_tasks) || 0, sub: `${r.members} members` })) });
+    const ranked = [...rows].sort((x, y) => (Number(y.at_risk_tasks) || 0) - (Number(x.at_risk_tasks) || 0)).slice(0, 15);
+    a.bars.push({ title: 'At-risk tasks by crew', items: ranked.map((r) => ({ label: r.crew, value: Number(r.at_risk_tasks) || 0, sub: `${r.members} members` })) });
   }
   const ev = newEval();
   ev.score = Math.round(avgCompletion * 0.5 + (avgOnTime || avgCompletion) * 0.5);
@@ -281,8 +282,9 @@ function complianceAudit(a, d) {
     { label: 'Missed equipment', value: d.missed_equipment_total ?? 0, tone: d.missed_equipment_total ? 'warn' : 'ok' },
     { label: 'Undated assets', value: d.missed_equipment_no_date ?? 0, sub: 'no schedule set', tone: d.missed_equipment_no_date ? 'warn' : 'ok' },
   ];
-  if ((d.region_cert_status || []).length) {
-    a.bars.push({ title: 'Expired certifications by region', items: d.region_cert_status.map((r) => ({ label: r.region, value: Number(r.expired) || 0, sub: `${r.total} total` })) });
+  const certRegions = (d.region_cert_status || []).filter((r) => Number(r.expired) > 0);
+  if (certRegions.length) {
+    a.bars.push({ title: 'Expired certifications by region', items: certRegions.map((r) => ({ label: r.region, value: Number(r.expired) || 0, sub: `${r.total} total` })) });
   }
   if (d.missed_equipment_by_kind) {
     a.bars.push({ title: 'Missed maintenance by kind', items: [
@@ -300,7 +302,7 @@ function complianceAudit(a, d) {
   if (d.missed_equipment_total) ev.findings.push(finding('high', `${d.missed_equipment_total} asset/schedule maintenance item(s) are overdue.`));
   if (d.missed_equipment_no_date) ev.findings.push(finding('medium', `${d.missed_equipment_no_date} in-service asset(s) have no maintenance date set — the preventive schedule is incomplete.`));
   if (compNum != null && compNum >= T.checklistTarget && !d.expired_certs && !d.missed_equipment_total && !d.missed_equipment_no_date) ev.findings.push(finding('ok', 'Compliance indicators are within acceptable limits.'));
-  ev.recommendations.push(recommendation('high', 'Clear the overdue maintenance and certification backlog before the next audit.'));
+  if (d.expired_certs || d.missed_equipment_total) ev.recommendations.push(recommendation('high', 'Clear the overdue maintenance and certification backlog before the next audit.'));
   if (d.missed_equipment_no_date) ev.recommendations.push(recommendation('medium', 'Assign next-maintenance dates so every in-service asset carries a schedule.'));
   ev.recommendations.push(recommendation('medium', 'Enforce the checklist and GPS capture steps at submission to protect the compliance rate.'));
   a.evaluation = ev;
@@ -308,15 +310,15 @@ function complianceAudit(a, d) {
 }
 
 function overdueTask(a, d) {
+  const ancient = (d.buckets || []).find((b) => String(b.label).includes('90'))?.count || 0;
   a.kpis = [
     { label: 'Total overdue', value: d.total_overdue ?? 0, tone: d.total_overdue ? 'bad' : 'ok' },
-    { label: '> 90 days', value: (d.buckets || []).find((b) => String(b.label).includes('90'))?.count || 0, tone: 'bad' },
+    { label: '> 90 days', value: ancient, tone: ancient ? 'bad' : 'ok' },
   ];
   if ((d.buckets || []).length) a.bars.push({ title: 'Aging of overdue tasks', items: d.buckets.map((b) => ({ label: b.label, value: Number(b.count) || 0 })) });
   if (d.by_status) a.bars.push({ title: 'Overdue tasks by status', items: Object.entries(d.by_status).map(([label, value]) => ({ label, value })) });
   const ev = newEval();
   const total = d.total_overdue || 0;
-  const ancient = (d.buckets || []).find((b) => String(b.label).includes('90'))?.count || 0;
   if (total === 0) ev.findings.push(finding('ok', 'No tasks are overdue in the reporting scope.'));
   else {
     ev.findings.push(finding(total > 20 ? 'critical' : 'high', `${total} task(s) are past their due date.`));
@@ -352,20 +354,21 @@ function gpsCoverage(a, d) {
   const rows = d.by_type || [];
   const totalPass = rows.reduce((s, r) => s + (Number(r.pass) || 0), 0);
   const total = d.total || rows.reduce((s, r) => s + (Number(r.total) || 0), 0);
+  const rate = pct(totalPass, total);
   a.kpis = [
     { label: 'Validations', value: total },
-    { label: 'Overall pass rate', value: `${pct(totalPass, total)}%`, tone: pct(totalPass, total) >= 90 ? 'ok' : pct(totalPass, total) >= 75 ? 'warn' : 'bad' },
+    { label: 'Overall pass rate', value: `${rate}%`, tone: rate >= T.gpsTarget ? 'ok' : rate >= T.gpsFloor ? 'warn' : 'bad' },
     { label: 'Target types', value: rows.length },
   ];
   if (rows.length) a.bars.push({ title: 'Pass rate by target type', max: 100, items: rows.map((r) => ({ label: r.target_type, value: Number(String(r.rate || '0').replace('%', '')) || 0, sub: `${r.total} validations`, valueText: r.rate })) });
   const ev = newEval();
-  ev.score = pct(totalPass, total);
+  ev.score = total ? rate : null;
   ev.grade = gradeFor(ev.score);
-  const rate = pct(totalPass, total);
   if (total === 0) ev.findings.push(finding('medium', 'No GPS validations were recorded in the period.'));
-  else if (rate < 85) ev.findings.push(finding('high', `GPS validation pass rate is ${rate}%, indicating location mismatches in the field.`));
+  else if (rate < T.gpsFloor) ev.findings.push(finding('high', `GPS validation pass rate is ${rate}%, indicating location mismatches in the field.`));
+  else if (rate < T.gpsTarget) ev.findings.push(finding('medium', `GPS validation pass rate is ${rate}%, just under the ${T.gpsTarget}% target.`));
   else ev.findings.push(finding('ok', `GPS validation pass rate is ${rate}%.`));
-  if (total && rate < 85) ev.recommendations.push(recommendation('high', 'Investigate the failing target types and re-validate on site.'));
+  if (total && rate < T.gpsFloor) ev.recommendations.push(recommendation('high', 'Investigate the failing target types and re-validate on site.'));
   a.evaluation = ev;
   return a;
 }
@@ -430,15 +433,13 @@ function assetDetail(a, data, doc) {
   const health = asset.health_index ?? suggestion?.health_index;
   a.kpis = [
     { label: 'Condition', value: `${rating ?? '—'} / 10`, tone: rating == null ? undefined : rating >= 7 ? 'ok' : rating >= 5 ? 'warn' : 'bad' },
-    { label: 'Health index', value: health != null ? `${health}%` : '—', tone: health >= 70 ? 'ok' : health >= 50 ? 'warn' : 'bad' },
+    { label: 'Health index', value: health != null ? `${health}%` : '—', tone: health == null ? undefined : health >= 70 ? 'ok' : health >= 50 ? 'warn' : 'bad' },
     { label: 'Remaining life', value: asset.remaining_useful_life_years != null ? `${asset.remaining_useful_life_years} yr` : '—' },
     { label: 'Open tasks', value: t.open_tasks ?? 0, tone: t.open_tasks ? 'warn' : 'ok' },
     { label: 'Findings', value: t.findings ?? 0, tone: t.findings ? 'warn' : 'ok' },
     { label: 'GPS violations', value: t.gps_violations ?? 0, tone: t.gps_violations ? 'bad' : 'ok' },
   ];
-  const buckets = { Good: 0, Fair: 0, Poor: 0 };
   a.donuts.push({ title: 'Condition', good: rating >= 8 ? 1 : 0, fair: rating >= 6 && rating < 8 ? 1 : 0, poor: rating < 6 ? 1 : 0, labels: ['Good', 'Fair', 'Poor'] });
-  void buckets;
   const byStatus = {};
   for (const task of doc.tasks || []) byStatus[task.status] = (byStatus[task.status] || 0) + 1;
   if (Object.keys(byStatus).length) a.bars.push({ title: 'Maintenance history by status', items: Object.entries(byStatus).map(([label, value]) => ({ label, value })) });
