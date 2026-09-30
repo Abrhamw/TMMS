@@ -354,40 +354,47 @@ function computeRaw(reportType, params, user) {
           days: Math.round((c.expires_ms - nowMs) / 864e5),
         }));
 
-      // Missed equipment: in-service assets with no dated next maintenance (or a
-      // date already passed) and active schedules whose next due date is behind.
+      // Missed equipment is split two ways: an asset is *overdue* only when it
+      // carries a maintenance date that has passed, while an in-service asset
+      // with no date at all is a scheduling gap, not a missed deadline. Lumping
+      // the ~12k undated assets in with genuine overdues drowned the signal, so
+      // they are counted and reported separately.
       const regionOk = (a) => {
         if (!regionId) return true;
         return assetRegion(a) === regionId;
       };
       const inService = (a) => !['RETIRED', 'DECOMMISSIONED', 'DISPOSED'].includes(String(a.lifecycle_status || '').toUpperCase());
+      const scopedAssets = scopeAssets(user, scope, list('asset')).filter(inService).filter(regionOk);
+      const isOverdueDate = (v) => v && new Date(v).getTime() < nowMs;
+      const assetOverdue = scopedAssets.filter((a) => isOverdueDate(a.next_maintenance_at));
+      const assetNoDate = scopedAssets.filter((a) => !a.next_maintenance_at);
+      const schedulesOverdue = scopeSchedules(user, scope, list('maintenance_schedule'))
+        .filter((s) => s.is_active && (!regionId || s.region_id === regionId))
+        .filter((s) => isOverdueDate(s.next_due_date));
       const missed_equipment_all = []
-        .concat(scopeAssets(user, scope, list('asset'))
-          .filter(inService)
-          .filter((a) => !a.next_maintenance_at || new Date(a.next_maintenance_at).getTime() < nowMs)
-          .filter(regionOk)
-          .map((a) => ({
-            kind: 'ASSET',
-            id: a.id,
-            asset_pk: a.id,
-            label: a.name || a.asset_id,
-            asset_type: a.asset_type || null,
-            due: a.next_maintenance_at || null,
-            detail: a.next_maintenance_at ? 'Maintenance overdue' : 'No maintenance date set',
-          })))
-        .concat(scopeSchedules(user, scope, list('maintenance_schedule'))
-          .filter((s) => s.is_active && (!regionId || s.region_id === regionId))
-          .filter((s) => s.next_due_date && new Date(s.next_due_date).getTime() < nowMs)
-          .map((s) => ({
-            kind: 'SCHEDULE',
-            id: s.id,
-            label: s.schedule_name,
-            asset_type: s.asset_type || s.scope_type || null,
-            due: s.next_due_date,
-            detail: `Schedule overdue (${s.frequency})`,
-          })))
+        .concat(assetOverdue.map((a) => ({
+          kind: 'ASSET',
+          id: a.id,
+          asset_pk: a.id,
+          label: a.name || a.asset_id,
+          asset_type: a.asset_type || null,
+          due: a.next_maintenance_at || null,
+          detail: 'Maintenance overdue',
+        })))
+        .concat(schedulesOverdue.map((s) => ({
+          kind: 'SCHEDULE',
+          id: s.id,
+          label: s.schedule_name,
+          asset_type: s.asset_type || s.scope_type || null,
+          due: s.next_due_date,
+          detail: `Schedule overdue (${s.frequency})`,
+        })))
         .sort((a, b) => new Date(a.due || 0) - new Date(b.due || 0));
-      const missed_equipment = missed_equipment_all.slice(0, 200);
+      // Undated assets are deliberately excluded: they are a schedule gap, not a
+      // passed due date, and there can be tens of thousands of them — listing
+      // them by the hundred buried the genuine overdues. They are surfaced via
+      // the missed_equipment_no_date KPI and its dedicated finding instead.
+      const missed_equipment = missed_equipment_all.slice(0, 100);
 
       return {
         title: 'Compliance / Audit Report',
@@ -399,10 +406,11 @@ function computeRaw(reportType, params, user) {
         execution_summary: execRows,
         missed_certifications,
         missed_equipment,
-        missed_equipment_total: missed_equipment_all.length,
+        missed_equipment_total: assetOverdue.length + schedulesOverdue.length,
+        missed_equipment_no_date: assetNoDate.length,
         missed_equipment_by_kind: {
-          assets: missed_equipment_all.filter((m) => m.kind === 'ASSET').length,
-          schedules: missed_equipment_all.filter((m) => m.kind === 'SCHEDULE').length,
+          assets: assetOverdue.length,
+          schedules: schedulesOverdue.length,
         },
       };
     }
@@ -587,6 +595,9 @@ function computeRaw(reportType, params, user) {
         { label: 'Verified by', value: personLabel(t.verified_by) || '—' },
         { label: 'Revision', value: t.revision || 1 },
       ];
+      if (t.cancel_reason) {
+        rows.push({ label: 'Cancellation record', value: `${t.cancel_reason} · ${personLabel(t.cancelled_by) || 'Unknown user'} · ${t.cancelled_at ? new Date(t.cancelled_at).toISOString().slice(0, 16).replace('T', ' ') : '—'}` });
+      }
       const summary = {
         executions: executions.length,
         pass: executions.filter((e) => e.result === 'PASS').length,

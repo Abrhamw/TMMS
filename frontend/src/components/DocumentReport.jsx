@@ -47,6 +47,15 @@ const scrollToSec = (id) => {
   if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 };
 
+// Long entity lists (a transmission line can carry dozens of tasks, towers and
+// assets) are capped in the printed profile so the document stays readable.
+// The analytics header and metric table always carry the full totals.
+const LIST_CAP = 25;
+function CappedNote({ shown, total, label }) {
+  if (!total || total <= shown) return null;
+  return <div className="muted mt" style={{ fontSize: 12 }}>Showing {shown} of {total} {label} — the full list is available in the application.</div>;
+}
+
 // Renders the ordered section list plus the "on this page" jump strip. Items are
 // filtered to the sections that actually carry data for this entity.
 function Sections({ items }) {
@@ -81,22 +90,8 @@ function DocumentSections({ document, onOpenEntity, sid }) {
   if (!document) return <div className="muted">No document data</div>;
   const totals = document.totals || {};
   if (document.entity === 'ASSET') {
-    const a = document.asset || {};
     return (
       <Sections items={[
-        {
-          key: 'facts', id: sid('facts'), title: 'Asset facts',
-          body: (
-            <div className="kv" style={{ gridTemplateColumns: '150px 1fr', fontSize: 13 }}>
-              <span className="k">Asset ID</span><span className="mono">{a.asset_id}</span>
-              <span className="k">Condition</span><span><CondPill rating={a.condition_rating} /></span>
-              <span className="k">Health / RUL</span><span>{a.health_index != null ? `${a.health_index}%` : '—'} / {a.remaining_useful_life_years ?? '—'} yr</span>
-              <span className="k">Lifecycle</span><span>{a.lifecycle_status}</span>
-              <span className="k">Operational</span><span>{a.operational_status}</span>
-              <span className="k">Criticality</span><span>{a.criticality}</span>
-            </div>
-          ),
-        },
         { key: 'components', id: sid('components'), title: 'Components / parts', body: (document.components || []).length > 0 && (
           <div className="tbl-wrap">
             <table>
@@ -125,21 +120,8 @@ function DocumentSections({ document, onOpenEntity, sid }) {
     );
   }
   if (document.entity === 'CREW') {
-    const c = document.crew || {};
-    const leader = (document.members || []).find((m) => m.role === 'CREW_LEADER')
-      || (document.members || []).find((m) => m.person_id === c.leader_person_id);
     return (
       <Sections items={[
-        {
-          key: 'facts', id: sid('facts'), title: 'Crew facts',
-          body: (
-            <div className="kv" style={{ gridTemplateColumns: '150px 1fr', fontSize: 13 }}>
-              <span className="k">Code</span><span className="mono">{c.crew_code}</span>
-              <span className="k">Type</span><span>{c.crew_type}</span>
-              <span className="k">Leader</span><span>{leader ? [leader.first_name, leader.last_name].filter(Boolean).join(' ') : '—'}</span>
-            </div>
-          ),
-        },
         { key: 'members', id: sid('members'), title: 'Members & certifications', hint: `${(document.members || []).length} member(s), ${(document.certs || []).length} cert(s)`, body: (
           <div className="tbl-wrap">
             <table>
@@ -169,29 +151,8 @@ function DocumentSections({ document, onOpenEntity, sid }) {
   if (document.entity === 'TASK') {
     const t = document.task || {};
     const target = document.target || {};
-    const crew = document.crew;
     return (
       <Sections items={[
-        {
-          key: 'facts', id: sid('facts'), title: 'Task facts',
-          body: (
-            <div className="kv" style={{ gridTemplateColumns: '150px 1fr', fontSize: 13 }}>
-              <span className="k">Type</span><span>{t.task_type}</span>
-              <span className="k">Priority</span><span style={{ fontWeight: 700 }}>{t.priority}</span>
-              <span className="k">Status</span><span><Pill value={t.status} /></span>
-              <span className="k">Result</span><span>{t.result || '—'}</span>
-              <span className="k">Crew</span><span>{crew ? `${crew.name} (${crew.crew_code})` : '—'}</span>
-              <span className="k">Checklist</span><span>{document.template?.name || '—'}</span>
-              <span className="k">Due</span><span>{fmtDateTime(t.due_date)}</span>
-              <span className="k">Target</span><span>{target.substation?.name || (target.tower ? `${target.line?.name} · ${target.tower.tower_id}` : target.line?.name) || target.asset?.name || '—'}</span>
-              <span className="k">Created</span><span>{fmtDateTime(t.created_at)}</span>
-              {t.cancel_reason && <>
-                <span className="k">Cancellation record</span>
-                <span>{t.cancel_reason} · {t.cancelled_by_name || 'Unknown user'} · {fmtDateTime(t.cancelled_at)}</span>
-              </>}
-            </div>
-          ),
-        },
         { key: 'target', id: sid('target'), title: 'Target profile', body: <TargetProfile target={target} readiness={document.dispatch_audit} workflow={document.workflow} /> },
         { key: 'desc', id: sid('desc'), title: 'Description', body: <p className="muted" style={{ fontSize: 13, margin: 0 }}>{t.description || 'No description.'}</p> },
         {
@@ -214,52 +175,53 @@ function DocumentSections({ document, onOpenEntity, sid }) {
     );
   }
   if (document.entity === 'LINE') {
-    const l = document.line || {};
+    const openStates = ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION'];
+    const lineTasks = [...(document.tasks || [])].sort((a, b) => {
+      const ra = openStates.includes(a.status) ? 0 : 1;
+      const rb = openStates.includes(b.status) ? 0 : 1;
+      if (ra !== rb) return ra - rb;
+      return String(a.due_date || '').localeCompare(String(b.due_date || ''));
+    });
+    const towerList = document.towers || [];
+    const assetList = document.assets || [];
+    const tasksShown = lineTasks.slice(0, LIST_CAP);
+    const towersShown = towerList.slice(0, LIST_CAP);
+    const assetsShown = assetList.slice(0, LIST_CAP);
     return (
       <Sections items={[
-        {
-          key: 'facts', id: sid('facts'), title: 'Line facts',
-          body: (
-            <>
-              <div className="kv" style={{ gridTemplateColumns: '150px 1fr', fontSize: 13 }}>
-                <span className="k">Route</span><span>{document.from_substation?.name} → {document.to_substation?.name}</span>
-                <span className="k">Voltage</span><span>{l.voltage_kv} kV</span>
-                <span className="k">Length</span><span>{l.length_km} km</span>
-                <span className="k">Status</span><span><Pill value={l.operational_status} /></span>
-              </div>
-              {totals.towers != null && (
-                <div className="grid grid-4 mt" style={{ gap: 8 }}>
-                  <Mini label="Towers" v={totals.towers} />
-                  <Mini label="Assets" v={totals.assets} />
-                  <Mini label="Open tasks" v={totals.open_tasks} />
-                  <Mini label="Overdue" v={totals.overdue_tasks} warn={totals.overdue_tasks > 0} />
-                </div>
-              )}
-            </>
-          ),
-        },
-        { key: 'tasks', id: sid('tasks'), title: 'Related maintenance tasks', hint: `${totals.tasks ?? (document.tasks || []).length} · ${(document.tasks_past || []).length} past / ${(document.tasks_future || []).length} upcoming`, body: <TaskRows tasks={document.tasks} onOpenEntity={onOpenEntity} /> },
-        { key: 'gps', id: sid('gps'), title: 'GPS violations', body: (document.gps_violations || []).length > 0 && <GpsRows rows={document.gps_violations} /> },
-        { key: 'towers', id: sid('towers'), title: `Tower fleet (${(document.towers || []).length})`, body: (
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr><th>Tower</th><th>Type</th><th>km</th><th>Corrosion</th><th>Parts</th></tr></thead>
-              <tbody>{(document.towers || []).map((tw) => (
-                <tr key={tw.id}><td className="mono">{tw.tower_id}</td><td>{tw.tower_type}</td><td>{tw.km_marker}</td><td><CondPill rating={tw.corrosion_rating} /></td><td>{tw.component_count ?? 0}</td></tr>
-              ))}</tbody>
-            </table>
+        { key: 'tasks', id: sid('tasks'), title: 'Related maintenance tasks', hint: `${totals.tasks ?? lineTasks.length} · ${(document.tasks_past || []).length} past / ${(document.tasks_future || []).length} upcoming`, body: (
+          <div>
+            <TaskRows tasks={tasksShown} onOpenEntity={onOpenEntity} />
+            <CappedNote shown={tasksShown.length} total={lineTasks.length} label="tasks" />
           </div>
         ) },
-        { key: 'assets', id: sid('assets'), title: 'Line assets', hint: `${(document.assets || []).length}`, body: (
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr><th>Asset</th><th>Type</th><th>Condition</th></tr></thead>
-              <tbody>{(document.assets || []).map((a) => (
-                <tr key={a.id} {...(typeof onOpenEntity === 'function' ? { className: 'row-link', title: 'Click to view asset details', onClick: () => onOpenEntity('ASSET_DETAIL', a.id, a.asset_id) } : {})}>
-                  <td className="mono">{a.asset_id}</td><td>{a.asset_type}{a.sub_type ? ` (${a.sub_type})` : ''}</td><td><CondPill rating={a.condition_rating} /></td>
-                </tr>
-              ))}</tbody>
-            </table>
+        { key: 'gps', id: sid('gps'), title: 'GPS violations', body: (document.gps_violations || []).length > 0 && <GpsRows rows={document.gps_violations} /> },
+        { key: 'towers', id: sid('towers'), title: `Tower fleet (${towerList.length})`, body: (
+          <div>
+            <div className="tbl-wrap">
+              <table>
+                <thead><tr><th>Tower</th><th>Type</th><th>km</th><th>Corrosion</th><th>Parts</th></tr></thead>
+                <tbody>{towersShown.map((tw) => (
+                  <tr key={tw.id}><td className="mono">{tw.tower_id}</td><td>{tw.tower_type}</td><td>{tw.km_marker}</td><td><CondPill rating={tw.corrosion_rating} /></td><td>{tw.component_count ?? 0}</td></tr>
+                ))}</tbody>
+              </table>
+            </div>
+            <CappedNote shown={towersShown.length} total={towerList.length} label="towers" />
+          </div>
+        ) },
+        { key: 'assets', id: sid('assets'), title: 'Line assets', hint: `${assetList.length}`, body: (
+          <div>
+            <div className="tbl-wrap">
+              <table>
+                <thead><tr><th>Asset</th><th>Type</th><th>Condition</th></tr></thead>
+                <tbody>{assetsShown.map((a) => (
+                  <tr key={a.id} {...(typeof onOpenEntity === 'function' ? { className: 'row-link', title: 'Click to view asset details', onClick: () => onOpenEntity('ASSET_DETAIL', a.id, a.asset_id) } : {})}>
+                    <td className="mono">{a.asset_id}</td><td>{a.asset_type}{a.sub_type ? ` (${a.sub_type})` : ''}</td><td><CondPill rating={a.condition_rating} /></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+            <CappedNote shown={assetsShown.length} total={assetList.length} label="assets" />
           </div>
         ) },
         { key: 'exec', id: sid('exec'), title: 'Completed maintenance executions', hint: `${(document.executions || []).length}`, body: (document.executions || []).length > 0 ? <ExecRows rows={document.executions} /> : <div className="muted" style={{ fontSize: 13 }}>None</div> },
@@ -267,21 +229,9 @@ function DocumentSections({ document, onOpenEntity, sid }) {
     );
   }
   if (document.entity === 'PERSON') {
-    const p = document.person || {};
     const perf = document.performance;
     return (
       <Sections items={[
-        {
-          key: 'facts', id: sid('facts'), title: 'Person facts',
-          body: (
-            <div className="kv" style={{ gridTemplateColumns: '150px 1fr', fontSize: 13 }}>
-              <span className="k">Role</span><span>{p.role || '—'}</span>
-              <span className="k">Title</span><span>{p.title || '—'}</span>
-              <span className="k">Crews</span><span>{(document.crews || []).map((c) => `${c.name} (${c.crew_code})`).join(', ') || '—'}</span>
-              <span className="k">Leads</span><span>{(document.led_crews || []).map((c) => c.name).join(', ') || '—'}</span>
-            </div>
-          ),
-        },
         {
           key: 'perf', id: sid('perf'), title: 'Performance',
           body: perf && (

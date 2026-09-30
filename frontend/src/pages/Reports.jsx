@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, fmtDate, fmtMoney } from '../api';
 import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, MoneyCard, SearchField, useSearchFilter } from '../components';
@@ -214,11 +214,18 @@ export default function Reports() {
 
   // Deep link from the mailbox: /reports?report=<id> opens the saved report in
   // the reader, and /reports?document=<TYPE>&id=<id> opens an entity document.
-  // The query params are cleared afterwards so the URL stays clean.
+  // A handled-key ref dedupes the StrictMode double-invoke while the query
+  // params are cleared afterwards so the URL stays clean — clearing the params
+  // re-runs this effect, so we must not cancel the in-flight load on cleanup
+  // (that left the reader blank).
+  const deepLinkRef = useRef('');
   useEffect(() => {
     const dtype = searchParams.get('document');
     const did = searchParams.get('id');
     if (dtype && did) {
+      const key = `doc:${dtype}:${did}`;
+      if (deepLinkRef.current === key) return undefined;
+      deepLinkRef.current = key;
       setView(null);
       setDocuments([]);
       openDocument(dtype, did);
@@ -227,13 +234,15 @@ export default function Reports() {
     }
     const rid = searchParams.get('report');
     if (!rid) return undefined;
-    let alive = true;
+    const key = `rep:${rid}`;
+    if (deepLinkRef.current === key) return undefined;
+    deepLinkRef.current = key;
     setDocuments([]);
     api.get(`/reports/${encodeURIComponent(rid)}`)
-      .then((res) => { if (alive) setView(res); })
-      .catch((e) => { if (alive) setError(e.message); });
+      .then((res) => setView(res))
+      .catch((e) => setError(e.message));
     setSearchParams({}, { replace: true });
-    return () => { alive = false; };
+    return undefined;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -617,12 +626,12 @@ function ReportView({ data, onOpenEntity }) {
   return (
     <div>
       {data.analytics && !data.document ? <AnalyticsBlock a={data.analytics} /> : null}
-      <ReportBody data={data} onOpenEntity={onOpenEntity} />
+      <ReportBody data={data} onOpenEntity={onOpenEntity} hideSummary={!!data.analytics} />
     </div>
   );
 }
 
-function ReportBody({ data, onOpenEntity }) {
+function ReportBody({ data, onOpenEntity, hideSummary }) {
   const canDrill = typeof onOpenEntity === 'function';
   const ENTITY_KEYS = { crew_id: 'CREW_DETAIL', task_id: 'TASK_DETAIL', asset_pk: 'ASSET_DETAIL', line_id: 'LINE_DETAIL' };
   const linkRow = (entity) => (canDrill && entity && entity.id != null
@@ -637,7 +646,7 @@ function ReportBody({ data, onOpenEntity }) {
   };
   if (!data) return <div className="muted">No data</div>;
   if (data.document) return <DocumentReport data={data} onOpenEntity={onOpenEntity} />;
-  if (data.financial) return <FinancialTables f={data.financial} onOpenEntity={onOpenEntity} />;
+  if (data.financial) return <FinancialTables f={data.financial} onOpenEntity={onOpenEntity} hideCards={hideSummary} />;
   if (Array.isArray(data.by_asset)) {
     return (
       <div>
@@ -734,21 +743,28 @@ function ReportBody({ data, onOpenEntity }) {
     );
   }
   if (data.checklist_compliance) {
+    const certRegions = (data.region_cert_status || []).filter((r) => r.total > 0);
     return (
       <div>
-        <div className="grid grid-2">
-          <MoneyCard label="Checklist compliance" value={data.checklist_compliance} />
-          <MoneyCard label="GPS validation pass rate" value={data.gps_pass_rate} />
-          <MoneyCard label="Certifications" value={data.expired_certs} sub={`of ${data.total_certs} expired`} />
-          <div className="card card-pad">
-            <div className="card-head"><h3 className="card-title">Region cert status</h3></div>
-            <div className="tbl-wrap">
-              <table><thead><tr><th>Region</th><th>Expired</th><th>Total</th></tr></thead><tbody>
-                {(data.region_cert_status || []).map((r, i) => <tr key={i}><td>{r.region}</td><td>{r.expired}</td><td>{r.total}</td></tr>)}
-              </tbody></table>
-            </div>
+        {(!hideSummary || certRegions.length > 0) && (
+          <div className="grid grid-2">
+            {!hideSummary && <>
+              <MoneyCard label="Checklist compliance" value={data.checklist_compliance} />
+              <MoneyCard label="GPS validation pass rate" value={data.gps_pass_rate} />
+              <MoneyCard label="Certifications" value={data.expired_certs} sub={`of ${data.total_certs} expired`} />
+            </>}
+            {certRegions.length > 0 && (
+              <div className="card card-pad">
+                <div className="card-head"><h3 className="card-title">Region cert status</h3></div>
+                <div className="tbl-wrap">
+                  <table><thead><tr><th>Region</th><th>Expired</th><th>Total</th></tr></thead><tbody>
+                    {certRegions.map((r, i) => <tr key={i}><td>{r.region}</td><td>{r.expired}</td><td>{r.total}</td></tr>)}
+                  </tbody></table>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
+        )}
         {(data.execution_summary || []).length > 0 && (
           <>
             <h3 className="section-title">Checklist executions ({data.execution_summary.length})</h3>
@@ -817,6 +833,12 @@ function ReportBody({ data, onOpenEntity }) {
                 ))}
               </tbody>
             </table>
+            {data.missed_equipment_no_date > 0 && (
+              <p className="muted" style={{ fontSize: 12 }}>
+                A further {data.missed_equipment_no_date} in-service asset(s) have no maintenance date set and are not listed here — assign
+                schedules to bring them under preventive maintenance.
+              </p>
+            )}
           </>
         )}
       </div>
@@ -983,18 +1005,20 @@ function Table({ head, rows, rowProps }) {
   );
 }
 
-function FinancialTables({ f, onOpenEntity }) {
+function FinancialTables({ f, onOpenEntity, hideCards }) {
   const code = f.currency && typeof f.currency === 'object' ? f.currency.code : (f.currency || 'USD');
   const money = (v) => fmtMoney(v, code);
   if (f.kind === 'valuation') {
     return (
       <div>
-        <div className="grid grid-4">
-          <MoneyCard label="Population" value={f.count} />
-          <MoneyCard label="RCN" value={money(f.rcn)} />
-          <MoneyCard label="Current value" value={money(f.current)} />
-          <MoneyCard label="Unpriced" value={f.unpriced_count} />
-        </div>
+        {!hideCards && (
+          <div className="grid grid-4">
+            <MoneyCard label="Population" value={f.count} />
+            <MoneyCard label="RCN" value={money(f.rcn)} />
+            <MoneyCard label="Current value" value={money(f.current)} />
+            <MoneyCard label="Unpriced" value={f.unpriced_count} />
+          </div>
+        )}
         <h3 className="section-title">By location</h3>
         <Table head={['Location', 'Assets', 'RCN', 'Current value']} rows={(f.by_location || []).map((r) => [r.label, r.count, money(r.rcn), money(r.current)])} />
         <h3 className="section-title">By family</h3>
@@ -1012,11 +1036,13 @@ function FinancialTables({ f, onOpenEntity }) {
   }
   return (
     <div>
-      <div className="grid grid-3">
-        <MoneyCard label="Total spend" value={money(f.totals.spend)} />
-        <MoneyCard label="Events" value={f.totals.count} />
-        <MoneyCard label="Avg / event" value={money(f.totals.avg)} />
-      </div>
+      {!hideCards && (
+        <div className="grid grid-3">
+          <MoneyCard label="Total spend" value={money(f.totals.spend)} />
+          <MoneyCard label="Events" value={f.totals.count} />
+          <MoneyCard label="Avg / event" value={money(f.totals.avg)} />
+        </div>
+      )}
       <h3 className="section-title">By region</h3>
       <Table head={['Region', 'Events', 'Spend']} rows={(f.by_region || []).map((r) => [r.region, r.count, money(r.spend)])} />
       <h3 className="section-title">By asset type</h3>

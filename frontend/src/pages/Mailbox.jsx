@@ -26,6 +26,12 @@ const FOLDERS = [
 
 const MAIL_FOLDERS = new Set(FOLDERS.filter((f) => f.mail).map((f) => f.key));
 
+// Activity folders are rendered from the already-loaded payload, so they show
+// the whole list at once (the mailbox is bounded to a few hundred entries). The
+// cap only guards against a pathological size; directed-mail folders instead
+// page on the server.
+const ACTIVITY_LIST_LIMIT = 5000;
+
 // Server folder keys returned in `mail_counts`, for badge totals that hold even
 // when only the first page of a folder has been loaded.
 const MAIL_COUNT_KEYS = { mailinbox: 'inbox', outbox: 'outbox', mailsent: 'sent', drafts: 'drafts', archive: 'archive' };
@@ -60,11 +66,10 @@ function folderRows(data, folder) {
 
 function folderCount(data, folder) {
   if (!data) return 0;
-  if (folder === 'unread') return data.unread_count || 0;
-  if (folder === 'messages') return data.message_count || 0;
-  if (folder === 'reports') return data.report_count || 0;
-  // Prefer the server-side count so the badge is right even before the folder
-  // is opened (or when only its first page has loaded).
+  // Directed-mail folders page on the server, so trust the server total even
+  // before their first page is loaded. Every activity folder is derived from
+  // the payload arrays, so count its rows directly — that keeps the badge in
+  // lockstep with the list and covers folders the server does not tally.
   const countKey = MAIL_COUNT_KEYS[folder];
   if (countKey && data.mail_counts && data.mail_counts[countKey] != null) return data.mail_counts[countKey];
   return folderRows(data, folder).length;
@@ -113,7 +118,7 @@ export default function Mailbox() {
   const [compose, setCompose] = useState(null);
   const [preview, setPreview] = useState(null);
   const [query, setQuery] = useState('');
-  const [listLimit, setListLimit] = useState(60);
+  const [listLimit, setListLimit] = useState(ACTIVITY_LIST_LIMIT);
   const [error, setError] = useState(null);
   const [loadingThread, setLoadingThread] = useState(false);
   // Server-paged mail feed (labels + search + pagination live on the server so a
@@ -195,7 +200,7 @@ export default function Mailbox() {
   // Keep the rendered list bounded: with hundreds of messages, painting every
   // row at once makes the pane sluggish. Reset to the first page whenever the
   // folder or search term changes.
-  useEffect(() => { setListLimit(60); }, [folder, query]);
+  useEffect(() => { setListLimit(ACTIVITY_LIST_LIMIT); }, [folder, query]);
 
   // Live inbox: refresh on an interval and whenever the tab regains focus, so
   // counts, unread badges and new task/report messages appear without a manual
