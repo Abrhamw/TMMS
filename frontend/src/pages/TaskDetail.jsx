@@ -140,6 +140,10 @@ export default function TaskDetail() {
   async function act(action, extra) {
     try {
       await api.post(`/tasks/${id}/state`, { action, ...extra });
+      // Line inspection: tracing starts with the work and stops when the crew
+      // submits for verification or parks the task on hold.
+      if (action === 'start' && lineId) recorder.start();
+      if ((action === 'submit' || action === 'hold') && recorder.recording) recorder.stop();
       setNotif(`Action "${action}" applied`);
       load();
       setTimeout(() => setNotif(null), 2500);
@@ -437,10 +441,29 @@ export default function TaskDetail() {
             height={260}
           />
           {trace && trace.coverage && (
-            <div className="muted" style={{ fontSize: 13 }}>
-              Inspected {trace.coverage.inspected_towers}/{trace.coverage.total_towers} towers ·{' '}
-              {trace.coverage.inspected_km}/{Math.round((trace.coverage.total_km || 0) * 10) / 10} km ·{' '}
-              {Math.round((trace.coverage.tower_progress || 0) * 100)}%
+            <div className="line-progress">
+              <div className="line-progress-head">
+                <b>Inspection progress</b>
+                <span className="muted">
+                  {trace.coverage.inspected_towers}/{trace.coverage.total_towers} towers ·{' '}
+                  {trace.coverage.inspected_km}/{Math.round((trace.coverage.total_km || 0) * 10) / 10} km ·{' '}
+                  {Math.round((trace.coverage.tower_progress || 0) * 100)}%
+                </span>
+              </div>
+              <div className="line-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100}
+                aria-valuenow={Math.round((trace.coverage.tower_progress || 0) * 100)}>
+                <div className="line-progress-fill" style={{ width: `${Math.round((trace.coverage.tower_progress || 0) * 100)}%` }} />
+              </div>
+              <div className="line-progress-meta">
+                <span>Line covered {Math.round((trace.coverage.km_progress || 0) * 100)}%</span>
+                <span>Crew path {recorder.recording ? recorder.count : (trace.points || []).length} pts</span>
+                <span className="line-progress-legend">
+                  <i style={{ background: '#16a34a' }} /> covered
+                  <i style={{ background: '#0d9488' }} /> inspected
+                  <i style={{ background: '#94a3b8' }} /> remaining
+                  <i style={{ background: '#ea580c' }} /> crew path
+                </span>
+              </div>
             </div>
           )}
         </>

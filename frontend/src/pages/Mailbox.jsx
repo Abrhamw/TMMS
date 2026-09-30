@@ -456,7 +456,7 @@ export default function Mailbox() {
       {error && <ErrorNote error={error} />}
       {!data ? <Loading /> : (
         <div className="mailbox-layout">
-          <aside className="mailbox-list">
+          <aside className="mailbox-nav">
             <button type="button" className="btn btn-primary mailbox-compose-btn" onClick={() => startCompose()}>
               {t('mailboxCompose')}
             </button>
@@ -491,7 +491,6 @@ export default function Mailbox() {
               ))}
               {!labelManage && !labels.length && <div className="muted mail-labels-empty">{t('mailboxNoLabels')}</div>}
             </div>
-            <SearchField value={query} onChange={setQuery} placeholder={t('mailboxSearch')} />
             <div className="mail-searches">
               <div className="mail-searches-head">
                 <span>{t('mailboxSavedSearches')}</span>
@@ -514,6 +513,11 @@ export default function Mailbox() {
               <input type="checkbox" checked={actionOnly} onChange={(e) => setActionOnly(e.target.checked)} />
               {t('mailboxActionOnly')}
             </label>
+          </aside>
+          <aside className="mailbox-list">
+            <div className="mail-list-head">
+              <SearchField value={query} onChange={setQuery} placeholder={t('mailboxSearch')} />
+            </div>
             {useServerFeed && serverPage && (
               <div className="muted mail-result-count">
                 {labelView ? t('mailboxLabelView') + ': ' + labelView : t('mailboxFolderResults')} · {serverPage.total}
