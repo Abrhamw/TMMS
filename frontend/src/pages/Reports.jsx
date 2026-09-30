@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, fmtDate, fmtMoney } from '../api';
 import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, MoneyCard, SearchField, useSearchFilter } from '../components';
-import { KpiTile } from '../components/InfraVisuals';
+import { BarRow, KpiTile } from '../components/InfraVisuals';
 import { can, getStoredUser } from '../auth';
 import { assetsInScope, linesInRegion } from '../cascade';
 import DocumentReport from '../components/DocumentReport';
@@ -13,16 +13,16 @@ const DOCUMENT_TYPES = ['ASSET_DETAIL', 'CREW_DETAIL', 'PERSON_DETAIL', 'TASK_DE
 const PERSON_PROFILE = { id: 'person_profile', report_type: 'PERSON_DETAIL', name: 'Person Detail Profile', description: 'Per-person record: crews, certifications, findings and executions.' };
 
 const PERIOD_OPTIONS = [
-  { key: 'Month', label: 'Month' },
-  { key: 'Quarter', label: 'Quarter' },
-  { key: 'HalfYear', label: 'Half year' },
-  { key: 'Year', label: 'Year' },
+  { key: 1, label: '1 month' },
+  { key: 3, label: '3 months' },
+  { key: 6, label: '6 months' },
+  { key: 12, label: '12 months' },
 ];
 const PERIOD_SUB = {
-  Month: 'in this fiscal month',
-  Quarter: 'in this fiscal quarter',
-  HalfYear: 'in this fiscal half year',
-  Year: 'in this fiscal year to date',
+  1: 'in this fiscal month',
+  3: 'in this fiscal quarter',
+  6: 'in this fiscal half year',
+  12: 'in this fiscal year to date',
 };
 
 function addMonths(date, n) {
@@ -41,19 +41,20 @@ function fiscalYearStart(now) {
   const anchor = new Date(now.getFullYear(), 6, 7);
   return now >= anchor ? anchor : new Date(now.getFullYear() - 1, 6, 7);
 }
-function fiscalPeriodRange(period, now = new Date()) {
+// `months` is the window length (1, 3, 6 or 12). The window is the current
+// fiscal block of that length, so 1 month is the fiscal month, 3 the quarter,
+// 6 the half year and 12 the whole fiscal year.
+function fiscalPeriodRange(months, now = new Date()) {
   const fyStart = fiscalYearStart(now);
   const monthsIn = (now.getFullYear() - fyStart.getFullYear()) * 12 + (now.getMonth() - fyStart.getMonth());
-  let offset = 0;
-  let span = 1;
-  if (period === 'Quarter') { span = 3; offset = Math.floor(monthsIn / 3) * 3; }
-  else if (period === 'HalfYear') { span = 6; offset = Math.floor(monthsIn / 6) * 6; }
-  else if (period === 'Year') { span = 12; offset = 0; }
+  const span = months === 12 ? 12 : months;
+  const offset = span >= 12 ? 0 : Math.floor(monthsIn / span) * span;
   const start = addMonths(fyStart, offset);
   const end = addMonths(start, span);
   return { start, end };
 }
 const dayFmt = (d) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 export default function Reports() {
   const canGenerate = can(getStoredUser(), 'report:write');
@@ -70,7 +71,7 @@ export default function Reports() {
   const [perf, setPerf] = useState(null);
   const [perfErr, setPerfErr] = useState(null);
   const [perfExpanded, setPerfExpanded] = useState(false);
-  const [period, setPeriod] = useState('Month');
+  const [period, setPeriod] = useState(1);
   const [typeFilter, setTypeFilter] = useState('');
   const [regionFilter, setRegionFilter] = useState('');
   const [documents, setDocuments] = useState([]);
@@ -90,6 +91,32 @@ export default function Reports() {
     }
     return { total, docs, analysis: total - docs };
   }, [reports, range]);
+  const byType = useMemo(() => {
+    const m = new Map();
+    for (const r of reports) {
+      const t = r.generated_at ? new Date(r.generated_at) : null;
+      if (!t || t < range.start || t >= range.end) continue;
+      m.set(r.report_type, (m.get(r.report_type) || 0) + 1);
+    }
+    return [...m.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+  }, [reports, range]);
+  const trend = useMemo(() => {
+    const now = new Date();
+    const fyStart = fiscalYearStart(now);
+    const monthsIn = (now.getFullYear() - fyStart.getFullYear()) * 12 + (now.getMonth() - fyStart.getMonth());
+    const first = Math.max(0, monthsIn - 5);
+    const out = [];
+    for (let j = first; j <= monthsIn; j += 1) {
+      const s = addMonths(fyStart, j);
+      const e = addMonths(s, 1);
+      const value = reports.filter((r) => {
+        const t = r.generated_at ? new Date(r.generated_at) : null;
+        return t && t >= s && t < e;
+      }).length;
+      out.push({ label: s.toLocaleDateString('en-GB', { month: 'short' }), value });
+    }
+    return out;
+  }, [reports]);
 
   const profileTemplates = useMemo(() => {
     const list = templates.filter((t) => DOCUMENT_TYPES.includes(t.report_type));
@@ -121,12 +148,19 @@ export default function Reports() {
     setDocuments([]);
     api.get(`/reports/${id}`).then(setView).catch((e) => setError(e.message));
   };
-  const startReport = (report_type) => setGenForm({
-    report_type,
-    period_start: new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10),
-    period_end: new Date().toISOString().slice(0, 10),
-    scope_region_id: '',
-  });
+  const startReport = (report_type) => {
+    const r = fiscalPeriodRange(period);
+    setGenForm({
+      report_type,
+      period_start: isoDay(r.start),
+      period_end: isoDay(new Date(r.end.getTime() - 864e5)),
+      scope_region_id: '',
+    });
+  };
+  const applyPeriodMonths = (months) => {
+    const r = fiscalPeriodRange(months);
+    setGenForm((f) => ({ ...f, period_start: isoDay(r.start), period_end: isoDay(new Date(r.end.getTime() - 864e5)) }));
+  };
 
   const load = () => {
     api.get('/report-templates').then(setTemplates).catch((e) => setError(e.message));
@@ -146,9 +180,13 @@ export default function Reports() {
 
   useEffect(() => {
     if (!canPerf) return;
-    api.get(`/performance?scope=${perfScope}`).then((r) => setPerf(r.rows)).catch((e) => setPerfErr(e.message));
+    const from = isoDay(range.start);
+    const to = isoDay(new Date(range.end.getTime() - 864e5));
+    api.get(`/performance?scope=${perfScope}&date_from=${from}&date_to=${to}`)
+      .then((r) => setPerf(r.rows))
+      .catch((e) => setPerfErr(e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [perfScope, canPerf]);
+  }, [perfScope, canPerf, range]);
 
   // Deep link from the mailbox: /reports?report=<id> opens the saved report in
   // the reader, and /reports?document=<TYPE>&id=<id> opens an entity document.
@@ -208,6 +246,22 @@ export default function Reports() {
         <KpiTile label="Entity profiles" value={kpis.docs} sub="asset / crew / person / task / line" />
         <KpiTile label="Analysis &amp; compliance" value={kpis.analysis} sub="cost / valuation / readiness / performance" />
         <KpiTile label="Report templates" value={templates.length} sub="not period-scoped" />
+      </div>
+
+      <div className="grid grid-2 mt">
+        <div className="card card-pad">
+          <div className="card-head"><h3>Reports by type</h3><span className="muted">{rangeLabel}</span></div>
+          {byType.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No reports in this period.</div>}
+          {byType.map((r) => (
+            <BarRow key={r.label} label={r.label} value={r.value} max={byType[0]?.value} />
+          ))}
+        </div>
+        <div className="card card-pad">
+          <div className="card-head"><h3>Generation trend</h3><span className="muted">last {trend.length} fiscal month(s)</span></div>
+          {trend.map((r) => (
+            <BarRow key={r.label} label={r.label} value={r.value} max={Math.max(1, ...trend.map((t) => t.value))} color="#0f766e" />
+          ))}
+        </div>
       </div>
 
       <h3 className="section-title">Report templates <span className="hint">click a template to start a report</span></h3>
@@ -336,6 +390,13 @@ export default function Reports() {
               <EntityPicker type={genForm.report_type} form={genForm} lists={entityLists} setForm={setGenForm} />
             ) : (
               <>
+                <div className="field full"><label>Quick period</label>
+                  <div className="chip-row">
+                    {PERIOD_OPTIONS.map((p) => (
+                      <button key={p.key} type="button" className="chip" onClick={() => applyPeriodMonths(p.key)}>{p.label}</button>
+                    ))}
+                  </div>
+                </div>
                 <div className="field"><label>Period start</label><input type="date" value={genForm.period_start} onChange={(e) => setGenForm({ ...genForm, period_start: e.target.value })} /></div>
                 <div className="field"><label>Period end</label><input type="date" value={genForm.period_end} onChange={(e) => setGenForm({ ...genForm, period_end: e.target.value })} /></div>
                 <div className="field"><label>Region scope</label>
