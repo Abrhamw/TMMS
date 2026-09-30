@@ -13,7 +13,7 @@ const { maxTaskSeq, formatTaskNumber, nextTaskNumber } = require('../taskNumber'
 const { canAssignCrew, taskVisible, authorizedCrewIds } = require('../authority');
 const { taskReadiness, taskRequirements, resolveTaskCrewId, taskCrewSource } = require('../readiness');
 const { readyCrew, scoreCrewFit } = require('../assignment');
-const { resolveTarget } = require('../target');
+const { resolveTarget, infraName, assetName } = require('../target');
 const { sendMail, primaryUserForPerson, immediateBossForTask } = require('../mail');
 
 const router = express.Router();
@@ -44,6 +44,67 @@ function taskDispatchAdvisory(task, crewId) {
     equipment_to_secure: audit.equipment_to_secure,
     warnings: audit.warnings.map((message) => ({ type: 'DISPATCH', message })),
   };
+}
+
+// Notify the assigned crew (leader + active members) of the equipment their
+// checklist calls for. This is an instruction only: it is sent after the
+// assignment is committed and never blocks or gates starting the task. Tasks
+// with no checklist have nothing to instruct and produce no mail.
+function sendAssignmentInstruction(req, task, crewId) {
+  if (!task || !crewId) return null;
+  const crew = get('crew', Number(crewId));
+  if (!crew) return null;
+  const readiness = taskReadiness({ ...task, crew_id: Number(crewId) });
+  if (!readiness || !readiness.requirements) return null;
+
+  const recipients = new Set();
+  if (crew.leader_person_id) recipients.add(Number(crew.leader_person_id));
+  for (const m of db.prepare('SELECT person_id FROM crew_member WHERE crew_id = ? AND active = 1').all(crew.id)) {
+    if (m.person_id) recipients.add(Number(m.person_id));
+  }
+  recipients.delete(0);
+  if (req.user.person_id) recipients.delete(Number(req.user.person_id));
+  if (!recipients.size) return null;
+
+  const target = resolveTarget({ task });
+  const place = [infraName(target), assetName(target)].filter(Boolean).join(' · ');
+  const equipment = readiness.equipment_checks || [];
+  const notes = [];
+  if (readiness.team_shortfall) notes.push(`Team short by ${readiness.team_shortfall}`);
+  for (const w of (readiness.warnings || [])) notes.push(w);
+
+  const body = [
+    `You have been assigned ${task.task_number} — ${task.title}.`,
+    place ? `Where: ${place}` : null,
+    task.scheduled_start ? `Scheduled: ${task.scheduled_start}` : null,
+    task.due_date ? `Due: ${task.due_date}` : null,
+    '',
+    'Required equipment for this task (from the checklist):',
+    ...(equipment.length
+      ? equipment.map((e) => `  [${e.available ? 'x' : ' '}] ${e.equipment}${e.available ? ' (confirmed available)' : ' (to secure)'}`)
+      : ['  (none listed)']),
+    ...(notes.length ? ['', 'Notes:', ...notes.map((n) => `  - ${n}`)] : []),
+    '',
+    `Open the task: /tasks/${task.id}`,
+  ].filter((x) => x != null).join('\n');
+
+  const sent = [];
+  for (const pid of recipients) {
+    const id = sendMail({
+      senderUserId: req.user.id,
+      senderPersonId: req.user.person_id || null,
+      recipientPersonId: pid,
+      subject: `Assigned: ${task.task_number} — equipment to bring`,
+      body,
+      category: ['HIGH', 'CRITICAL'].includes(task.priority) ? 'ALERT' : 'REQUEST',
+      priority: ['HIGH', 'CRITICAL'].includes(task.priority) ? 'HIGH' : 'NORMAL',
+      entityType: 'task',
+      entityId: task.id,
+      link: `/tasks/${task.id}`,
+    });
+    if (id) sent.push(id);
+  }
+  return sent;
 }
 
 // Columns a client may set when creating/editing a task. Everything else
@@ -424,6 +485,11 @@ router.post('/tasks/bulk', (req, res) => {
   const advisories = action === 'assign'
     ? ids.map((id) => ({ task_id: id, dispatch: taskDispatchAdvisory(get('task', id), Number(value)) })).filter((x) => x.dispatch)
     : [];
+  if (action === 'assign') {
+    for (const id of ids) {
+      try { sendAssignmentInstruction(req, get('task', id), Number(value)); } catch (e) { console.error('assignment instruction mail failed', e); }
+    }
+  }
   res.json({ updated: ids.length, ids, advisories });
 });
 
@@ -974,6 +1040,7 @@ router.post('/tasks/:id/state', (req, res) => {
   if (action === 'assign') {
     const advisory = taskDispatchAdvisory(payload, payload.crew_id);
     if (advisory) payload.dispatch = advisory;
+    try { sendAssignmentInstruction(req, updatedTask, updatedTask.crew_id); } catch (e) { console.error('assignment instruction mail failed', e); }
   }
   res.json(payload);
 });
