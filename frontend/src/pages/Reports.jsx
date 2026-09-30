@@ -57,53 +57,6 @@ function fiscalPeriodRange(months, now = new Date()) {
 const dayFmt = (d) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-function csvCell(v) {
-  if (v == null) return '';
-  const str = typeof v === 'object' ? JSON.stringify(v) : String(v);
-  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
-}
-// Flatten a report payload into labelled CSV blocks: the summary metric rows,
-// then every array of records (executions, tasks, findings, financial lines…).
-function reportToCsv(data) {
-  const out = [];
-  const addBlock = (name, rows) => {
-    if (!rows || !rows.length) return;
-    out.push(`# ${name}`);
-    const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))];
-    out.push(cols.map(csvCell).join(','));
-    for (const r of rows) out.push(cols.map((c) => csvCell(r[c])).join(','));
-    out.push('');
-  };
-  if (Array.isArray(data.rows) && data.rows.every((r) => r && 'label' in r)) addBlock('Summary', data.rows);
-  const walk = (obj, path) => {
-    if (!obj || typeof obj !== 'object') return;
-    for (const [k, v] of Object.entries(obj)) {
-      if (k === 'rows') continue;
-      if (Array.isArray(v) && v.length && v.every((x) => x && typeof x === 'object' && !Array.isArray(x))) {
-        addBlock(path ? `${path}.${k}` : k, v.map((x) => {
-          const flat = {};
-          for (const [kk, vv] of Object.entries(x)) flat[kk] = vv && typeof vv === 'object' ? JSON.stringify(vv) : vv;
-          return flat;
-        }));
-      } else if (v && typeof v === 'object') {
-        walk(v, path ? `${path}.${k}` : k);
-      }
-    }
-  };
-  walk(data, '');
-  return out.join('\n');
-}
-function downloadFile(name, mime, content) {
-  const url = URL.createObjectURL(new Blob([content], { type: mime }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 30000);
-}
-
 export default function Reports() {
   const canGenerate = can(getStoredUser(), 'report:write');
   const [templates, setTemplates] = useState([]);
@@ -126,7 +79,7 @@ export default function Reports() {
   const [schedules, setSchedules] = useState([]);
   const [makeSchedule, setMakeSchedule] = useState(false);
   const [scheduleMonths, setScheduleMonths] = useState(1);
-  const [shareOpen, setShareOpen] = useState(false);
+  const [shareTarget, setShareTarget] = useState(null);
   const [shareTo, setShareTo] = useState(() => new Set());
   const [shareNote, setShareNote] = useState('');
   const [shareBusy, setShareBusy] = useState(false);
@@ -303,12 +256,17 @@ export default function Reports() {
     finally { setBusy(false); }
   }
   async function submitShare() {
-    if (!view?.id || shareTo.size === 0) return;
+    if (!shareTarget || shareTo.size === 0) return;
     try {
       setShareBusy(true);
       setShareErr(null);
-      await api.post(`/reports/${view.id}/share`, { recipients: [...shareTo], note: shareNote });
-      setShareOpen(false);
+      const recipients = [...shareTo];
+      if (shareTarget.kind === 'document') {
+        await api.post('/reports/document/share', { type: shareTarget.type, id: shareTarget.id, recipients, note: shareNote });
+      } else {
+        await api.post(`/reports/${shareTarget.id}/share`, { recipients, note: shareNote });
+      }
+      setShareTarget(null);
       setShareTo(new Set());
       setShareNote('');
     } catch (e) { setShareErr(e.message); }
@@ -584,23 +542,20 @@ export default function Reports() {
 
       {(view || documents.length > 0) && (() => {
         const top = documents[documents.length - 1];
-        const exportData = top ? top.data : view?.data;
-        const exportTitle = top ? (top.data?.title || top.label || 'report') : (view?.title || 'report');
-        const doExport = (format) => {
-          if (!exportData) return;
-          const safe = String(exportTitle).replace(/[^\w.-]+/g, '_').slice(0, 60) || 'report';
-          if (format === 'json') downloadFile(`${safe}.json`, 'application/json', JSON.stringify(exportData, null, 2));
-          else downloadFile(`${safe}.csv`, 'text/csv', reportToCsv(exportData));
-        };
+        const shareDoc = top && top.data && !top.loading && !top.error;
+        const canShare = !!shareDoc || (!top && view?.id);
         return (
           <Modal title={top ? (top.data?.title || top.label || 'Entity Profile') : (view?.title || view?.data?.title || 'Report')}
             onClose={() => (top ? popDocument() : setView(null))} wide printable
             footer={(
               <>
                 {top ? <button className="btn" onClick={popDocument}>{documents.length > 1 ? 'Back' : (view ? 'Back to report' : 'Close')}</button> : null}
-                {!top && view?.id ? <button className="btn" onClick={() => setShareOpen(true)}>Share</button> : null}
-                <button className="btn" onClick={() => doExport('csv')}>CSV</button>
-                <button className="btn" onClick={() => doExport('json')}>JSON</button>
+                {canShare ? (
+                  <button className="btn" onClick={() => {
+                    if (top) setShareTarget({ kind: 'document', type: top.type, id: top.id, label: top.data?.title || top.label });
+                    else setShareTarget({ kind: 'report', id: view.id, label: view.title });
+                  }}>Share</button>
+                ) : null}
                 <PrintButton />
                 {!top ? <button className="btn btn-primary" onClick={() => setView(null)}>Close</button> : null}
               </>
@@ -612,10 +567,10 @@ export default function Reports() {
         );
       })()}
 
-      {shareOpen && view?.id && (
-        <Modal title="Share report" onClose={() => setShareOpen(false)}
+      {shareTarget && (
+        <Modal title={shareTarget.kind === 'document' ? 'Share profile' : 'Share report'} onClose={() => setShareTarget(null)}
           footer={<>
-            <button className="btn" onClick={() => setShareOpen(false)}>Cancel</button>
+            <button className="btn" onClick={() => setShareTarget(null)}>Cancel</button>
             <button className="btn btn-primary" disabled={shareBusy || shareTo.size === 0} onClick={submitShare}>{shareBusy ? 'Sending…' : `Send to ${shareTo.size}`}</button>
           </>}>
           {shareErr && <ErrorNote error={shareErr} />}
@@ -683,6 +638,46 @@ function ReportBody({ data, onOpenEntity }) {
   if (!data) return <div className="muted">No data</div>;
   if (data.document) return <DocumentReport data={data} onOpenEntity={onOpenEntity} />;
   if (data.financial) return <FinancialTables f={data.financial} onOpenEntity={onOpenEntity} />;
+  if (Array.isArray(data.by_asset)) {
+    return (
+      <div>
+        <table>
+          <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+          <tbody>{(data.rows || []).map((r, i) => <tr key={i}><td>{r.label}</td><td><b>{r.value}</b></td></tr>)}</tbody>
+        </table>
+        <h3 className="section-title">Highest-cost assets</h3>
+        <table>
+          <thead><tr><th>Asset</th><th>Region</th><th>Condition</th><th>Events</th><th>Spend</th></tr></thead>
+          <tbody>
+            {(data.by_asset || []).map((x) => (
+              <tr key={x.asset_pk} {...linkRow({ type: 'ASSET_DETAIL', id: x.asset_pk, label: x.asset_name })}>
+                <td><b>{x.asset_code}</b> · {x.asset_name}</td>
+                <td>{x.region || '—'}</td>
+                <td>{x.condition ?? '—'}</td>
+                <td>{x.events}</td>
+                <td>{fmtMoney(x.spend, data.totals?.currency)}</td>
+              </tr>
+            ))}
+            {(data.by_asset || []).length === 0 && <tr><td colSpan={5} className="empty">No asset spend in the period.</td></tr>}
+          </tbody>
+        </table>
+        <h3 className="section-title">Spend by crew</h3>
+        <table>
+          <thead><tr><th>Crew</th><th>Events</th><th>Spend</th></tr></thead>
+          <tbody>{(data.by_crew || []).map((c, i) => <tr key={i}><td>{c.crew}</td><td>{c.events}</td><td>{fmtMoney(c.spend, data.totals?.currency)}</td></tr>)}</tbody>
+        </table>
+        <h3 className="section-title">Spend vs asset value by region</h3>
+        <table>
+          <thead><tr><th>Region</th><th>Events</th><th>Spend</th><th>Asset value</th><th>Spend / value</th></tr></thead>
+          <tbody>
+            {(data.by_region || []).map((r, i) => (
+              <tr key={i}><td>{r.region}</td><td>{r.events}</td><td>{fmtMoney(r.spend, data.totals?.currency)}</td><td>{fmtMoney(r.value, data.totals?.currency)}</td><td>{r.ratio == null ? '—' : `${r.ratio}%`}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
   if (data.rows) {
     if (data.rows.length && data.rows[0] && 'label' in data.rows[0]) {
       return (

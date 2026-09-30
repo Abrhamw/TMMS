@@ -884,6 +884,79 @@ function computeRaw(reportType, params, user) {
     }
     case 'ASSET_REVALUATION':
       return recentRevaluationData();
+    case 'COST_ANALYTICS': {
+      const regionIds = reportRegionIds();
+      const regionSet = new Set(regionIds);
+      const code = currencyCode();
+      const startMs = params.period_start ? new Date(`${params.period_start}T00:00:00.000Z`).getTime() : Date.now() - 365 * 864e5;
+      const endMs = params.period_end ? new Date(`${params.period_end}T23:59:59.999Z`).getTime() : Date.now();
+      const valParts = regionIds.map((rid) => computeRegionValuation(rid, scope));
+      const valByRegion = new Map(valParts.map((p) => [p.region_id, p]));
+      const byAsset = new Map();
+      const byCrew = new Map();
+      const byRegionRaw = new Map();
+      let spend = 0;
+      let events = 0;
+      let poorSpend = 0;
+      let poorEvents = 0;
+      const poorAssets = new Set();
+      for (const e of db.prepare('SELECT * FROM asset_maintenance_event ORDER BY performed_at DESC').all()) {
+        const at = new Date(e.performed_at).getTime();
+        if (!Number.isFinite(at) || at < startMs || at > endMs) continue;
+        const asset = e.asset_id ? get('asset', e.asset_id) : null;
+        const rid = assetRegion(asset);
+        if (!regionSet.has(rid)) continue;
+        const cost = Number(e.cost) || 0;
+        spend += cost;
+        events += 1;
+        const regionName = get('region', rid)?.name || 'Unassigned';
+        if (asset) {
+          const key = asset.id;
+          if (!byAsset.has(key)) byAsset.set(key, { asset_pk: asset.id, asset_code: asset.asset_id, asset_name: asset.name || asset.asset_id, region: regionName, condition: asset.condition_rating, events: 0, spend: 0 });
+          const a = byAsset.get(key);
+          a.events += 1;
+          a.spend += cost;
+          if (asset.condition_rating != null && asset.condition_rating <= 5) {
+            poorSpend += cost;
+            poorEvents += 1;
+            poorAssets.add(asset.id);
+          }
+        }
+        const crewKey = e.crew_id || 0;
+        if (!byCrew.has(crewKey)) byCrew.set(crewKey, { crew: e.crew_id ? (get('crew', e.crew_id)?.name || `Crew #${e.crew_id}`) : 'Unassigned', events: 0, spend: 0 });
+        const c = byCrew.get(crewKey);
+        c.events += 1;
+        c.spend += cost;
+        if (!byRegionRaw.has(rid)) byRegionRaw.set(rid, { rid, region: regionName, events: 0, spend: 0 });
+        const r = byRegionRaw.get(rid);
+        r.events += 1;
+        r.spend += cost;
+      }
+      const totalValue = [...byRegionRaw.keys()].reduce((s, rid) => s + (valByRegion.get(rid) ? valByRegion.get(rid).current : 0), 0);
+      const ratioPct = totalValue ? Math.round((spend / totalValue) * 1000) / 10 : null;
+      const byRegion = [...byRegionRaw.values()].map((r) => {
+        const p = valByRegion.get(r.rid);
+        const value = p ? p.current : 0;
+        return { region: r.region, events: r.events, spend: r.spend, value, ratio: value ? Math.round((r.spend / value) * 1000) / 10 : null };
+      }).sort((a, b) => b.spend - a.spend);
+      return {
+        title: 'Cost Analytics Report',
+        rows: [
+          { label: 'Period', value: `${params.period_start || 'trailing 12 months'} → ${params.period_end || 'today'}` },
+          { label: 'Total maintenance spend', value: moneyStr(spend, code) },
+          { label: 'Maintenance events', value: events },
+          { label: 'Average per event', value: moneyStr(events ? spend / events : 0, code) },
+          { label: 'Registered asset value (condition-adjusted)', value: moneyStr(totalValue, code) },
+          { label: 'Spend as % of asset value', value: ratioPct == null ? 'N/A' : `${ratioPct}%` },
+          { label: 'Spend on poor-condition assets (1-5)', value: moneyStr(poorSpend, code) },
+          { label: 'Poor-condition assets serviced', value: poorAssets.size },
+        ],
+        totals: { spend, events, avg: events ? spend / events : 0, asset_value: totalValue, ratio: ratioPct, poor_spend: poorSpend, poor_events: poorEvents, poor_assets: poorAssets.size, currency: code },
+        by_asset: [...byAsset.values()].sort((a, b) => b.spend - a.spend).slice(0, 40),
+        by_crew: [...byCrew.values()].sort((a, b) => b.spend - a.spend),
+        by_region: byRegion,
+      };
+    }
     default:
       return { title: reportType, rows: [] };
   }
@@ -918,6 +991,45 @@ router.get('/reports/document', (req, res) => {
   const params = { [idField]: id };
   if (req.query.scope_region_id) params.scope_region_id = Number(req.query.scope_region_id);
   res.json({ data: compute(type, params, req.user) });
+});
+
+// Share a single entity profile (the drill-down documents opened from the
+// reports library / field-team performance). There is no persisted report id,
+// so the recipient gets a deep link that re-opens the profile on load. The
+// document is computed under the sender's scope first, so a user can never
+// share an entity they are not allowed to see.
+router.post('/reports/document/share', (req, res) => {
+  if (!can(req, 'report:read')) return res.status(403).json({ error: 'Forbidden: requires report:read' });
+  const type = String(req.body.type || '');
+  const idField = DOCUMENT_ID_FIELDS[type];
+  if (!idField) return res.status(400).json({ error: 'Unknown document type' });
+  const id = Number(req.body.id);
+  if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'Invalid entity id' });
+  const recipients = Array.isArray(req.body.recipients) ? req.body.recipients.map(Number).filter((n) => n > 0) : [];
+  if (!recipients.length) return res.status(400).json({ error: 'At least one recipient is required' });
+  const data = compute(type, { [idField]: id }, req.user);
+  if (!data.document) return res.status(403).json({ error: 'Entity is outside your access scope' });
+  const title = data.title || 'Entity Profile';
+  const note = String(req.body.note || '').slice(0, 2000);
+  const path = `/reports?document=${encodeURIComponent(type)}&id=${id}`;
+  let sent = 0;
+  for (const pid of recipients) {
+    try {
+      sendMail({
+        senderUserId: req.user.id,
+        recipientPersonId: pid,
+        subject: `Shared profile: ${title}`.slice(0, 200),
+        body: `${note ? `${note}\n\n` : ''}${title}\nOpen the profile: ${path}`,
+        category: 'REPORT',
+        entityType: 'report',
+        entityId: null,
+        link: path,
+      });
+      sent += 1;
+    } catch (_) { /* skip a bad recipient */ }
+  }
+  audit(req.user, 'SHARE', 'report', null, { document: type, entity_id: id, recipients: sent });
+  res.json({ sent });
 });
 
 router.get('/reports/:id', (req, res) => {

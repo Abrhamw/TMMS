@@ -704,6 +704,7 @@ function ensureReportTemplates() {
     { name: 'Crew Readiness Report', report_type: 'CREW_READINESS', description: 'Per-crew dispatch readiness: roster, certification coverage, unmet skill/cert requirements and KPIs.' },
     { name: 'Person Performance Report', report_type: 'PERSON_PERFORMANCE', description: 'Per-person execution KPIs: completed work, on-time rate, findings and GPS violations.' },
     { name: 'Asset Condition Revaluation', report_type: 'ASSET_REVALUATION', description: 'Monitoring-agent change log: assets whose evidence-based condition suggestion moved, with the recommended action.' },
+    { name: 'Cost Analytics Report', report_type: 'COST_ANALYTICS', description: 'Maintenance spend by asset, crew and region against condition-adjusted asset value — cost-to-value ratio and poor-condition spend.' },
   ];
   for (const r of rows) {
     if (!db.prepare('SELECT id FROM report_template WHERE report_type = ?').get(r.report_type)) {

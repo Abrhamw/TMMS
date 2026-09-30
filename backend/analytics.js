@@ -37,6 +37,34 @@ function gradeFor(score) {
   return 'E';
 }
 
+// Central thresholds for the rule-based evaluation. Kept in one place so the
+// wording and the pass/warn/fail boundaries can be tuned without hunting
+// through every builder. Values are percentages unless noted.
+const T = {
+  completionTarget: 85,
+  completionFloor: 70,
+  onTimeTarget: 85,
+  onTimeFloor: 75,
+  personWeakOnTime: 60,
+  conditionTarget: 7,
+  conditionFloor: 5.5,
+  poorShareWarn: 10,
+  poorShareAlert: 20,
+  gpsTarget: 90,
+  gpsFloor: 85,
+  checklistTarget: 90,
+  checklistFloor: 75,
+  costConcentration: 60,
+  costOutlierFactor: 3,
+  utilizationHigh: 110,
+  utilizationLow: 25,
+  utilizationTarget: 60,
+  overdueAncientDays: 90,
+  downgradeAlert: 2,
+  renewalRating: 4,
+  criticalRating: 3,
+};
+
 function hasImportant(evaluation) {
   return evaluation && evaluation.findings && evaluation.findings.length > 0;
 }
@@ -76,16 +104,17 @@ function maintenanceCompletion(a, d) {
   const ev = newEval();
   ev.score = Math.round((rate * 0.6) + ((onTime == null ? rate : onTime) * 0.4));
   ev.grade = gradeFor(ev.score);
-  if (rate < 70) ev.findings.push(finding('critical', `Completion rate is ${rate}%, well below the 70% floor for the period.`));
-  else if (rate < 85) ev.findings.push(finding('medium', `Completion rate is ${rate}%; the 85% target was not met.`));
-  else ev.findings.push(finding('ok', `Completion rate is ${rate}%, at or above target.`));
-  if (onTime != null && onTime < 75) ev.findings.push(finding('high', `Only ${onTime}% of completed work finished on time.`));
+  if (rate < T.completionFloor) ev.findings.push(finding('critical', `Completion is ${rate}% — below the ${T.completionFloor}% floor, so ${100 - rate}% of the programme carry-over into the next period.`));
+  else if (rate < T.completionTarget) ev.findings.push(finding('medium', `Completion is ${rate}%, short of the ${T.completionTarget}% target.`));
+  else ev.findings.push(finding('ok', `Completion is ${rate}%, at or above the ${T.completionTarget}% target.`));
+  if (onTime != null && onTime < T.onTimeFloor) ev.findings.push(finding('high', `Only ${onTime}% of completed work finished by its due date.`));
+  else if (onTime != null) ev.findings.push(finding('ok', `On-time delivery is ${onTime}%.`));
   const failed = Number(byLabel['Failed']) || 0;
   const cancelled = Number(byLabel['Cancelled']) || 0;
-  if (failed) ev.findings.push(finding('high', `${failed} task(s) closed as failed and may need rework or follow-up.`));
+  if (failed) ev.findings.push(finding('high', `${failed} task(s) closed as failed and require rework or an exception decision.`));
   if (cancelled && total) ev.findings.push(finding('low', `${cancelled} task(s) were cancelled (${pct(cancelled, total)}% of the programme).`));
-  if (rate < 85) ev.recommendations.push(recommendation('high', 'Re-sequence the remaining open work and confirm crew capacity against the backlog.'));
-  if (onTime != null && onTime < 85) ev.recommendations.push(recommendation('medium', 'Review dispatch timing so field teams are mobilised before due dates, not after.'));
+  if (rate < T.completionTarget) ev.recommendations.push(recommendation('high', 'Re-sequence the remaining open work and confirm crew capacity against the backlog.'));
+  if (onTime != null && onTime < T.onTimeTarget) ev.recommendations.push(recommendation('medium', 'Review dispatch timing so field teams are mobilised before due dates, not after.'));
   a.evaluation = ev;
   return a;
 }
@@ -117,14 +146,15 @@ function assetCondition(a, d) {
   ev.score = total ? Math.round((avg / 10) * 100) : null;
   ev.grade = gradeFor(ev.score);
   const poorShare = pct(poor, total);
-  if (poorShare > 20) ev.findings.push(finding('critical', `${poorShare}% of the assessed fleet (${poor} assets) is in poor or critical condition.`));
-  else if (poorShare > 10) ev.findings.push(finding('high', `${poorShare}% of the fleet (${poor} assets) sits below condition 6 and needs attention.`));
-  else if (poor) ev.findings.push(finding('medium', `${poor} asset(s) are in poor or critical condition — monitor before the next cycle.`));
-  else ev.findings.push(finding('ok', 'No assets are currently in poor or critical condition.'));
-  if (avg && avg < 6) ev.findings.push(finding('high', `Average fleet condition of ${avg}/10 indicates ageing infrastructure.`));
-  if (critical) ev.findings.push(finding('high', `${critical} asset(s) are at condition 1-3 and are candidates for renewal.`));
-  if (poorShare > 10) ev.recommendations.push(recommendation('high', 'Prioritise a renewal/replacement programme for the condition 1-5 assets.'));
-  ev.recommendations.push(recommendation('medium', 'Tighten the maintenance cadence on assets trending toward condition 6 to stop further decline.'));
+  if (poorShare > T.poorShareAlert) ev.findings.push(finding('critical', `${poorShare}% of the assessed fleet (${poor} assets) is at condition 1-5 — a renewals liability, not a maintenance backlog.`));
+  else if (poorShare > T.poorShareWarn) ev.findings.push(finding('high', `${poorShare}% of the fleet (${poor} assets) sits below condition 6 and should be watched for further decline.`));
+  else if (poor) ev.findings.push(finding('medium', `${poor} asset(s) are below condition 6 — schedule targeted inspection before the next cycle.`));
+  else ev.findings.push(finding('ok', 'No assets are currently rated poor or critical (condition 1-5).'));
+  if (avg && avg < T.conditionFloor) ev.findings.push(finding('high', `Average fleet condition is ${avg}/10, indicating ageing infrastructure across the population.`));
+  else if (avg) ev.findings.push(finding('ok', `Average fleet condition is ${avg}/10 (target ${T.conditionTarget}+).`));
+  if (critical) ev.findings.push(finding('high', `${critical} asset(s) are at condition 1-${T.criticalRating} and are the top candidates for replacement.`));
+  if (poorShare > T.poorShareWarn) ev.recommendations.push(recommendation('high', 'Prioritise a renewal/replacement programme for the condition 1-5 assets.'));
+  ev.recommendations.push(recommendation('medium', `Tighten the maintenance cadence on assets trending toward condition ${Math.ceil(T.conditionFloor)} to stop further decline.`));
   a.evaluation = ev;
   return a;
 }
@@ -133,22 +163,22 @@ function crewUtilization(a, d) {
   const rows = d.rows || [];
   const utils = rows.map((r) => Number(r.utilization) || 0);
   const avg = rows.length ? Math.round(utils.reduce((s, x) => s + x, 0) / rows.length) : 0;
-  const overloaded = rows.filter((r) => Number(r.utilization) > 110);
-  const idle = rows.filter((r) => Number(r.utilization) < 25);
+  const overloaded = rows.filter((r) => Number(r.utilization) > T.utilizationHigh);
+  const idle = rows.filter((r) => Number(r.utilization) < T.utilizationLow);
   a.kpis = [
     { label: 'Crews', value: rows.length },
-    { label: 'Average utilisation', value: `${avg}%`, tone: avg >= 60 ? 'ok' : avg >= 35 ? 'warn' : 'bad' },
-    { label: 'Over capacity', value: overloaded.length, sub: '> 110% utilisation', tone: overloaded.length ? 'warn' : 'ok' },
-    { label: 'Under-utilised', value: idle.length, sub: '< 25% utilisation', tone: idle.length ? 'warn' : 'ok' },
+    { label: 'Average utilisation', value: `${avg}%`, tone: avg >= T.utilizationTarget ? 'ok' : avg >= 35 ? 'warn' : 'bad' },
+    { label: 'Over capacity', value: overloaded.length, sub: `> ${T.utilizationHigh}% utilisation`, tone: overloaded.length ? 'warn' : 'ok' },
+    { label: 'Under-utilised', value: idle.length, sub: `< ${T.utilizationLow}% utilisation`, tone: idle.length ? 'warn' : 'ok' },
   ];
   if (rows.length) {
     const max = Math.max(120, ...utils);
     a.bars.push({ title: 'Utilisation by crew', max, items: rows.slice(0, 15).map((r) => ({ label: r.name, value: Number(r.utilization) || 0, sub: `${r.completed_tasks}/${r.assigned_tasks} done`, valueText: `${r.utilization}%` })) });
   }
   const ev = newEval();
-  if (overloaded.length) ev.findings.push(finding('high', `${overloaded.length} crew(s) exceed 110% utilisation — schedule risk and fatigue exposure.`));
-  if (idle.length) ev.findings.push(finding('medium', `${idle.length} crew(s) are below 25% utilisation and could absorb re-sequenced work.`));
-  if (!overloaded.length && !idle.length) ev.findings.push(finding('ok', 'Crew utilisation is balanced across the reporting scope.'));
+  if (overloaded.length) ev.findings.push(finding('high', `${overloaded.length} crew(s) exceed ${T.utilizationHigh}% utilisation — schedule risk and fatigue exposure.`));
+  if (idle.length) ev.findings.push(finding('medium', `${idle.length} crew(s) are below ${T.utilizationLow}% utilisation and can absorb re-sequenced work.`));
+  if (!overloaded.length && !idle.length) ev.findings.push(finding('ok', `Crew utilisation is balanced (${avg}% average) across the reporting scope.`));
   if (avg < 35) ev.findings.push(finding('medium', `Average utilisation of ${avg}% suggests under-loaded capacity.`));
   if (overloaded.length) ev.recommendations.push(recommendation('high', 'Re-balance work from over-capacity crews to under-utilised crews.'));
   ev.recommendations.push(recommendation('medium', 'Level the dispatch plan so utilisation stays inside the 40-90% band.'));
@@ -164,7 +194,7 @@ function crewReadiness(a, d) {
   const expired = rows.reduce((s, r) => s + (Number(r.expired_certs) || 0), 0);
   a.kpis = [
     { label: 'Crews', value: rows.length },
-    { label: 'Avg completion', value: `${avgCompletion}%`, tone: avgCompletion >= 85 ? 'ok' : avgCompletion >= 70 ? 'warn' : 'bad' },
+    { label: 'Avg completion', value: `${avgCompletion}%`, tone: avgCompletion >= T.completionTarget ? 'ok' : avgCompletion >= T.completionFloor ? 'warn' : 'bad' },
     { label: 'At-risk tasks', value: atRisk, tone: atRisk ? 'warn' : 'ok' },
     { label: 'Expired certs', value: expired, tone: expired ? 'bad' : 'ok' },
   ];
@@ -174,10 +204,10 @@ function crewReadiness(a, d) {
   const ev = newEval();
   ev.score = Math.round(avgCompletion * 0.5 + (avgOnTime || avgCompletion) * 0.5);
   ev.grade = gradeFor(ev.score);
-  if (expired) ev.findings.push(finding('critical', `${expired} expired certification(s) across the reporting crews.`));
-  if (atRisk) ev.findings.push(finding('high', `${atRisk} task(s) are at risk of breaching their due dates.`));
-  if (avgCompletion < 85) ev.findings.push(finding('medium', `Average crew completion is ${avgCompletion}%, below the 85% target.`));
-  if (!expired && !atRisk && avgCompletion >= 85) ev.findings.push(finding('ok', 'Crews are fully certified with no at-risk task load.'));
+  if (expired) ev.findings.push(finding('critical', `${expired} expired certification(s) across the reporting crews — those members are not dispatch-eligible.`));
+  if (atRisk) ev.findings.push(finding('high', `${atRisk} task(s) are forecast to breach their due dates.`));
+  if (avgCompletion < T.completionTarget) ev.findings.push(finding('medium', `Average crew completion is ${avgCompletion}%, below the ${T.completionTarget}% target.`));
+  if (!expired && !atRisk && avgCompletion >= T.completionTarget) ev.findings.push(finding('ok', 'Crews are fully certified with no at-risk task load.'));
   if (expired) ev.recommendations.push(recommendation('high', 'Suspend dispatch of uncertified staff and schedule recertification immediately.'));
   if (atRisk) ev.recommendations.push(recommendation('high', 'Re-plan the at-risk task load before the next reporting window.'));
   ev.recommendations.push(recommendation('medium', 'Review certification expiry dates 90 days ahead to avoid lapses.'));
@@ -193,8 +223,8 @@ function personPerformance(a, d) {
   const violations = rows.reduce((s, r) => s + (Number(r.gps_violations) || 0), 0);
   a.kpis = [
     { label: 'People', value: rows.length },
-    { label: 'Avg completion', value: `${avgCompletion}%`, tone: avgCompletion >= 85 ? 'ok' : avgCompletion >= 70 ? 'warn' : 'bad' },
-    { label: 'Avg on-time', value: `${avgOnTime}%`, tone: avgOnTime >= 85 ? 'ok' : avgOnTime >= 70 ? 'warn' : 'bad' },
+    { label: 'Avg completion', value: `${avgCompletion}%`, tone: avgCompletion >= T.completionTarget ? 'ok' : avgCompletion >= T.completionFloor ? 'warn' : 'bad' },
+    { label: 'Avg on-time', value: `${avgOnTime}%`, tone: avgOnTime >= T.onTimeTarget ? 'ok' : avgOnTime >= T.onTimeFloor ? 'warn' : 'bad' },
     { label: 'Findings', value: findings, sub: `${violations} GPS violations`, tone: findings || violations ? 'warn' : 'ok' },
   ];
   const ranked = [...rows].filter((r) => r.on_time_rate != null).sort((x, y) => (Number(y.on_time_rate) || 0) - (Number(x.on_time_rate) || 0)).slice(0, 15);
@@ -204,12 +234,12 @@ function personPerformance(a, d) {
   const ev = newEval();
   ev.score = Math.round(avgCompletion * 0.5 + avgOnTime * 0.5);
   ev.grade = gradeFor(ev.score);
-  const weak = rows.filter((r) => Number(r.on_time_rate) < 60 && Number(r.tasks) >= 3);
-  if (weak.length) ev.findings.push(finding('high', `${weak.length} person(s) are below a 60% on-time rate over a meaningful task count.`));
-  if (avgOnTime < 80) ev.findings.push(finding('medium', `Average on-time performance is ${avgOnTime}%.`));
+  const weak = rows.filter((r) => Number(r.on_time_rate) < T.personWeakOnTime && Number(r.tasks) >= 3);
+  if (weak.length) ev.findings.push(finding('high', `${weak.length} person(s) are below a ${T.personWeakOnTime}% on-time rate over a meaningful task count.`));
+  if (avgOnTime < T.onTimeTarget) ev.findings.push(finding('medium', `Average on-time performance is ${avgOnTime}%, below the ${T.onTimeTarget}% target.`));
   if (violations) ev.findings.push(finding('high', `${violations} GPS validation violation(s) recorded against field staff.`));
   if (findings) ev.findings.push(finding('medium', `${findings} field finding(s) were raised by this group.`));
-  if (!weak.length && !violations && avgOnTime >= 80) ev.findings.push(finding('ok', 'Field performance is consistent across the reporting group.'));
+  if (!weak.length && !violations && avgOnTime >= T.onTimeTarget) ev.findings.push(finding('ok', 'Field performance is consistent across the reporting group.'));
   if (weak.length) ev.recommendations.push(recommendation('high', 'Coach or re-brief the lowest on-time performers and pair them with strong crews.'));
   if (violations) ev.recommendations.push(recommendation('high', 'Investigate GPS mismatches for possible dispatch or integrity issues.'));
   a.evaluation = ev;
@@ -245,8 +275,8 @@ function complianceAudit(a, d) {
   const compNum = comp.includes('%') ? Number(comp.replace('%', '')) : null;
   const gpsNum = gps.includes('%') ? Number(gps.replace('%', '')) : null;
   a.kpis = [
-    { label: 'Checklist compliance', value: comp, tone: compNum == null ? undefined : compNum >= 90 ? 'ok' : compNum >= 75 ? 'warn' : 'bad' },
-    { label: 'GPS pass rate', value: gps, tone: gpsNum == null ? undefined : gpsNum >= 90 ? 'ok' : gpsNum >= 75 ? 'warn' : 'bad' },
+    { label: 'Checklist compliance', value: comp, tone: compNum == null ? undefined : compNum >= T.checklistTarget ? 'ok' : compNum >= T.checklistFloor ? 'warn' : 'bad' },
+    { label: 'GPS pass rate', value: gps, tone: gpsNum == null ? undefined : gpsNum >= T.gpsTarget ? 'ok' : gpsNum >= T.gpsFloor ? 'warn' : 'bad' },
     { label: 'Expired certs', value: d.expired_certs ?? 0, sub: `of ${d.total_certs ?? 0}`, tone: d.expired_certs ? 'bad' : 'ok' },
     { label: 'Missed equipment', value: d.missed_equipment_total ?? 0, tone: d.missed_equipment_total ? 'warn' : 'ok' },
   ];
@@ -262,12 +292,12 @@ function complianceAudit(a, d) {
   const ev = newEval();
   ev.score = compNum;
   ev.grade = gradeFor(compNum);
-  if (compNum != null && compNum < 75) ev.findings.push(finding('critical', `Checklist compliance is ${comp}%, materially below the 75% floor.`));
-  else if (compNum != null && compNum < 90) ev.findings.push(finding('medium', `Checklist compliance is ${comp}%, short of the 90% target.`));
-  if (gpsNum != null && gpsNum < 85) ev.findings.push(finding('high', `GPS validation pass rate is only ${gps}.`));
+  if (compNum != null && compNum < T.checklistFloor) ev.findings.push(finding('critical', `Checklist compliance is ${comp} — materially below the ${T.checklistFloor}% floor.`));
+  else if (compNum != null && compNum < T.checklistTarget) ev.findings.push(finding('medium', `Checklist compliance is ${comp} — short of the ${T.checklistTarget}% target.`));
+  if (gpsNum != null && gpsNum < T.gpsFloor) ev.findings.push(finding('high', `GPS validation pass rate is only ${gps}.`));
   if (d.expired_certs) ev.findings.push(finding('critical', `${d.expired_certs} certification(s) have expired, creating a compliance exposure.`));
   if (d.missed_equipment_total) ev.findings.push(finding('high', `${d.missed_equipment_total} asset/schedule maintenance item(s) are overdue.`));
-  if (compNum != null && compNum >= 90 && !d.expired_certs && !d.missed_equipment_total) ev.findings.push(finding('ok', 'Compliance indicators are within acceptable limits.'));
+  if (compNum != null && compNum >= T.checklistTarget && !d.expired_certs && !d.missed_equipment_total) ev.findings.push(finding('ok', 'Compliance indicators are within acceptable limits.'));
   ev.recommendations.push(recommendation('high', 'Clear the overdue maintenance and certification backlog before the next audit.'));
   ev.recommendations.push(recommendation('medium', 'Enforce the checklist and GPS capture steps at submission to protect the compliance rate.'));
   a.evaluation = ev;
@@ -346,7 +376,7 @@ function assetValuation(a, d) {
     { label: 'Replacement cost (RCN)', value: money(f.rcn, code) },
     { label: 'Condition-adjusted value', value: money(f.current, code), sub: `${money(haircut, code)} condition haircut` },
     { label: 'Unpriced assets', value: f.unpriced_count ?? 0, tone: f.unpriced_count ? 'warn' : 'ok' },
-    { label: 'Average condition', value: `${round1(f.avg_condition)} / 10`, tone: f.avg_condition >= 7 ? 'ok' : f.avg_condition >= 5.5 ? 'warn' : 'bad' },
+    { label: 'Average condition', value: `${round1(f.avg_condition)} / 10`, tone: f.avg_condition >= T.conditionTarget ? 'ok' : f.avg_condition >= T.conditionFloor ? 'warn' : 'bad' },
   ];
   const families = [...(f.by_family || [])].sort((x, y) => (Number(y.current) || 0) - (Number(x.current) || 0)).slice(0, 12);
   if (families.length) a.bars.push({ title: 'Current value by family', items: families.map((r) => ({ label: r.family_label || r.family, value: Number(r.current) || 0, sub: `${r.count} assets`, valueText: money(r.current, code) })) });
@@ -379,11 +409,11 @@ function maintenanceCost(a, d) {
   if (regions.length) a.bars.push({ title: 'Spend by region', items: regions.map((r) => ({ label: r.region, value: Number(r.spend) || 0, sub: `${r.count} events`, valueText: money(r.spend, code) })) });
   if ((f.monthly || []).length) a.bars.push({ title: 'Monthly spend trend', items: f.monthly.map((r) => ({ label: r.month, value: Number(r.spend) || 0, valueText: money(r.spend, code) })) });
   const ev = newEval();
-  if (topShare > 60) ev.findings.push(finding('medium', `${topShare}% of maintenance spend is concentrated in one region (${top.region}).`));
+  if (topShare > T.costConcentration) ev.findings.push(finding('medium', `${topShare}% of maintenance spend is concentrated in one region (${top.region}) — review whether that reflects asset base or unit cost.`));
   else ev.findings.push(finding('ok', 'Maintenance spend is reasonably distributed across regions.'));
   const avg = f.totals?.avg || 0;
-  const high = (f.recent || []).filter((r) => Number(r.cost) > avg * 3);
-  if (high.length) ev.findings.push(finding('medium', `${high.length} event(s) cost more than three times the average — review for scope creep.`));
+  const high = (f.recent || []).filter((r) => Number(r.cost) > avg * T.costOutlierFactor);
+  if (high.length) ev.findings.push(finding('medium', `${high.length} event(s) cost more than ${T.costOutlierFactor}x the average — verify scope and approval.`));
   ev.recommendations.push(recommendation('medium', 'Compare unit costs across regions and standardise the most expensive event types.'));
   a.evaluation = ev;
   return a;
@@ -411,10 +441,15 @@ function assetDetail(a, data, doc) {
   if (Object.keys(byStatus).length) a.bars.push({ title: 'Maintenance history by status', items: Object.entries(byStatus).map(([label, value]) => ({ label, value })) });
   const ev = newEval();
   if (suggestion) {
-    ev.score = Math.round((Number(suggestion.suggested_rating) / 10) * 100);
+    const recorded = suggestion.current_rating != null ? Number(suggestion.current_rating) : null;
+    const conservative = recorded != null ? Math.min(recorded, Number(suggestion.suggested_rating)) : Number(suggestion.suggested_rating);
+    ev.score = Math.round((conservative / 10) * 100);
     ev.grade = gradeFor(ev.score);
-    const sev = suggestion.suggested_rating <= 4 ? 'critical' : suggestion.suggested_rating <= 6 ? 'high' : 'ok';
-    ev.findings.push(finding(sev, `Evidence-based assessment suggests condition ${suggestion.suggested_rating}/10 (currently recorded ${suggestion.current_rating ?? '—'}/10).`));
+    const sev = suggestion.suggested_rating <= T.renewalRating ? 'critical' : suggestion.suggested_rating <= 6 ? 'high' : 'ok';
+    ev.findings.push(finding(sev, `Evidence-based reassessment suggests condition ${suggestion.suggested_rating}/10 (recorded ${recorded ?? '—'}/10) with ${String(suggestion.confidence).toLowerCase()} confidence.`));
+    if (recorded != null && Math.abs(recorded - Number(suggestion.suggested_rating)) >= T.downgradeAlert) {
+      ev.findings.push(finding('high', `The recorded rating is ${Math.abs(recorded - Number(suggestion.suggested_rating))} points above the evidence — confirm on the next physical evaluation.`));
+    }
     for (const r of suggestion.reasons || []) ev.findings.push(finding(sev === 'ok' ? 'low' : 'medium', r));
     ev.recommendations.push(recommendation(suggestion.recommendation === 'REPLACE' ? 'high' : 'medium', suggestion.recommendation_label || suggestion.recommendation));
   }
@@ -560,6 +595,39 @@ function assetRevaluation(a, d) {
   return a;
 }
 
+function costAnalytics(a, d) {
+  const t = d.totals || {};
+  const code = t.currency || currencyCode();
+  const poorShare = t.spend ? pct(t.poor_spend, t.spend) : 0;
+  a.kpis = [
+    { label: 'Total spend', value: money(t.spend, code) },
+    { label: 'Events', value: t.events ?? 0, sub: `${money(t.avg, code)} avg` },
+    { label: 'Spend / asset value', value: t.ratio == null ? 'N/A' : `${t.ratio}%`, tone: t.ratio == null ? undefined : t.ratio <= 5 ? 'ok' : t.ratio <= 10 ? 'warn' : 'bad' },
+    { label: 'Poor-condition spend', value: money(t.poor_spend, code), sub: `${poorShare}% of spend`, tone: poorShare > 40 ? 'bad' : poorShare > 20 ? 'warn' : 'ok' },
+  ];
+  const regions = [...(d.by_region || [])].slice(0, 12);
+  if (regions.length) a.bars.push({ title: 'Spend by region', items: regions.map((r) => ({ label: r.region, value: Number(r.spend) || 0, sub: r.ratio == null ? `${r.events} events` : `${r.ratio}% of value`, valueText: money(r.spend, code) })) });
+  const crews = [...(d.by_crew || [])].slice(0, 12);
+  if (crews.length) a.bars.push({ title: 'Spend by crew', items: crews.map((c) => ({ label: c.crew, value: Number(c.spend) || 0, sub: `${c.events} events`, valueText: money(c.spend, code) })) });
+  const assets = [...(d.by_asset || [])].slice(0, 12);
+  if (assets.length) a.bars.push({ title: 'Highest-cost assets', items: assets.map((x) => ({ label: x.asset_code, value: Number(x.spend) || 0, sub: `${x.asset_name} · cond ${x.condition ?? '—'}`, valueText: money(x.spend, code) })) });
+  const ev = newEval();
+  if (t.ratio != null) {
+    if (t.ratio > 10) ev.findings.push(finding('high', `Maintenance spend equals ${t.ratio}% of the condition-adjusted asset value — unusually high, suggesting deferred renewal rather than efficient upkeep.`));
+    else if (t.ratio > 5) ev.findings.push(finding('medium', `Maintenance spend is ${t.ratio}% of asset value; monitor for a rising trend.`));
+    else ev.findings.push(finding('ok', `Maintenance spend is ${t.ratio}% of asset value, within a sustainable band.`));
+  }
+  if (poorShare > 20) ev.findings.push(finding('high', `${poorShare}% of spend (${money(t.poor_spend, code)}) is going into assets already at condition 1-5 — candidates for replacement, not repair.`));
+  const top = (d.by_region || [])[0];
+  if (top && t.spend && pct(top.spend, t.spend) > T.costConcentration) ev.findings.push(finding('medium', `${pct(top.spend, t.spend)}% of spend sits in ${top.region}.`));
+  const highAssets = (d.by_asset || []).filter((x) => Number(x.spend) > (t.avg || 0) * 3);
+  if (highAssets.length) ev.findings.push(finding('medium', `${highAssets.length} asset(s) absorbed more than 3x the average event cost — review scope and approval.`));
+  if (poorShare > 20) ev.recommendations.push(recommendation('high', 'Shift budget from repairing poor-condition assets to a funded replacement programme.'));
+  ev.recommendations.push(recommendation('medium', 'Track spend-to-value per region and standardise unit costs for the most expensive event types.'));
+  a.evaluation = ev;
+  return a;
+}
+
 const BUILDERS = {
   MAINTENANCE_COMPLETION: maintenanceCompletion,
   ASSET_CONDITION: assetCondition,
@@ -579,6 +647,7 @@ const BUILDERS = {
   TASK_DETAIL: taskDetail,
   LINE_DETAIL: lineDetail,
   ASSET_REVALUATION: assetRevaluation,
+  COST_ANALYTICS: costAnalytics,
 };
 
 function buildAnalytics(reportType, data) {
