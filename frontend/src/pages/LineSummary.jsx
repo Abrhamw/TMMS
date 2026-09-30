@@ -1,4 +1,5 @@
 import { KpiTile, BarRow } from '../components/InfraVisuals';
+import Comments from '../components/Comments';
 
 function Chip({ children }) {
   return <span className="infra-chip">{children}</span>;
@@ -73,6 +74,9 @@ export default function LineSummary({ lines, towersByLine, focusId, onPick }) {
             </div>
             {towers.length === 0 && <div className="muted mt">No towers recorded yet</div>}
           </div>
+        </div>
+        <div className="card card-pad mt">
+          <Comments entityType="transmission_line" entityId={focused.id} title="Line comments" placeholder="Comment on this line…" />
         </div>
       </div>
     );

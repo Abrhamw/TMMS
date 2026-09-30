@@ -5,6 +5,7 @@ import { can, getStoredUser } from '../auth';
 import { linesInRegion } from '../cascade';
 import MapPicker from '../components/MapPicker';
 import ViewMap from '../components/ViewMap';
+import Comments from '../components/Comments';
 import { relatedSegment, entityColor, isEnergized, voltageChip, popupRows } from '../mapFocus';
 import { KpiTile } from '../components/InfraVisuals';
 import { t } from '../i18n';
@@ -504,6 +505,7 @@ export default function Towers({ embedded }) {
               </tbody>
             </table>
           </div>
+          <div className="mt"><Comments entityType="tower" entityId={detail.id} title="Tower comments" placeholder="Comment on this tower…" /></div>
         </Modal>
       )}
 

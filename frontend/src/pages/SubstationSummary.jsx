@@ -1,4 +1,5 @@
 import { KpiTile, BarRow } from '../components/InfraVisuals';
+import Comments from '../components/Comments';
 
 function Chip({ children }) {
   return <span className="infra-chip">{children}</span>;
@@ -66,6 +67,9 @@ export default function SubstationSummary({ substations, focusId, onPick }) {
               </div>
             ))}
           </div>
+        </div>
+        <div className="card card-pad mt">
+          <Comments entityType="substation" entityId={focused.id} title="Substation comments" placeholder="Comment on this substation…" />
         </div>
       </div>
     );

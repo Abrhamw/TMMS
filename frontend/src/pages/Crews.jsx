@@ -4,6 +4,7 @@ import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, Progr
 import { can, getStoredUser } from '../auth';
 import { peopleInRegion } from '../cascade';
 import Document from '../components/Document';
+import Comments from '../components/Comments';
 import ViewMap from '../components/ViewMap';
 
 const CREW_ROLES = ['CREW_LEADER', 'LINEMAN', 'TECHNICIAN', 'SAFETY_OFFICER', 'INSPECTOR', 'APPRENTICE'];
@@ -364,6 +365,7 @@ export default function Crews() {
               </div>
             </div>
           </div>
+          <div className="mt"><Comments entityType="crew" entityId={detail.id} title="Crew comments" placeholder="Comment on this crew…" /></div>
         </Modal>
       )}
 

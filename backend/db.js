@@ -816,6 +816,9 @@ function initSchema() {
   migrate('message', 'action_required', 'ALTER TABLE message ADD COLUMN action_required INTEGER NOT NULL DEFAULT 0');
   migrate('message', 'due_date', 'ALTER TABLE message ADD COLUMN due_date TEXT');
   migrate('message', 'scheduled_at', 'ALTER TABLE message ADD COLUMN scheduled_at TEXT');
+  // Comments can target name-keyed entities (equipment) that have no numeric id;
+  // those rows carry the name in entity_ref with entity_id pinned to 0.
+  migrate('comment', 'entity_ref', 'ALTER TABLE comment ADD COLUMN entity_ref TEXT');
   migrate('message_recipient', 'delivered_at', 'ALTER TABLE message_recipient ADD COLUMN delivered_at TEXT');
   migrate('message_recipient', 'acknowledged_at', 'ALTER TABLE message_recipient ADD COLUMN acknowledged_at TEXT');
   // Everything already sent predates delivery tracking: treat a recipient as

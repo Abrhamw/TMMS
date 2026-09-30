@@ -56,6 +56,7 @@ export default function TaskDetail() {
   const [dispatch, setDispatch] = useState(null);
   const [equipmentDraft, setEquipmentDraft] = useState({});
   const [equipmentBusy, setEquipmentBusy] = useState(false);
+  const [equipmentComment, setEquipmentComment] = useState('');
   const [assignOptions, setAssignOptions] = useState(null);
   const [assignBusy, setAssignBusy] = useState(false);
   const [editCrewId, setEditCrewId] = useState('');
@@ -552,6 +553,16 @@ export default function TaskDetail() {
                     </span>
                   </label>
                 ))}
+              </div>
+              <div className="mt">
+                <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>Comment on a specific item of equipment:</div>
+                <SearchSelect value={equipmentComment} onChange={(e) => setEquipmentComment(e.target.value)}>
+                  <option value="">— select equipment —</option>
+                  {task.readiness.equipment_checks.map((item) => <option key={item.equipment} value={item.equipment}>{item.equipment}</option>)}
+                </SearchSelect>
+                {equipmentComment && (
+                  <div className="mt"><Comments entityType="equipment" entityRef={equipmentComment} title={`Comments — ${equipmentComment}`} placeholder="Comment on this equipment…" /></div>
+                )}
               </div>
             </div>
           )}

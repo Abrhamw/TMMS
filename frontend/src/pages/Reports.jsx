@@ -7,6 +7,7 @@ import AnalyticsBlock from '../components/AnalyticsBlock';
 import { can, getStoredUser } from '../auth';
 import { assetsInScope, linesInRegion } from '../cascade';
 import DocumentReport from '../components/DocumentReport';
+import Comments from '../components/Comments';
 
 const DOCUMENT_TYPES = ['ASSET_DETAIL', 'CREW_DETAIL', 'PERSON_DETAIL', 'TASK_DETAIL', 'LINE_DETAIL'];
 // Person profiles have no seed template but are reachable from the entity
@@ -572,6 +573,9 @@ export default function Reports() {
             {top
               ? (top.loading ? <Loading /> : top.error ? <ErrorNote error={top.error} /> : <DocumentReport data={top.data} onOpenEntity={openDocument} />)
               : <ReportView data={view?.data} onOpenEntity={openDocument} />}
+            {!top && view?.id ? (
+              <div className="mt"><Comments entityType="report" entityId={view.id} title="Report comments" placeholder="Comment on this report…" /></div>
+            ) : null}
           </Modal>
         );
       })()}
