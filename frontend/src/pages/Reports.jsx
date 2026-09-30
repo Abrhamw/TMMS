@@ -56,6 +56,53 @@ function fiscalPeriodRange(months, now = new Date()) {
 const dayFmt = (d) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
+function csvCell(v) {
+  if (v == null) return '';
+  const str = typeof v === 'object' ? JSON.stringify(v) : String(v);
+  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+}
+// Flatten a report payload into labelled CSV blocks: the summary metric rows,
+// then every array of records (executions, tasks, findings, financial lines…).
+function reportToCsv(data) {
+  const out = [];
+  const addBlock = (name, rows) => {
+    if (!rows || !rows.length) return;
+    out.push(`# ${name}`);
+    const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))];
+    out.push(cols.map(csvCell).join(','));
+    for (const r of rows) out.push(cols.map((c) => csvCell(r[c])).join(','));
+    out.push('');
+  };
+  if (Array.isArray(data.rows) && data.rows.every((r) => r && 'label' in r)) addBlock('Summary', data.rows);
+  const walk = (obj, path) => {
+    if (!obj || typeof obj !== 'object') return;
+    for (const [k, v] of Object.entries(obj)) {
+      if (k === 'rows') continue;
+      if (Array.isArray(v) && v.length && v.every((x) => x && typeof x === 'object' && !Array.isArray(x))) {
+        addBlock(path ? `${path}.${k}` : k, v.map((x) => {
+          const flat = {};
+          for (const [kk, vv] of Object.entries(x)) flat[kk] = vv && typeof vv === 'object' ? JSON.stringify(vv) : vv;
+          return flat;
+        }));
+      } else if (v && typeof v === 'object') {
+        walk(v, path ? `${path}.${k}` : k);
+      }
+    }
+  };
+  walk(data, '');
+  return out.join('\n');
+}
+function downloadFile(name, mime, content) {
+  const url = URL.createObjectURL(new Blob([content], { type: mime }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
 export default function Reports() {
   const canGenerate = can(getStoredUser(), 'report:write');
   const [templates, setTemplates] = useState([]);
@@ -75,6 +122,14 @@ export default function Reports() {
   const [typeFilter, setTypeFilter] = useState('');
   const [regionFilter, setRegionFilter] = useState('');
   const [documents, setDocuments] = useState([]);
+  const [schedules, setSchedules] = useState([]);
+  const [makeSchedule, setMakeSchedule] = useState(false);
+  const [scheduleMonths, setScheduleMonths] = useState(1);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareTo, setShareTo] = useState(() => new Set());
+  const [shareNote, setShareNote] = useState('');
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareErr, setShareErr] = useState(null);
   const { query, setQuery, results: reportRows } = useSearchFilter(reports);
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -162,9 +217,13 @@ export default function Reports() {
     setGenForm((f) => ({ ...f, period_start: isoDay(r.start), period_end: isoDay(new Date(r.end.getTime() - 864e5)) }));
   };
 
+  const loadSchedules = () => api.get('/report-schedules').then(setSchedules).catch(() => {});
+  const toggleSchedule = (s) => api.patch(`/report-schedules/${s.id}`, { active: !s.active })
+    .then(() => loadSchedules()).catch((e) => setError(e.message));
   const load = () => {
     api.get('/report-templates').then(setTemplates).catch((e) => setError(e.message));
     api.get('/reports').then(setReports).catch(() => {});
+    loadSchedules();
   };
   useEffect(() => {
     load();
@@ -216,6 +275,13 @@ export default function Reports() {
   async function generate() {
     try {
       setBusy(true);
+      if (makeSchedule) {
+        await api.post('/report-schedules', { ...genForm, months: scheduleMonths });
+        loadSchedules();
+        setGenForm(null);
+        setMakeSchedule(false);
+        return;
+      }
       const res = await api.post('/reports/generate', genForm);
       setDocuments([]);
       setView(res);
@@ -223,6 +289,18 @@ export default function Reports() {
       setGenForm(null);
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
+  }
+  async function submitShare() {
+    if (!view?.id || shareTo.size === 0) return;
+    try {
+      setShareBusy(true);
+      setShareErr(null);
+      await api.post(`/reports/${view.id}/share`, { recipients: [...shareTo], note: shareNote });
+      setShareOpen(false);
+      setShareTo(new Set());
+      setShareNote('');
+    } catch (e) { setShareErr(e.message); }
+    finally { setShareBusy(false); }
   }
   if (!templates.length && !reports.length && !error) return <Page title="Operational & Compliance Reports"><Loading /></Page>;
 
@@ -338,6 +416,31 @@ export default function Reports() {
         )}
       </div>
 
+      <h3 className="section-title">Scheduled reports <span className="hint">{schedules.filter((s) => s.active).length} active</span></h3>
+      <div className="card mb">
+        <div className="tbl-wrap">
+          <table>
+            <thead><tr><th>Report</th><th>Cadence</th><th>Next run</th><th>Last run</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              {schedules.map((s) => {
+                const tpl = modalTemplates.find((t) => t.report_type === s.report_type);
+                return (
+                  <tr key={s.id}>
+                    <td><b>{tpl ? tpl.name : s.report_type}</b></td>
+                    <td>Every {s.months} month{s.months === 1 ? '' : 's'}</td>
+                    <td className="nowrap">{fmtDate(s.next_run_at)}</td>
+                    <td className="nowrap">{s.last_run_at ? fmtDate(s.last_run_at) : '—'}</td>
+                    <td>{s.active ? <span className="ok">Active</span> : <span className="muted">Paused</span>}</td>
+                    <td>{canGenerate ? <button className="btn btn-sm" onClick={() => toggleSchedule(s)}>{s.active ? 'Pause' : 'Resume'}</button> : null}</td>
+                  </tr>
+                );
+              })}
+              {schedules.length === 0 && <tr><td colSpan="6" className="muted center">No scheduled reports. Tick "Schedule" when generating a report.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <h3 className="section-title">Generated reports <span className="hint">{reports.length} total</span></h3>
       <div className="filters">
         <SearchField value={query} onChange={setQuery} placeholder="Search reports…" />
@@ -379,7 +482,7 @@ export default function Reports() {
         <Modal title="Generate Report" onClose={() => setGenForm(null)}
           footer={<>
             <button className="btn" onClick={() => setGenForm(null)}>Cancel</button>
-            <button className="btn btn-primary" disabled={busy} onClick={generate}>{busy ? 'Generating…' : 'Generate'}</button>
+            <button className="btn btn-primary" disabled={busy} onClick={generate}>{busy ? 'Working…' : (makeSchedule ? 'Schedule report' : 'Generate')}</button>
           </>}>
           <div className="form-grid">
             <div className="field full"><label>Report type</label>
@@ -406,22 +509,50 @@ export default function Reports() {
                   </SearchSelect></div>
               </>
             )}
+            {canGenerate && (
+              <div className="field full">
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, textTransform: 'none' }}>
+                  <input type="checkbox" checked={makeSchedule} onChange={(e) => setMakeSchedule(e.target.checked)} />
+                  Schedule this report to run automatically
+                </label>
+                {makeSchedule && (
+                  <div style={{ marginTop: 6 }}>
+                    <SearchSelect value={String(scheduleMonths)} onChange={(e) => setScheduleMonths(Number(e.target.value))}>
+                      <option value="1">Every 1 month</option>
+                      <option value="3">Every 3 months</option>
+                      <option value="6">Every 6 months</option>
+                      <option value="12">Every 12 months</option>
+                    </SearchSelect>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </Modal>
       )}
 
       {(view || documents.length > 0) && (() => {
         const top = documents[documents.length - 1];
+        const exportData = top ? top.data : view?.data;
+        const exportTitle = top ? (top.data?.title || top.label || 'report') : (view?.title || 'report');
+        const doExport = (format) => {
+          if (!exportData) return;
+          const safe = String(exportTitle).replace(/[^\w.-]+/g, '_').slice(0, 60) || 'report';
+          if (format === 'json') downloadFile(`${safe}.json`, 'application/json', JSON.stringify(exportData, null, 2));
+          else downloadFile(`${safe}.csv`, 'text/csv', reportToCsv(exportData));
+        };
         return (
           <Modal title={top ? (top.data?.title || top.label || 'Entity Profile') : (view?.title || view?.data?.title || 'Report')}
             onClose={() => (top ? popDocument() : setView(null))} wide printable
-            footer={top ? (
+            footer={(
               <>
-                <button className="btn" onClick={popDocument}>{documents.length > 1 ? 'Back' : (view ? 'Back to report' : 'Close')}</button>
+                {top ? <button className="btn" onClick={popDocument}>{documents.length > 1 ? 'Back' : (view ? 'Back to report' : 'Close')}</button> : null}
+                {!top && view?.id ? <button className="btn" onClick={() => setShareOpen(true)}>Share</button> : null}
+                <button className="btn" onClick={() => doExport('csv')}>CSV</button>
+                <button className="btn" onClick={() => doExport('json')}>JSON</button>
                 <PrintButton />
+                {!top ? <button className="btn btn-primary" onClick={() => setView(null)}>Close</button> : null}
               </>
-            ) : (
-              <><PrintButton /><button className="btn btn-primary" onClick={() => setView(null)}>Close</button></>
             )}>
             {top
               ? (top.loading ? <Loading /> : top.error ? <ErrorNote error={top.error} /> : <DocumentReport data={top.data} onOpenEntity={openDocument} />)
@@ -429,6 +560,36 @@ export default function Reports() {
           </Modal>
         );
       })()}
+
+      {shareOpen && view?.id && (
+        <Modal title="Share report" onClose={() => setShareOpen(false)}
+          footer={<>
+            <button className="btn" onClick={() => setShareOpen(false)}>Cancel</button>
+            <button className="btn btn-primary" disabled={shareBusy || shareTo.size === 0} onClick={submitShare}>{shareBusy ? 'Sending…' : `Send to ${shareTo.size}`}</button>
+          </>}>
+          {shareErr && <ErrorNote error={shareErr} />}
+          <div className="field"><label>Note (optional)</label><textarea rows={3} value={shareNote} onChange={(e) => setShareNote(e.target.value)} placeholder="Add a message for the recipients…" /></div>
+          <div className="field"><label>Recipients</label>
+            <div className="share-list">
+              {entityLists.people.map((p) => {
+                const label = [p.first_name, p.last_name].filter(Boolean).join(' ') || p.username || `Person ${p.id}`;
+                const on = shareTo.has(p.id);
+                return (
+                  <label key={p.id} className={`share-item${on ? ' on' : ''}`}>
+                    <input type="checkbox" checked={on} onChange={() => setShareTo((cur) => {
+                      const n = new Set(cur);
+                      if (n.has(p.id)) n.delete(p.id); else n.add(p.id);
+                      return n;
+                    })} />
+                    <span>{label}{p.title ? <span className="muted"> · {p.title}</span> : null}</span>
+                  </label>
+                );
+              })}
+              {entityLists.people.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No people available.</div>}
+            </div>
+          </div>
+        </Modal>
+      )}
     </Page>
   );
 }

@@ -441,6 +441,20 @@ function initSchema() {
     parameters TEXT NOT NULL DEFAULT '{}'
   );
 
+  CREATE TABLE IF NOT EXISTS report_schedule (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_type TEXT NOT NULL,
+    months INTEGER NOT NULL DEFAULT 1,
+    next_run_at TEXT NOT NULL,
+    last_run_at TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    scope_region_id INTEGER REFERENCES region(id),
+    params TEXT NOT NULL DEFAULT '{}',
+    share_to TEXT,
+    created_by INTEGER REFERENCES user(id),
+    created_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     actor TEXT NOT NULL DEFAULT 'system',

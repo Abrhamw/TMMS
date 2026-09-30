@@ -9,6 +9,7 @@ const { maintenanceCostForRegions, currencyCode, assetRegion } = require('../mai
 const { deriveCrewStatus } = require('../crewStatus');
 const { taskReadiness, crewReadiness, personPerformanceRows, crewRosterPersonIds } = require('../readiness');
 const { targetHeadline, resolveTarget } = require('../target');
+const { sendMail } = require('../mail');
 
 function moneyStr(v, code) {
   try {
@@ -919,22 +920,20 @@ router.get('/reports/:id', (req, res) => {
   res.json(r);
 });
 
-router.post('/reports/generate', (req, res) => {
-  if (!can(req, 'report:write')) return res.status(403).json({ error: 'Forbidden: requires report:write' });
-  const params = req.body;
-  if (!isGlobal(req.user)) params.scope_region_id = req.user.region_id;
-  if (!params.scope_region_id) params.scope_region_id = null;
+// Persist a generated report from a parameter set, using the caller's scope.
+// Shared by the manual generate route and the recurring-schedule sweeper.
+function createReport(params, user) {
   const reportType = params.report_type;
-  const data = compute(reportType, params, req.user);
+  const data = compute(reportType, params, user);
   const now = new Date().toISOString();
-  const code = nextCode(`RPT-${new Date().toISOString().slice(0, 4)}`, 'report', 'report_code', 4);
+  const code = nextCode(`RPT-${now.slice(0, 4)}`, 'report', 'report_code', 4);
   const template = list('report_template').find((t) => t.report_type === reportType);
   const id = insertRow('report', {
     report_code: code,
     report_type: reportType,
     title: data.title,
-    period_start: new Date(params.period_start || Date.now() - 30 * 24 * 3600 * 1000).toISOString(),
-    period_end: new Date(params.period_end || Date.now()).toISOString(),
+    period_start: new Date(params.period_start || now).toISOString(),
+    period_end: new Date(params.period_end || now).toISOString(),
     scope_region_id: params.scope_region_id || null,
     template_id: template ? template.id : null,
     status: 'READY',
@@ -942,8 +941,159 @@ router.post('/reports/generate', (req, res) => {
     generated_at: now,
     parameters: JSON.stringify({ ...params, data }),
   });
-  audit(req.user, 'GENERATE', 'report', id, { report_type: reportType });
+  return { id, data };
+}
+
+router.post('/reports/generate', (req, res) => {
+  if (!can(req, 'report:write')) return res.status(403).json({ error: 'Forbidden: requires report:write' });
+  const params = { ...req.body };
+  if (!isGlobal(req.user)) params.scope_region_id = req.user.region_id;
+  if (!params.scope_region_id) params.scope_region_id = null;
+  const { id, data } = createReport(params, req.user);
+  audit(req.user, 'GENERATE', 'report', id, { report_type: params.report_type });
   res.status(201).json({ ...get('report', id, ['parameters']), data });
 });
 
+// --- Report tooling: recurring schedules, sharing --------------------------
+
+function addMonthsIso(iso, months) {
+  const d = new Date(iso);
+  const day = d.getUTCDate();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + Number(months || 1));
+  const dim = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(day, dim));
+  return d.toISOString();
+}
+
+// Rebuild a user-shaped record for a schedule's owner so compute() applies the
+// same command scope they would see running the report by hand.
+function userForSchedule(userId) {
+  const u = db.prepare(
+    `SELECT u.id, u.username, u.role, u.region_id, u.person_id, u.active, u.created_at,
+            p.first_name, p.last_name, p.title, p.email
+     FROM user u LEFT JOIN person p ON p.id = u.person_id WHERE u.id = ?`
+  ).get(userId);
+  return u && u.active ? u : null;
+}
+
+router.get('/report-schedules', (req, res) => {
+  if (!can(req, 'report:read')) return res.status(403).json({ error: 'Forbidden: requires report:read' });
+  const rows = list('report_schedule')
+    .filter((s) => isGlobal(req.user) || !s.scope_region_id || s.scope_region_id === req.user.region_id);
+  res.json(rows);
+});
+
+router.post('/report-schedules', (req, res) => {
+  if (!can(req, 'report:write')) return res.status(403).json({ error: 'Forbidden: requires report:write' });
+  const b = req.body || {};
+  if (!b.report_type) return res.status(400).json({ error: 'report_type is required' });
+  const months = [1, 3, 6, 12].includes(Number(b.months)) ? Number(b.months) : 1;
+  const scopeRegion = isGlobal(req.user) ? (b.scope_region_id || null) : req.user.region_id;
+  const shareTo = Array.isArray(b.share_to) ? b.share_to.map(Number).filter(Boolean) : [];
+  const schedParams = { ...(b.params || {}) };
+  if (b.period_start) schedParams.period_start = b.period_start;
+  if (b.period_end) schedParams.period_end = b.period_end;
+  const id = insertRow('report_schedule', {
+    report_type: b.report_type,
+    months,
+    next_run_at: b.next_run_at ? new Date(b.next_run_at).toISOString() : addMonthsIso(new Date().toISOString(), months),
+    last_run_at: null,
+    active: 1,
+    scope_region_id: scopeRegion,
+    params: JSON.stringify(schedParams),
+    share_to: JSON.stringify(shareTo),
+    created_by: req.user.id,
+    created_at: new Date().toISOString(),
+  });
+  audit(req.user, 'SCHEDULE', 'report_schedule', id, { report_type: b.report_type, months });
+  res.status(201).json(get('report_schedule', id));
+});
+
+router.patch('/report-schedules/:id', (req, res) => {
+  if (!can(req, 'report:write')) return res.status(403).json({ error: 'Forbidden: requires report:write' });
+  const s = get('report_schedule', Number(req.params.id));
+  if (!s) return res.status(404).json({ error: 'Schedule not found' });
+  if (!isGlobal(req.user) && s.scope_region_id && s.scope_region_id !== req.user.region_id) {
+    return res.status(404).json({ error: 'Schedule not found' });
+  }
+  const active = req.body && req.body.active !== undefined ? (req.body.active ? 1 : 0) : s.active;
+  db.prepare('UPDATE report_schedule SET active = ? WHERE id = ?').run(active, s.id);
+  res.json(get('report_schedule', s.id));
+});
+
+router.post('/reports/:id/share', (req, res) => {
+  if (!can(req, 'report:read')) return res.status(403).json({ error: 'Forbidden: requires report:read' });
+  const r = get('report', Number(req.params.id), ['parameters']);
+  if (!r) return res.status(404).json({ error: 'Report not found' });
+  if (!isGlobal(req.user) && r.scope_region_id && r.scope_region_id !== req.user.region_id) {
+    return res.status(404).json({ error: 'Report not found' });
+  }
+  const recipients = Array.isArray(req.body?.recipients) ? req.body.recipients.map(Number).filter(Boolean) : [];
+  if (!recipients.length) return res.status(400).json({ error: 'At least one recipient is required' });
+  const note = String(req.body?.note || '').slice(0, 2000);
+  const body = `${note ? `${note}\n\n` : ''}${r.title}\nOpen the report: /reports?report=${r.id}`;
+  let sent = 0;
+  for (const pid of recipients) {
+    const m = sendMail({
+      senderUserId: req.user.id,
+      senderPersonId: req.user.person_id,
+      recipientPersonId: pid,
+      subject: `Report: ${r.title}`.slice(0, 200),
+      body,
+      category: 'REPORT',
+      entityType: 'report',
+      entityId: r.id,
+      link: `/reports?report=${r.id}`,
+    });
+    if (m) sent += 1;
+  }
+  audit(req.user, 'SHARE', 'report', r.id, { recipients: sent });
+  res.json({ sent });
+});
+
+// Generate every due scheduled report, then roll the schedule forward. Called
+// at boot and on an interval; safe to run repeatedly.
+function runReportSchedules(nowIso = new Date().toISOString()) {
+  const now = new Date(nowIso);
+  const due = list('report_schedule').filter((s) => s.active && s.next_run_at && new Date(s.next_run_at) <= now);
+  const made = [];
+  for (const s of due) {
+    try {
+      const owner = userForSchedule(s.created_by)
+        || { id: s.created_by, role: 'ADMIN', region_id: s.scope_region_id, crew_ids: [] };
+      const extra = typeof s.params === 'string' ? JSON.parse(s.params) : (s.params || {});
+      const params = { ...extra, report_type: s.report_type, scope_region_id: s.scope_region_id || null };
+      const { id } = createReport(params, owner);
+      audit(owner, 'GENERATE', 'report', id, { report_type: s.report_type, scheduled: true });
+      let shareTo = [];
+      try { shareTo = typeof s.share_to === 'string' ? JSON.parse(s.share_to) : (s.share_to || []); } catch (_) { shareTo = []; }
+      const fresh = get('report', id);
+      for (const pid of (shareTo || [])) {
+        sendMail({
+          senderUserId: s.created_by,
+          recipientPersonId: Number(pid),
+          subject: `Scheduled report: ${fresh.title}`.slice(0, 200),
+          body: `${fresh.title}\nOpen the report: /reports?report=${fresh.id}`,
+          category: 'REPORT',
+          entityType: 'report',
+          entityId: fresh.id,
+          link: `/reports?report=${fresh.id}`,
+        });
+      }
+      db.prepare('UPDATE report_schedule SET last_run_at = ?, next_run_at = ? WHERE id = ?')
+        .run(nowIso, addMonthsIso(s.next_run_at, s.months), s.id);
+      made.push(id);
+    } catch (_) {
+      // Do not let one bad schedule stall the rest; push it forward a period.
+      try {
+        db.prepare('UPDATE report_schedule SET next_run_at = ? WHERE id = ?')
+          .run(addMonthsIso(s.next_run_at, s.months), s.id);
+      } catch (__) { /* non-fatal */ }
+    }
+  }
+  return made;
+}
+
 module.exports = router;
+module.exports.runReportSchedules = runReportSchedules;

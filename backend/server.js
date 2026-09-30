@@ -71,7 +71,8 @@ app.use('/api', require('./routes/schedules'));
 app.use('/api', require('./routes/checklists'));
 app.use('/api', require('./routes/performance'));
 app.use('/api', require('./routes/gps'));
-app.use('/api', require('./routes/reports'));
+const reportsRouter = require('./routes/reports');
+app.use('/api', reportsRouter);
 app.use('/api', require('./routes/map'));
 app.use('/api', require('./routes/admin'));
 app.use('/api', require('./routes/catalog'));
@@ -97,5 +98,10 @@ setInterval(runGeneration, 6 * 3600 * 1000);
 // Deliver scheduled (queued) mail whose time has come, even when nobody has the
 // mailbox open. Also swept lazily on inbox reads for a snappy feel.
 setInterval(() => { try { mailboxRouter.processOutbox(); } catch (_) { /* non-fatal */ } }, 60 * 1000);
+
+// Generate any due scheduled reports and roll each schedule forward. Swept at
+// boot and every few minutes so recurring reports appear without user action.
+try { reportsRouter.runReportSchedules(); } catch (_) { /* non-fatal */ }
+setInterval(() => { try { reportsRouter.runReportSchedules(); } catch (_) { /* non-fatal */ } }, 5 * 60 * 1000);
 
 module.exports = app;
