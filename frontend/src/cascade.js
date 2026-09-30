@@ -31,6 +31,18 @@ export function towersForLine(towers, lineId) {
   return (towers || []).filter((t) => same(t.line_id, lineId));
 }
 
+// Towers belong to a line, and lines belong to a region, so a chosen line wins
+// and otherwise a chosen region narrows the towers to the lines inside it.
+export function towersInScope(towers, { regionId, lineId } = {}, { lines = [] } = {}) {
+  const list = towers || [];
+  if (lineId) return list.filter((t) => same(t.line_id, lineId));
+  if (regionId) {
+    const lineIds = new Set(linesInRegion(lines, regionId).map((l) => String(l.id)));
+    return list.filter((t) => t.line_id != null && lineIds.has(String(t.line_id)));
+  }
+  return list;
+}
+
 // Assets can hang off a substation, a line or a tower. The most specific parent
 // wins: substation, then line, then the region they resolve to.
 export function assetsInScope(assets, { regionId, substationId, lineId } = {}, { subs = [], lines = [] } = {}) {
@@ -47,4 +59,26 @@ export function assetsInScope(assets, { regionId, substationId, lineId } = {}, {
     );
   }
   return list;
+}
+
+// Crews carry a single home region, so a chosen region narrows a crew picker to
+// the crews that belong to it. People can be attached to several regions (via
+// region_personnel), which the API projects as a `regions` array. Both are
+// assignment pickers rather than pure filters, so a region with no matches
+// falls back to the full list instead of leaving the picker empty and blocking
+// the user (region_personnel is also only partly populated).
+export function crewsInRegion(crews, regionId) {
+  const list = crews || [];
+  if (!regionId) return list;
+  const narrowed = list.filter((c) => same(c.region_id, regionId));
+  return narrowed.length ? narrowed : list;
+}
+
+export function peopleInRegion(people, regionId) {
+  const list = people || [];
+  if (!regionId) return list;
+  const narrowed = list.filter(
+    (p) => same(p.region_id, regionId) || (p.regions || []).some((r) => same(r.id, regionId))
+  );
+  return narrowed.length ? narrowed : list;
 }

@@ -92,7 +92,7 @@ function DocumentSections({ document, onOpenEntity }) {
               <table>
                 <thead><tr><th>When</th><th>Event</th><th>Crew</th></tr></thead>
                 <tbody>{document.history.map((e) => (
-                  <tr key={e.id}><td>{fmtDateTime(e.performed_at)}</td><td>{e.event_type} {e.task_id ? <span className="muted">#{e.task_id}</span> : null}</td><td>{e.crew_id || '—'}</td></tr>
+                  <tr key={e.id}><td>{fmtDateTime(e.performed_at)}</td><td>{e.event_type} {e.task_id ? <span className="muted">#{e.task_id}</span> : null}</td><td>{e.crew_name || e.crew_code || '—'}</td></tr>
                 ))}</tbody>
               </table>
             </Section>
@@ -108,6 +108,8 @@ function DocumentSections({ document, onOpenEntity }) {
   }
   if (document.entity === 'CREW') {
     const c = document.crew || {};
+    const leader = (document.members || []).find((m) => m.role === 'CREW_LEADER')
+      || (document.members || []).find((m) => m.person_id === c.leader_person_id);
     return (
       <div className="grid grid-2">
         <div className="card card-pad">
@@ -115,7 +117,7 @@ function DocumentSections({ document, onOpenEntity }) {
           <div className="kv mt" style={{ gridTemplateColumns: '130px 1fr', fontSize: 13 }}>
             <span className="k">Code</span><span className="mono">{c.crew_code}</span>
             <span className="k">Type</span><span>{c.crew_type}</span>
-            <span className="k">Leader</span><span>{document.members?.find((m) => m.role === 'CREW_LEADER') ? 'member roster below' : '—'}</span>
+            <span className="k">Leader</span><span>{leader ? [leader.first_name, leader.last_name].filter(Boolean).join(' ') : '—'}</span>
           </div>
           <Section title="Members & certifications" hint={`${(document.members || []).length} member(s), ${(document.certs || []).length} cert(s)`}>            <table>
               <thead><tr><th>Member</th><th>Role</th><th>Cert / expiry</th></tr></thead>

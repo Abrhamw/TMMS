@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, fmtDate } from '../api';
 import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, Progress, ConfirmButton, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
+import { peopleInRegion } from '../cascade';
 import Document from '../components/Document';
 import ViewMap from '../components/ViewMap';
 
@@ -151,6 +152,7 @@ export default function Crews() {
   if (!rows) return <Page title="Field Crews"><Loading /></Page>;
 
   const available = (form ? people.filter((p) => p.active !== 0 && !form.members.some((m) => m.person_id === p.id)) : []);
+  const eligRegionId = eligRegion || regions[0]?.id || '';
 
   return (
     <Page title="Field Crews" crumbs="TMMS / Operations"
@@ -197,7 +199,7 @@ export default function Crews() {
           <h3 className="section-title">Dispatch Eligibility Check</h3>
           <div className="card card-pad">
             <div className="flex mb" style={{ flexWrap: 'wrap', gap: 8 }}>
-              <SearchSelect value={eligRegion || (regions[0]?.id ?? '')} onChange={(e) => setEligRegion(e.target.value)}>
+              <SearchSelect value={eligRegion || (regions[0]?.id ?? '')} onChange={(e) => { setEligRegion(e.target.value); setEligTask(''); }}>
                 {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </SearchSelect>
               <SearchSelect value={eligType} onChange={(e) => setEligType(e.target.value)}>
@@ -209,7 +211,7 @@ export default function Crews() {
               </SearchSelect>
               <SearchSelect value={eligTask} onChange={(e) => setEligTask(e.target.value)}>
                 <option value="">No specific task</option>
-                {tasks.filter((t) => ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD'].includes(t.status)).map((t) => (
+                {tasks.filter((t) => ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD'].includes(t.status) && (!eligRegionId || String(t.region_id) === String(eligRegionId))).map((t) => (
                   <option key={t.id} value={t.id}>{t.task_number} · {t.title}</option>
                 ))}
               </SearchSelect>
@@ -381,7 +383,7 @@ export default function Crews() {
                 {['MAINTENANCE', 'INSPECTION', 'EMERGENCY_RESPONSE', 'CONSTRUCTION', 'RELAY_AND_PROTECTION', 'SUBSTATION', 'LINE'].map((t) => <option key={t}>{t}</option>)}
               </SearchSelect></div>
             <div className="field"><label>Region</label>
-              <SearchSelect value={form.region_id || ''} onChange={(e) => setForm({ ...form, region_id: Number(e.target.value) })}>
+              <SearchSelect value={form.region_id || ''} onChange={(e) => setForm({ ...form, region_id: Number(e.target.value) || null, org_unit_id: null })}>
                 {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </SearchSelect></div>
             <div className="field"><label>Department</label>
@@ -397,7 +399,10 @@ export default function Crews() {
             <div className="field"><label>Crew leader</label>
               <SearchSelect value={form.leader_person_id || ''} onChange={(e) => promoteLeader(e.target.value ? Number(e.target.value) : null)}>
                 <option value="">— none —</option>
-                {people.map((p) => <option key={p.id} value={p.id}>{personLabel(p)}</option>)}
+                {form.leader_person_id && !peopleInRegion(people, form.region_id).some((p) => p.id === form.leader_person_id) && (
+                  <option value={form.leader_person_id}>{personLabel(people.find((p) => p.id === form.leader_person_id) || { id: form.leader_person_id })}</option>
+                )}
+                {peopleInRegion(people, form.region_id).map((p) => <option key={p.id} value={p.id}>{personLabel(p)}</option>)}
               </SearchSelect></div>
             <div className="field"><label>Home base</label><input value={form.home_base || ''} onChange={(e) => setForm({ ...form, home_base: e.target.value })} /></div>
             <div className="field"><label>Status override</label>
@@ -435,7 +440,7 @@ export default function Crews() {
           <div className="mt" style={{ display: 'flex', gap: 8 }}>
             <SearchSelect value={pick} onChange={(e) => setPick(e.target.value)} style={{ flex: 1 }}>
               <option value="">— select person to add —</option>
-              {available.map((p) => <option key={p.id} value={p.id}>{personLabel(p)}{p.title ? ` — ${p.title}` : ''}</option>)}
+              {peopleInRegion(available, form.region_id).map((p) => <option key={p.id} value={p.id}>{personLabel(p)}{p.title ? ` — ${p.title}` : ''}</option>)}
             </SearchSelect>
             <button className="btn" disabled={!canWrite || !pick} onClick={() => { if (pick) addMember(Number(pick)); }}>+ Add</button>
           </div>

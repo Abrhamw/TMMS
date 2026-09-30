@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, Fragment } from 'react';
 import { api, fmtDate, fmtMoney } from '../api';
 import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, CondPill, ConfirmButton, PrintButton, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
-import { linesForSubstation, linesInRegion, subsInRegion } from '../cascade';
+import { crewsInRegion, linesForSubstation, linesInRegion, subsInRegion } from '../cascade';
 import MapPicker from '../components/MapPicker';
 import Comments from '../components/Comments';
 import ImportDialog from '../components/ImportDialog';
@@ -219,6 +219,7 @@ export default function Assets() {
     [lines, form?.region_id, form?.substation_id]
   );
   const filterSubs = useMemo(() => subsInRegion(subs, regionFilter), [subs, regionFilter]);
+  const formCrews = useMemo(() => crewsInRegion(crews, form?.region_id), [crews, form?.region_id]);
 
   useEffect(() => {
     setPage(1);
@@ -663,7 +664,7 @@ export default function Assets() {
             <div className="field"><label>Default crew</label>
               <SearchSelect value={form.default_crew_id || ''} onChange={(e) => setForm({ ...form, default_crew_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">— none —</option>
-                {crews.map((c) => (
+                {formCrews.map((c) => (
                   <option key={c.id} value={c.id} disabled={c.status === 'OFF_DUTY' || c.status === 'UNAVAILABLE'}>
                     {c.name} ({c.status}{c.open_task_count ? ` · ${c.open_task_count} active` : ''})
                   </option>

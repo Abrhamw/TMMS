@@ -216,11 +216,17 @@ function crewPerformanceRows(crews, tasks) {
   });
 }
 
-// Execution KPIs per executor over an already-scoped task set.
-function personPerformanceRows(tasks) {
+// Execution KPIs per executor over an already-scoped task set. Pass
+// `seedPersonIds` to report the whole roster: those with no recorded execution
+// still appear, with zeroed KPIs, instead of the report collapsing to just the
+// people who happened to take part.
+function personPerformanceRows(tasks, seedPersonIds) {
   const now = new Date().toISOString();
   const taskIds = new Set(tasks.map((t) => t.id));
   const byExec = {};
+  if (Array.isArray(seedPersonIds)) {
+    for (const id of seedPersonIds) if (id) byExec[Number(id)] = [];
+  }
   const q = db.prepare('SELECT id, executed_by, result, submitted_at FROM checklist_execution WHERE task_id = ?');
   for (const t of tasks) {
     for (const ex of q.all(t.id)) {
@@ -259,7 +265,20 @@ function personPerformanceRows(tasks) {
       last_activity: lastActivity || null,
       findings, gps_violations: gpsViol,
     };
-  }).sort((a, b) => b.tasks - a.tasks);
+  }).sort((a, b) => b.tasks - a.tasks || a.name.localeCompare(b.name));
+}
+
+// The full active roster of a set of crews: leaders and serving members. Used to
+// seed the person KPI so every crew member is represented, not only executors.
+function crewRosterPersonIds(crews) {
+  const ids = new Set();
+  const memberQ = db.prepare('SELECT person_id FROM crew_member WHERE crew_id = ? AND active = 1');
+  for (const c of crews) {
+    if (c.leader_person_id) ids.add(Number(c.leader_person_id));
+    for (const m of memberQ.all(c.id)) if (m.person_id) ids.add(Number(m.person_id));
+  }
+  ids.delete(0);
+  return [...ids];
 }
 
 // Crew-level readiness: roster/cert coverage, KPIs, and the per-open-task
@@ -311,7 +330,7 @@ function personReadiness(personId, tasks) {
   const person = get('person', Number(personId));
   if (!person) return null;
   const scoped = tasks || list('task');
-  const performance = personPerformanceRows(scoped).find((r) => r.id === Number(personId))
+  const performance = personPerformanceRows(scoped, [Number(personId)]).find((r) => r.id === Number(personId))
     || { id: Number(personId), name: personName(personId), tasks: 0, completed: 0, completion_rate: 0, on_time: 0, on_time_rate: 0, findings: 0, gps_violations: 0 };
   const certifications = db.prepare('SELECT * FROM certification WHERE person_id = ? ORDER BY expires_at').all(personId)
     .map((cr) => ({ ...cr, valid: certIsValid(cr) }));
@@ -331,6 +350,7 @@ module.exports = {
   taskReadiness,
   crewPerformanceRows,
   personPerformanceRows,
+  crewRosterPersonIds,
   crewReadiness,
   personReadiness,
 };

@@ -7,7 +7,7 @@ const { taskProgress } = require('../taskProgress');
 const { computeRegionValuation, mergeValuations } = require('./register');
 const { maintenanceCostForRegions, currencyCode, assetRegion } = require('../maintenanceCost');
 const { deriveCrewStatus } = require('../crewStatus');
-const { taskReadiness, crewReadiness, personPerformanceRows } = require('../readiness');
+const { taskReadiness, crewReadiness, personPerformanceRows, crewRosterPersonIds } = require('../readiness');
 const { targetHeadline, resolveTarget } = require('../target');
 
 function moneyStr(v, code) {
@@ -258,7 +258,9 @@ function compute(reportType, params, user) {
       return { title: 'Crew Readiness Report', rows };
     }
     case 'PERSON_PERFORMANCE': {
-      const rows = personPerformanceRows(scoped).map((r) => ({
+      const perfCrews = scopeCrews(user, scope, list('crew')).filter((c) => !regionId || c.region_id === regionId);
+      const perfTasks = scoped.filter((t) => !regionId || t.region_id === regionId);
+      const rows = personPerformanceRows(perfTasks, crewRosterPersonIds(perfCrews)).map((r) => ({
         person: r.name, tasks: r.tasks, completed: r.completed, completion_rate: r.completion_rate,
         on_time: r.on_time, on_time_rate: r.on_time_rate, findings: r.findings, gps_violations: r.gps_violations,
       }));
@@ -445,7 +447,13 @@ function compute(reportType, params, user) {
       const aRegion = sub ? sub.region_id : line ? line.region_id : tower ? (get('transmission_line', tower.line_id)?.region_id ?? null) : null;
       if (!scope.global && !scope.assetIds.has(a.id)) return scopeError('Asset Detail Document');
       if (scope.global && outOfScope(aRegion)) return scopeError('Asset Detail Document');
-      const history = db.prepare('SELECT * FROM asset_maintenance_event WHERE asset_id = ? ORDER BY performed_at DESC').all(a.id);
+      // Carry the crew name so the printed maintenance history names the crew
+      // instead of leaking a raw foreign-key id onto the page.
+      const history = db.prepare(
+        `SELECT m.*, c.name AS crew_name, c.crew_code AS crew_code
+           FROM asset_maintenance_event m LEFT JOIN crew c ON c.id = m.crew_id
+          WHERE m.asset_id = ? ORDER BY m.performed_at DESC`
+      ).all(a.id);
       const executions = checklistsWithItems(
         db.prepare(
           `SELECT e.*, t.task_number FROM checklist_execution e LEFT JOIN task t ON t.id = e.task_id WHERE e.asset_id = ? ORDER BY e.submitted_at DESC`
@@ -703,7 +711,11 @@ function compute(reportType, params, user) {
       ).all(c.id);
       const memberIds = [c.leader_person_id, ...members.map((m) => m.person_id)].filter(Boolean);
       const certs = memberIds.length
-        ? db.prepare(`SELECT * FROM certification WHERE person_id IN (${memberIds.map(() => '?').join(',')}) ORDER BY expires_at`).all(...memberIds)
+        ? db.prepare(
+          `SELECT c.*, p.first_name, p.last_name FROM certification c
+             LEFT JOIN person p ON p.id = c.person_id
+            WHERE c.person_id IN (${memberIds.map(() => '?').join(',')}) ORDER BY c.expires_at`
+        ).all(...memberIds)
         : [];
       const tasks = db.prepare('SELECT * FROM task WHERE crew_id = ? ORDER BY COALESCE(actual_end, due_date) DESC').all(c.id);
       const findingCounts = findingCountsForTaskIds(tasks.map((t) => t.id));
@@ -775,7 +787,7 @@ function compute(reportType, params, user) {
           WHERE tf.created_by = ? ORDER BY tf.captured_at DESC`
       ).all(p.id);
       const gps = db.prepare('SELECT * FROM gps_validation WHERE validated_by = ? ORDER BY validated_at DESC').all(p.id);
-      const perf = personPerformanceRows(scopeTasks(user, scope, list('task'))).find((r) => r.id === p.id) || null;
+      const perf = personPerformanceRows(scopeTasks(user, scope, list('task')), [p.id]).find((r) => r.id === p.id) || null;
       const regions = db.prepare(
         `SELECT r.name FROM region_personnel rp JOIN region r ON r.id = rp.region_id WHERE rp.person_id = ?`
       ).all(p.id).map((r) => r.name);

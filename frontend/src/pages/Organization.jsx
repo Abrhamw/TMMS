@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { SearchSelect, Page, Modal, ErrorNote, Loading, ConfirmButton, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
+import { peopleInRegion } from '../cascade';
 
 const UNIT_TYPE_LABEL = {
   CORPORATE: 'Corporate HQ',
@@ -295,14 +296,14 @@ export default function Organization() {
                 {parentUnits.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
               </SearchSelect></div>
             <div className="field"><label>Region</label>
-              <SearchSelect value={form.region_id || ''} onChange={(e) => setForm({ ...form, region_id: e.target.value ? Number(e.target.value) : null, parent_id: null })}>
+              <SearchSelect value={form.region_id || ''} onChange={(e) => setForm({ ...form, region_id: e.target.value ? Number(e.target.value) : null, parent_id: null, manager_person_id: null })}>
                 <option value="">— none —</option>
                 {regions.map((r) => <option key={r.id} value={r.id}>{r.code} — {r.name}</option>)}
               </SearchSelect></div>
             <div className="field"><label>Manager</label>
               <SearchSelect value={form.manager_person_id || ''} onChange={(e) => setForm({ ...form, manager_person_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">— none —</option>
-                {people.map((p) => <option key={p.id} value={p.id}>{p.first_name} {p.last_name}</option>)}
+                {peopleInRegion(people, form.region_id).map((p) => <option key={p.id} value={p.id}>{p.first_name} {p.last_name}</option>)}
               </SearchSelect></div>
             <div className="field"><label>Sort order</label><input type="number" value={form.sort_order ?? 0} onChange={(e) => setForm({ ...form, sort_order: Number(e.target.value) })} /></div>
             <div className="field full"><label>Notes</label><input value={form.notes || ''} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>

@@ -57,7 +57,8 @@ app.use('/api/auth', require('./routes/auth'));
 
 app.use('/api', requireAuth, auditMiddleware);
 app.use('/api', require('./routes/dashboard'));
-app.use('/api', require('./routes/mailbox'));
+const mailboxRouter = require('./routes/mailbox');
+app.use('/api', mailboxRouter);
 app.use('/api', require('./routes/core'));
 app.use('/api', require('./routes/org'));
 app.use('/api', require('./routes/home'));
@@ -92,5 +93,9 @@ app.listen(PORT, () => {
 const { runGeneration } = require('./scheduler');
 runGeneration();
 setInterval(runGeneration, 6 * 3600 * 1000);
+
+// Deliver scheduled (queued) mail whose time has come, even when nobody has the
+// mailbox open. Also swept lazily on inbox reads for a snappy feel.
+setInterval(() => { try { mailboxRouter.processOutbox(); } catch (_) { /* non-fatal */ } }, 60 * 1000);
 
 module.exports = app;
