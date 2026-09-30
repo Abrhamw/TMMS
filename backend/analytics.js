@@ -37,6 +37,18 @@ function gradeFor(score) {
   return 'E';
 }
 
+// Blend a 0-100 performance score with a checklist pass rate and compliance
+// penalties so a clean completion record cannot mask failed checklists, GPS
+// violations or lapsed certifications. Keeps the grade honest: a person with
+// a perfect on-time record but repeated failed executions no longer scores A.
+function complianceScore(base, { passRate = null, violations = 0, expired = 0 } = {}) {
+  let s = Number(base);
+  if (!Number.isFinite(s)) return null;
+  if (passRate != null && Number.isFinite(Number(passRate))) s = s * 0.6 + Number(passRate) * 0.4;
+  const penalty = Math.min(30, (Number(violations) || 0) * 10) + Math.min(30, (Number(expired) || 0) * 10);
+  return Math.max(0, Math.round(s - penalty));
+}
+
 // Central thresholds for the rule-based evaluation. Kept in one place so the
 // wording and the pass/warn/fail boundaries can be tuned without hunting
 // through every builder. Values are percentages unless noted.
@@ -77,6 +89,10 @@ function finding(sev, text) {
   return { severity: sev, text };
 }
 
+function rankEntries(obj) {
+  return Object.entries(obj || {}).sort((x, y) => y[1] - x[1]).map(([label, value]) => ({ label, value }));
+}
+
 function recommendation(priority, text) {
   return { priority, text };
 }
@@ -99,7 +115,7 @@ function maintenanceCompletion(a, d) {
     { label: 'On-time', value: onTime == null ? 'N/A' : `${onTime}%`, tone: onTime == null ? undefined : onTime >= T.onTimeTarget ? 'ok' : onTime >= T.onTimeFloor ? 'warn' : 'bad' },
     { label: 'Outstanding', value: Math.max(0, total - done), sub: 'not completed in period' },
   ];
-  const statusItems = Object.entries(d.by_status || {}).map(([label, value]) => ({ label, value }));
+  const statusItems = rankEntries(d.by_status);
   if (statusItems.length) a.bars.push({ title: 'Tasks by status', items: statusItems });
   const ev = newEval();
   ev.score = Math.round((rate * 0.6) + ((onTime == null ? rate : onTime) * 0.4));
@@ -203,7 +219,8 @@ function crewReadiness(a, d) {
     a.bars.push({ title: 'At-risk tasks by crew', items: ranked.map((r) => ({ label: r.crew, value: Number(r.at_risk_tasks) || 0, sub: `${r.members} members` })) });
   }
   const ev = newEval();
-  ev.score = Math.round(avgCompletion * 0.5 + (avgOnTime || avgCompletion) * 0.5);
+  const expiredPerCrew = rows.length ? expired / rows.length : 0;
+  ev.score = complianceScore(avgCompletion * 0.5 + (avgOnTime || avgCompletion) * 0.5, { expired: expiredPerCrew });
   ev.grade = gradeFor(ev.score);
   if (expired) ev.findings.push(finding('critical', `${expired} expired certification(s) across the reporting crews — those members are not dispatch-eligible.`));
   if (atRisk) ev.findings.push(finding('high', `${atRisk} task(s) are forecast to breach their due dates.`));
@@ -233,7 +250,8 @@ function personPerformance(a, d) {
     a.bars.push({ title: 'On-time rate by person', max: 100, items: ranked.map((r) => ({ label: r.person, value: Number(r.on_time_rate) || 0, sub: `${r.tasks} tasks`, valueText: `${r.on_time_rate}%` })) });
   }
   const ev = newEval();
-  ev.score = Math.round(avgCompletion * 0.5 + avgOnTime * 0.5);
+  const gpsPerPerson = rows.length ? violations / rows.length : 0;
+  ev.score = complianceScore(avgCompletion * 0.5 + avgOnTime * 0.5, { violations: gpsPerPerson });
   ev.grade = gradeFor(ev.score);
   const weak = rows.filter((r) => Number(r.on_time_rate) < T.personWeakOnTime && Number(r.tasks) >= 3);
   if (weak.length) ev.findings.push(finding('high', `${weak.length} person(s) are below a ${T.personWeakOnTime}% on-time rate over a meaningful task count.`));
@@ -256,7 +274,7 @@ function outageIncident(a, d) {
   ];
   const byType = {};
   for (const i of d.incidents || []) byType[i.task_type] = (byType[i.task_type] || 0) + 1;
-  const items = Object.entries(byType).map(([label, value]) => ({ label, value }));
+  const items = rankEntries(byType);
   if (items.length) a.bars.push({ title: 'Incidents by type', items });
   const ev = newEval();
   if (t.substations_out || t.lines_out) {
@@ -442,7 +460,7 @@ function assetDetail(a, data, doc) {
   a.donuts.push({ title: 'Condition', good: rating >= 8 ? 1 : 0, fair: rating >= 6 && rating < 8 ? 1 : 0, poor: rating < 6 ? 1 : 0, labels: ['Good', 'Fair', 'Poor'] });
   const byStatus = {};
   for (const task of doc.tasks || []) byStatus[task.status] = (byStatus[task.status] || 0) + 1;
-  if (Object.keys(byStatus).length) a.bars.push({ title: 'Maintenance history by status', items: Object.entries(byStatus).map(([label, value]) => ({ label, value })) });
+  if (Object.keys(byStatus).length) a.bars.push({ title: 'Maintenance history by status', items: rankEntries(byStatus) });
   const ev = newEval();
   if (suggestion) {
     const recorded = suggestion.current_rating != null ? Number(suggestion.current_rating) : null;
@@ -476,9 +494,12 @@ function crewDetail(a, data, doc) {
   ];
   const byStatus = {};
   for (const task of doc.tasks || []) byStatus[task.status] = (byStatus[task.status] || 0) + 1;
-  if (Object.keys(byStatus).length) a.bars.push({ title: 'Workload by status', items: Object.entries(byStatus).map(([label, value]) => ({ label, value })) });
+  if (Object.keys(byStatus).length) a.bars.push({ title: 'Workload by status', items: rankEntries(byStatus) });
   const ev = newEval();
-  ev.score = p.completion_rate ?? null;
+  const basePerf = p.completion_rate != null && p.on_time_rate != null
+    ? (p.completion_rate + p.on_time_rate) / 2
+    : p.completion_rate ?? null;
+  ev.score = complianceScore(basePerf, { expired: r.cert_status?.expired || 0 });
   ev.grade = gradeFor(ev.score);
   if (r.cert_status?.expired) ev.findings.push(finding('critical', `${r.cert_status.expired} member certification(s) have expired.`));
   if (r.at_risk_tasks) ev.findings.push(finding('high', `${r.at_risk_tasks} task(s) are at risk of missing their due date.`));
@@ -503,9 +524,12 @@ function personDetail(a, data, doc) {
   ];
   const byResult = {};
   for (const e of doc.executions || []) { const k = e.result || 'INCOMPLETE'; byResult[k] = (byResult[k] || 0) + 1; }
-  if (Object.keys(byResult).length) a.bars.push({ title: 'Checklist executions by result', items: Object.entries(byResult).map(([label, value]) => ({ label, value })) });
+  if (Object.keys(byResult).length) a.bars.push({ title: 'Checklist executions by result', items: rankEntries(byResult) });
   const ev = newEval();
-  ev.score = p.completion_rate != null && p.on_time_rate != null ? Math.round((p.completion_rate + p.on_time_rate) / 2) : p.completion_rate ?? null;
+  const basePerf = p.completion_rate != null && p.on_time_rate != null
+    ? (p.completion_rate + p.on_time_rate) / 2
+    : p.completion_rate ?? null;
+  ev.score = complianceScore(basePerf, { passRate: p.checklist_pass_rate, violations: p.gps_violations || 0 });
   ev.grade = gradeFor(ev.score);
   const name = [person.first_name, person.last_name].filter(Boolean).join(' ') || 'This person';
   if (p.gps_violations) ev.findings.push(finding('high', `${p.gps_violations} GPS validation violation(s) are attributed to ${name}.`));
@@ -521,13 +545,16 @@ function taskDetail(a, data, doc) {
   const s = doc.summary || {};
   const task = doc.task || {};
   const overdue = task.due_date && ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION'].includes(task.status) && new Date(task.due_date) < new Date();
+  const statusTone = overdue ? 'bad'
+    : ['CANCELLED', 'ON_HOLD'].includes(task.status) ? 'warn'
+      : task.status === 'COMPLETED' ? 'ok' : undefined;
   a.kpis = [
     { label: 'Executions', value: s.executions ?? 0 },
     { label: 'Passed', value: s.pass ?? 0, tone: 'ok' },
     { label: 'Failed', value: s.fail ?? 0, tone: s.fail ? 'bad' : 'ok' },
     { label: 'Findings', value: s.findings ?? 0, tone: s.findings ? 'warn' : 'ok' },
     { label: 'GPS validations', value: s.gps_validations ?? 0, sub: `${s.gps_fail ?? 0} failed`, tone: s.gps_fail ? 'bad' : 'ok' },
-    { label: 'Status', value: task.status || '—', tone: overdue ? 'bad' : 'ok' },
+    { label: 'Status', value: task.status || '—', tone: statusTone },
   ];
   if (s.executions) a.bars.push({ title: 'Execution outcome', max: s.executions, items: [
     { label: 'Pass', value: s.pass ?? 0, color: '#16a34a' },
@@ -560,7 +587,7 @@ function lineDetail(a, data, doc) {
   ];
   const byStatus = {};
   for (const task of doc.tasks || []) byStatus[task.status] = (byStatus[task.status] || 0) + 1;
-  if (Object.keys(byStatus).length) a.bars.push({ title: 'Line tasks by status', items: Object.entries(byStatus).map(([label, value]) => ({ label, value })) });
+  if (Object.keys(byStatus).length) a.bars.push({ title: 'Line tasks by status', items: rankEntries(byStatus) });
   const ev = newEval();
   if (t.overdue_tasks) ev.findings.push(finding('high', `${t.overdue_tasks} task(s) on this line are overdue.`));
   if (t.gps_fail) ev.findings.push(finding('high', `${t.gps_fail} GPS validation(s) failed along the line.`));

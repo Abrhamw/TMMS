@@ -600,6 +600,9 @@ function computeRaw(reportType, params, user) {
         { label: 'Verified by', value: personLabel(t.verified_by) || '—' },
         { label: 'Revision', value: t.revision || 1 },
       ];
+      if (t.cancel_reason) {
+        rows.push({ label: 'Cancellation record', value: `${t.cancel_reason} · ${personLabel(t.cancelled_by) || 'Unknown user'} · ${t.cancelled_at ? new Date(t.cancelled_at).toISOString().slice(0, 16).replace('T', ' ') : '—'}` });
+      }
       const summary = {
         executions: executions.length,
         pass: executions.filter((e) => e.result === 'PASS').length,
