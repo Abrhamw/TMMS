@@ -41,6 +41,7 @@ export default function TaskDetail() {
   const [tpl, setTpl] = useState(null);
   const [error, setError] = useState(null);
   const [checklist, setChecklist] = useState(null);
+  const [draftBusy, setDraftBusy] = useState(false);
   const [verifyForm, setVerifyForm] = useState({ result: 'PASS', summary: '', cost: '' });
   const [notif, setNotif] = useState(null);
   const [findingForm, setFindingForm] = useState(null);
@@ -131,11 +132,30 @@ export default function TaskDetail() {
       const chosen = list.find((x) => x.id === templateId) || list[0];
       if (!chosen) { setError('Task has no checklist template'); return; }
       setTpl(chosen);
+      // Resume a previously saved draft: restore each item's captured value and
+      // comment so field crews can carry on where they left off.
+      const draftByItem = new Map((chosen.draft?.items || []).map((d) => [Number(d.template_item_id), d]));
       const items = {};
-      chosen.items.forEach((it) => { items[it.id] = { value: null, comment: '' }; });
+      chosen.items.forEach((it) => {
+        const d = draftByItem.get(it.id);
+        items[it.id] = { value: d ? d.response_value ?? null : null, comment: d?.comment || '' };
+      });
       setChecklist(items);
       setVerifyForm({ ...verifyForm, summary: task?.completion_summary || '' });
+      if (chosen.draft) setNotif('Resumed saved checklist draft');
     } catch (e) { setError(e.message); }
+  }
+
+  // Persist the current checklist capture as a draft (no submit, no advancement).
+  async function saveChecklistDraft() {
+    if (!tpl || !checklist) return;
+    setDraftBusy(true);
+    try {
+      const items = Object.entries(checklist).map(([tid, v]) => ({ template_item_id: Number(tid), response_value: v.value, comment: v.comment }));
+      await api.post(`/tasks/${id}/checklist/draft`, { template_id: tpl.id, items });
+      setNotif('Checklist draft saved');
+      setTimeout(() => setNotif(null), 2500);
+    } catch (e) { setError(e.message); } finally { setDraftBusy(false); }
   }
 
   async function act(action, extra) {
@@ -758,8 +778,10 @@ export default function TaskDetail() {
         <Modal title={`Checklist — ${tpl.name}`} onClose={() => setChecklist(null)} wide
           footer={<>
             <button className="btn" onClick={() => setChecklist(null)}>Cancel</button>
+            <button className="btn" onClick={saveChecklistDraft} disabled={draftBusy}>{draftBusy ? 'Saving…' : 'Save draft'}</button>
             <button className="btn btn-primary" onClick={submitChecklist}>Submit execution</button>
           </>}>
+          {tpl.draft && <div className="alert" style={{ marginBottom: 10 }}>Resumed a saved draft from {fmtDateTime(tpl.draft.updated_at)}. Save your progress or submit when finished.</div>}
           <div className="muted mb">Safety: {tpl.safety_notes || '—'}</div>
           {tpl.materials && <div className="muted mb">Materials: {tpl.materials}</div>}
           {tpl.required_personnel && <div className="muted mb">Personnel: {tpl.required_personnel}</div>}

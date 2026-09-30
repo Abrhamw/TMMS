@@ -352,6 +352,22 @@ function initSchema() {
     completed_at TEXT
   );
 
+  -- In-progress checklist captures. A draft is held apart from a real execution
+  -- so it never counts as submitted work: the crew can save partial readings and
+  -- resume later, and the draft is discarded once the run is submitted.
+  CREATE TABLE IF NOT EXISTS checklist_draft (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES task(id),
+    template_id INTEGER NOT NULL,
+    executed_by INTEGER REFERENCES person(id),
+    crew_id INTEGER,
+    notes TEXT,
+    items_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(task_id, template_id, executed_by)
+  );
+
   CREATE TABLE IF NOT EXISTS task_finding (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id INTEGER NOT NULL REFERENCES task(id),

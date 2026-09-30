@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, list, get, insertRow, updateRow, withTx } = require('../util');
+const { db, list, get, insertRow, updateRow, withTx, parseRow } = require('../util');
 const { haversine } = require('../geo');
 const { evaluateViolation, flag } = require('../geofence');
 const { can, isGlobal, audit, isCrewUser, isOnCrew, scopeRows } = require('../auth');
@@ -1415,6 +1415,17 @@ router.get('/tasks/:id/checklist', (req, res) => {
   const ids = taskTemplateIds(t.id);
   if (!ids.length) return res.status(400).json({ error: 'Task has no checklist template' });
   const itemQ = db.prepare('SELECT * FROM checklist_item WHERE template_id = ? ORDER BY sequence');
+  // The signed-in person's saved drafts, so a partially-filled run resumes where
+  // it was left off. Drafts are keyed per person so two crew members do not
+  // overwrite each other's captures.
+  const draftByTemplate = new Map();
+  if (req.user.person_id) {
+    for (const d of db.prepare(
+      'SELECT * FROM checklist_draft WHERE task_id = ? AND executed_by = ?'
+    ).all(t.id, req.user.person_id)) {
+      draftByTemplate.set(d.template_id, parseRow(d, ['items_json']));
+    }
+  }
   const templates = ids.map((tid) => {
     const tpl = get('checklist_template', tid);
     if (!tpl) return null;
@@ -1422,11 +1433,72 @@ router.get('/tasks/:id/checklist', (req, res) => {
     const last = db.prepare(
       "SELECT * FROM checklist_execution WHERE task_id = ? AND template_id = ? AND submitted_at IS NOT NULL ORDER BY id DESC LIMIT 1"
     ).get(t.id, tpl.id) || null;
-    return { ...tpl, items, last_execution: last };
+    const draft = draftByTemplate.get(tpl.id) || null;
+    return {
+      ...tpl,
+      items,
+      last_execution: last,
+      draft: draft ? { id: draft.id, notes: draft.notes, updated_at: draft.updated_at, items: draft.items_json || [] } : null,
+    };
   }).filter(Boolean);
   // `template` stays the primary template for callers written against the
   // single-template shape; `templates` carries every governed template.
   res.json({ task: t, template: templates[0] || null, templates });
+});
+
+// Save a partially-filled checklist run without submitting it. The capture is
+// held in checklist_draft (never as a real execution) so it cannot advance the
+// task, count as work, or create GPS validations; submitting the run discards
+// the draft. Keyed per task+template+person so a crew member can resume later.
+router.post('/tasks/:id/checklist/draft', (req, res) => {
+  const t = get('task', Number(req.params.id));
+  if (!t) return res.status(404).json({ error: 'Task not found' });
+  if (!taskVisible(req.user, t)) return res.status(404).json({ error: 'Task not found' });
+  if (!can(req, 'task:execute')) return res.status(403).json({ error: 'Forbidden: requires task:execute' });
+  if (isCrewUser(req.user) && !isOnCrew(req.user, t.crew_id)) {
+    return res.status(403).json({ error: 'Forbidden: not your assigned task' });
+  }
+  const ids = taskTemplateIds(t.id);
+  if (!ids.length) return res.status(400).json({ error: 'Task has no checklist template' });
+  const requestedId = (req.body.template_id !== undefined && req.body.template_id !== null && req.body.template_id !== '')
+    ? Number(req.body.template_id)
+    : ids[0];
+  if (!ids.includes(requestedId)) {
+    return res.status(400).json({ error: 'template_id is not one of this task\'s checklist templates' });
+  }
+  const tpl = get('checklist_template', requestedId);
+  if (!tpl) return res.status(400).json({ error: 'Checklist template not found' });
+  const executedBy = req.user.person_id || null;
+  if (!executedBy) return res.status(400).json({ error: 'A draft must be owned by an authenticated person' });
+
+  const items = (Array.isArray(req.body.items) ? req.body.items : []).map((i) => ({
+    template_item_id: i.template_item_id != null ? Number(i.template_item_id) : null,
+    sequence: i.sequence != null ? Number(i.sequence) : null,
+    response_value: i.response_value !== undefined ? i.response_value : null,
+    comment: i.comment || null,
+  }));
+  const now = new Date().toISOString();
+  const existing = db.prepare(
+    'SELECT id FROM checklist_draft WHERE task_id = ? AND template_id = ? AND executed_by = ?'
+  ).get(t.id, tpl.id, executedBy);
+  withTx(() => {
+    const fields = {
+      notes: req.body.notes != null ? String(req.body.notes) : null,
+      items_json: items,
+      crew_id: req.body.crew_id || t.crew_id || null,
+      updated_at: now,
+    };
+    if (existing) {
+      updateRow('checklist_draft', existing.id, fields, ['items_json']);
+    } else {
+      insertRow('checklist_draft', { task_id: t.id, template_id: tpl.id, executed_by: executedBy, created_at: now, ...fields }, ['items_json']);
+    }
+  });
+  const saved = parseRow(db.prepare(
+    'SELECT * FROM checklist_draft WHERE task_id = ? AND template_id = ? AND executed_by = ?'
+  ).get(t.id, tpl.id, executedBy), ['items_json']);
+  audit(req.user, 'DRAFT', 'checklist_draft', saved.id, { task_id: t.id, template_id: tpl.id, count: items.length });
+  res.json({ ...saved, items: saved.items_json || [] });
 });
 
 router.post('/tasks/:id/checklist', (req, res) => {
@@ -1458,6 +1530,9 @@ router.post('/tasks/:id/checklist', (req, res) => {
   let outcome;
   try {
     outcome = withTx(() => {
+      // Submitting the run supersedes any saved draft for this task/template/person.
+      db.prepare('DELETE FROM checklist_draft WHERE task_id = ? AND template_id = ? AND executed_by = ?')
+        .run(t.id, tpl.id, req.user.person_id || null);
       const execId = insertRow('checklist_execution', {
         template_id: tpl.id,
         template_version: tpl.version,
