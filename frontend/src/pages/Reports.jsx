@@ -626,12 +626,12 @@ function ReportView({ data, onOpenEntity }) {
   return (
     <div>
       {data.analytics && !data.document ? <AnalyticsBlock a={data.analytics} /> : null}
-      <ReportBody data={data} onOpenEntity={onOpenEntity} />
+      <ReportBody data={data} onOpenEntity={onOpenEntity} hideSummary={!!data.analytics} />
     </div>
   );
 }
 
-function ReportBody({ data, onOpenEntity }) {
+function ReportBody({ data, onOpenEntity, hideSummary }) {
   const canDrill = typeof onOpenEntity === 'function';
   const ENTITY_KEYS = { crew_id: 'CREW_DETAIL', task_id: 'TASK_DETAIL', asset_pk: 'ASSET_DETAIL', line_id: 'LINE_DETAIL' };
   const linkRow = (entity) => (canDrill && entity && entity.id != null
@@ -646,7 +646,7 @@ function ReportBody({ data, onOpenEntity }) {
   };
   if (!data) return <div className="muted">No data</div>;
   if (data.document) return <DocumentReport data={data} onOpenEntity={onOpenEntity} />;
-  if (data.financial) return <FinancialTables f={data.financial} onOpenEntity={onOpenEntity} />;
+  if (data.financial) return <FinancialTables f={data.financial} onOpenEntity={onOpenEntity} hideCards={hideSummary} />;
   if (Array.isArray(data.by_asset)) {
     return (
       <div>
@@ -746,9 +746,11 @@ function ReportBody({ data, onOpenEntity }) {
     return (
       <div>
         <div className="grid grid-2">
-          <MoneyCard label="Checklist compliance" value={data.checklist_compliance} />
-          <MoneyCard label="GPS validation pass rate" value={data.gps_pass_rate} />
-          <MoneyCard label="Certifications" value={data.expired_certs} sub={`of ${data.total_certs} expired`} />
+          {!hideSummary && <>
+            <MoneyCard label="Checklist compliance" value={data.checklist_compliance} />
+            <MoneyCard label="GPS validation pass rate" value={data.gps_pass_rate} />
+            <MoneyCard label="Certifications" value={data.expired_certs} sub={`of ${data.total_certs} expired`} />
+          </>}
           <div className="card card-pad">
             <div className="card-head"><h3 className="card-title">Region cert status</h3></div>
             <div className="tbl-wrap">
@@ -992,18 +994,20 @@ function Table({ head, rows, rowProps }) {
   );
 }
 
-function FinancialTables({ f, onOpenEntity }) {
+function FinancialTables({ f, onOpenEntity, hideCards }) {
   const code = f.currency && typeof f.currency === 'object' ? f.currency.code : (f.currency || 'USD');
   const money = (v) => fmtMoney(v, code);
   if (f.kind === 'valuation') {
     return (
       <div>
-        <div className="grid grid-4">
-          <MoneyCard label="Population" value={f.count} />
-          <MoneyCard label="RCN" value={money(f.rcn)} />
-          <MoneyCard label="Current value" value={money(f.current)} />
-          <MoneyCard label="Unpriced" value={f.unpriced_count} />
-        </div>
+        {!hideCards && (
+          <div className="grid grid-4">
+            <MoneyCard label="Population" value={f.count} />
+            <MoneyCard label="RCN" value={money(f.rcn)} />
+            <MoneyCard label="Current value" value={money(f.current)} />
+            <MoneyCard label="Unpriced" value={f.unpriced_count} />
+          </div>
+        )}
         <h3 className="section-title">By location</h3>
         <Table head={['Location', 'Assets', 'RCN', 'Current value']} rows={(f.by_location || []).map((r) => [r.label, r.count, money(r.rcn), money(r.current)])} />
         <h3 className="section-title">By family</h3>
@@ -1021,11 +1025,13 @@ function FinancialTables({ f, onOpenEntity }) {
   }
   return (
     <div>
-      <div className="grid grid-3">
-        <MoneyCard label="Total spend" value={money(f.totals.spend)} />
-        <MoneyCard label="Events" value={f.totals.count} />
-        <MoneyCard label="Avg / event" value={money(f.totals.avg)} />
-      </div>
+      {!hideCards && (
+        <div className="grid grid-3">
+          <MoneyCard label="Total spend" value={money(f.totals.spend)} />
+          <MoneyCard label="Events" value={f.totals.count} />
+          <MoneyCard label="Avg / event" value={money(f.totals.avg)} />
+        </div>
+      )}
       <h3 className="section-title">By region</h3>
       <Table head={['Region', 'Events', 'Spend']} rows={(f.by_region || []).map((r) => [r.region, r.count, money(r.spend)])} />
       <h3 className="section-title">By asset type</h3>

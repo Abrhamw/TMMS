@@ -66,7 +66,7 @@ const T = {
 };
 
 function hasImportant(evaluation) {
-  return evaluation && evaluation.findings && evaluation.findings.length > 0;
+  return !!(evaluation && evaluation.findings && evaluation.findings.some((f) => f.severity && f.severity !== 'ok'));
 }
 
 function newEval() {
@@ -429,7 +429,7 @@ function assetDetail(a, data, doc) {
   const rating = asset.condition_rating ?? suggestion?.suggested_rating;
   const health = asset.health_index ?? suggestion?.health_index;
   a.kpis = [
-    { label: 'Condition', value: `${rating ?? '—'} / 10`, tone: rating >= 7 ? 'ok' : rating >= 5 ? 'warn' : 'bad' },
+    { label: 'Condition', value: `${rating ?? '—'} / 10`, tone: rating == null ? undefined : rating >= 7 ? 'ok' : rating >= 5 ? 'warn' : 'bad' },
     { label: 'Health index', value: health != null ? `${health}%` : '—', tone: health >= 70 ? 'ok' : health >= 50 ? 'warn' : 'bad' },
     { label: 'Remaining life', value: asset.remaining_useful_life_years != null ? `${asset.remaining_useful_life_years} yr` : '—' },
     { label: 'Open tasks', value: t.open_tasks ?? 0, tone: t.open_tasks ? 'warn' : 'ok' },
@@ -471,7 +471,7 @@ function crewDetail(a, data, doc) {
     { label: 'Expired certs', value: r.cert_status?.expired ?? 0, tone: r.cert_status?.expired ? 'bad' : 'ok' },
     { label: 'Open tasks', value: (r.open_tasks || []).length, tone: (r.open_tasks || []).length ? 'warn' : 'ok' },
     { label: 'At-risk tasks', value: r.at_risk_tasks ?? 0, tone: r.at_risk_tasks ? 'warn' : 'ok' },
-    { label: 'Completion', value: p.completion_rate != null ? `${p.completion_rate}%` : '—' },
+    { label: 'Completion', value: p.completion_rate != null ? `${p.completion_rate}%` : '—', tone: p.completion_rate == null ? undefined : p.completion_rate >= T.completionTarget ? 'ok' : p.completion_rate >= T.completionFloor ? 'warn' : 'bad' },
   ];
   const byStatus = {};
   for (const task of doc.tasks || []) byStatus[task.status] = (byStatus[task.status] || 0) + 1;
@@ -495,8 +495,8 @@ function personDetail(a, data, doc) {
   a.kpis = [
     { label: 'Tasks', value: p.tasks ?? 0 },
     { label: 'Completed', value: p.completed ?? 0 },
-    { label: 'Completion', value: p.completion_rate != null ? `${p.completion_rate}%` : '—', tone: (p.completion_rate ?? 100) >= 85 ? 'ok' : 'warn' },
-    { label: 'On-time', value: p.on_time_rate != null ? `${p.on_time_rate}%` : '—', tone: p.on_time_rate == null ? undefined : p.on_time_rate >= 85 ? 'ok' : 'warn' },
+    { label: 'Completion', value: p.completion_rate != null ? `${p.completion_rate}%` : '—', tone: p.completion_rate == null ? undefined : p.completion_rate >= T.completionTarget ? 'ok' : p.completion_rate >= T.completionFloor ? 'warn' : 'bad' },
+    { label: 'On-time', value: p.on_time_rate != null ? `${p.on_time_rate}%` : '—', tone: p.on_time_rate == null ? undefined : p.on_time_rate >= T.onTimeTarget ? 'ok' : p.on_time_rate >= T.onTimeFloor ? 'warn' : 'bad' },
     { label: 'Findings', value: p.findings ?? 0, tone: p.findings ? 'warn' : 'ok' },
     { label: 'GPS violations', value: p.gps_violations ?? 0, tone: p.gps_violations ? 'bad' : 'ok' },
   ];

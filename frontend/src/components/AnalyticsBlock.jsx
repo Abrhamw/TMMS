@@ -19,14 +19,24 @@ export default function AnalyticsBlock({ a }) {
       )}
       {(a.bars || []).length > 0 && (
         <div className="analytics-charts">
-          {a.bars.map((b, i) => (
-            <div key={i} className="card card-pad chart-card">
-              <h4 className="chart-title">{b.title}</h4>
-              {b.items.map((it, j) => (
-                <BarRow key={j} label={it.label} value={it.value} max={b.max || it.max} sub={it.sub} color={it.color} valueText={it.valueText} />
-              ))}
-            </div>
-          ))}
+          {a.bars.map((b, i) => {
+            // Scale every bar against the chart's own maximum. Without this a
+            // chart that never declared `max` made each bar render at 100% (the
+            // bar took its own value as the ceiling), so the comparison was
+            // meaningless. An explicit `max` (e.g. 100 for a rate, 10 for a
+            // condition score) still wins.
+            const max = Number(b.max) > 0
+              ? Number(b.max)
+              : Math.max(0, ...b.items.map((it) => Number(it.value) || 0));
+            return (
+              <div key={i} className="card card-pad chart-card">
+                <h4 className="chart-title">{b.title}</h4>
+                {b.items.map((it, j) => (
+                  <BarRow key={j} label={it.label} value={it.value} max={max || it.max} sub={it.sub} color={it.color} valueText={it.valueText} />
+                ))}
+              </div>
+            );
+          })}
           {(a.donuts || []).map((d, i) => (
             <div key={`d${i}`} className="card card-pad chart-card donut-card">
               <h4 className="chart-title">{d.title}</h4>
