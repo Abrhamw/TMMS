@@ -451,6 +451,9 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
 @media print {
   @page { margin: 10mm; }
   body { background: #fff !important; }
+  /* Keep the signal-bearing colour (grade badges, KPI tones, bar/donut charts,
+     severity dots) on paper — browsers drop backgrounds by default. */
+  html, body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   .no-print, .sidebar, .shell-topbar, .main > .topbar .actions, .tabs, .filters, .map-picker-locate, .map-picker-readout { display: none !important; }
   /* A printed report is a document, never a form: no action buttons, tabs,
      form fields or map overlays may appear on paper. This covers every print
@@ -1128,7 +1131,9 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
   .exec-toggle { display: none !important; }
   .exec-card { break-inside: auto; }
   .exec-card.open { break-inside: avoid; }
+  .exec-outcomes { break-after: avoid; }
   .doc-sec { break-inside: auto; }
+  .doc-sec-title { break-after: avoid; }
   .doc-toc { display: none !important; }
 }
 
@@ -1216,7 +1221,10 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
 .rec::before { content: '→'; position: absolute; left: 0; color: var(--accent); }
 .rec-high { font-weight: 600; }
 @media print {
+  .analytics { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   .analytics .kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .analytics-charts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .chart-card, .eval-card, .finding, .rec { break-inside: avoid; }
+  .chart-title, .eval-head, .section-title { break-after: avoid; }
+  .bar-track { background: #eef2ff !important; }
 }
