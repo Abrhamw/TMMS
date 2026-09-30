@@ -482,6 +482,14 @@ function FindingsRows({ findings }) {
             <span className="pill" style={{ background: '#f1f5f9', color: sevColor[f.severity], fontWeight: 700 }}>{f.severity}</span>
           </div>
           {f.detail && <p className="muted" style={{ fontSize: 12, margin: '4px 0 0' }}>{f.detail}</p>}
+          {(f.asset_name || f.tower_code || f.equipment_name || f.checklist_item_instruction) && (
+            <div className="finding-links">
+              {f.asset_name && <span className="patch-chip">Asset: {f.asset_name}</span>}
+              {f.tower_code && <span className="patch-chip">Tower: {f.tower_code}</span>}
+              {f.equipment_name && <span className="patch-chip">Equipment: {f.equipment_name}</span>}
+              {f.checklist_item_instruction && <span className="patch-chip" title={f.checklist_item_instruction}>Item: {f.checklist_item_instruction}</span>}
+            </div>
+          )}
           <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{f.created_by_name || '—'} · {fmtDateTime(f.captured_at)}{f.lat != null ? ` · ${Number(f.lat).toFixed(5)}, ${Number(f.lng).toFixed(5)}` : ''}</div>
         </div>
       ))}
