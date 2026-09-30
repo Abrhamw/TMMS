@@ -290,6 +290,9 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
 .line-progress-legend { display: inline-flex; align-items: center; gap: 5px; }
 .line-progress-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-left: 8px; }
 .line-progress-legend i:first-child { margin-left: 0; }
+.finding-links { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.patch-chip { display: inline-block; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; background: #f1f5f9; color: var(--muted); font-size: 11px; font-weight: 600; text-decoration: none; }
+a.patch-chip:hover { border-color: var(--primary); color: var(--primary); }
 
 /* Misc */
 .muted { color: var(--muted); }

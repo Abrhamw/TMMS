@@ -40,9 +40,15 @@ router.post('/tasks/:id/findings', (req, res) => {
   const title = String(req.body.title || '').trim();
   if (!title) return res.status(400).json({ error: 'Finding title is required' });
   const now = new Date().toISOString();
+  // Cross-link the finding to the infrastructure/equipment/item it concerns.
+  // The task's own target is the default so a finding is never orphaned.
+  const assetId = req.body.asset_id != null && req.body.asset_id !== '' ? Number(req.body.asset_id) : (t.asset_id || null);
+  const towerId = req.body.tower_id != null && req.body.tower_id !== '' ? Number(req.body.tower_id) : (t.tower_id || null);
+  const equipmentName = req.body.equipment_name ? String(req.body.equipment_name).trim().slice(0, 120) : null;
+  const checklistItemId = req.body.checklist_item_id != null && req.body.checklist_item_id !== '' ? Number(req.body.checklist_item_id) : null;
   const { lastInsertRowid: id } = db.prepare(
-    `INSERT INTO task_finding (task_id, execution_id, crew_id, created_by, title, detail, severity, lat, lng, captured_at, revision)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+    `INSERT INTO task_finding (task_id, execution_id, crew_id, created_by, title, detail, severity, lat, lng, captured_at, revision, asset_id, tower_id, equipment_name, checklist_item_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`
   ).run(
     t.id,
     req.body.execution_id || null,
@@ -53,7 +59,11 @@ router.post('/tasks/:id/findings', (req, res) => {
     ['INFO', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(req.body.severity) ? req.body.severity : 'INFO',
     req.body.lat ?? null,
     req.body.lng ?? null,
-    req.body.captured_at || now
+    req.body.captured_at || now,
+    assetId,
+    towerId,
+    equipmentName,
+    checklistItemId
   );
   const f = db.prepare('SELECT * FROM task_finding WHERE id = ?').get(id);
   res.status(201).json({ ...f, created_by_name: personName(f.created_by) });

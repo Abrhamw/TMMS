@@ -785,7 +785,7 @@ export default function TaskDetail() {
           <div className="card-head">
             <h3 className="card-title">Findings <span className="muted">({(task.findings || []).length})</span></h3>
             {canAmend && ['COMPLETED', 'CANCELLED', 'FAILED'].includes(t.status) === false && (
-              <button className="btn btn-sm btn-primary" onClick={() => setFindingForm({ severity: 'MEDIUM', title: '', detail: '' })}>+ Record finding</button>
+              <button className="btn btn-sm btn-primary" onClick={() => setFindingForm({ severity: 'MEDIUM', title: '', detail: '', equipment_name: '' })}>+ Record finding</button>
             )}
           </div>
           {(task.findings || []).length === 0 && <div className="muted" style={{ fontSize: 13, marginTop: 8 }}>No ad-hoc findings recorded for this task.</div>}
@@ -796,7 +796,18 @@ export default function TaskDetail() {
                 <span className={'pill' + (f.severity === 'CRITICAL' || f.severity === 'HIGH' ? ' bad' : f.severity === 'MEDIUM' ? ' warn' : '')} style={{ background: '#f1f5f9', fontWeight: 700 }}>{f.severity}</span>
               </div>
               {f.detail && <p className="muted" style={{ fontSize: 12, margin: '4px 0 0' }}>{f.detail}</p>}
+              <div className="finding-links">
+                <span className="patch-chip">Task {task.task_number}</span>
+                {f.asset_name && <a className="patch-chip" href={`/assets?asset=${f.asset_id}`}>Asset: {f.asset_name}</a>}
+                {f.tower_code && <span className="patch-chip">Tower: {f.tower_code}</span>}
+                {f.equipment_name && <span className="patch-chip">Equipment: {f.equipment_name}</span>}
+                {f.checklist_item_instruction && <span className="patch-chip" title={f.checklist_item_instruction}>Item: {f.checklist_item_instruction}</span>}
+              </div>
               <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{f.created_by_name || '—'} · {fmtDateTime(f.captured_at)}</div>
+              <details className="mt" style={{ fontSize: 12 }}>
+                <summary className="muted" style={{ cursor: 'pointer' }}>Comments on this finding</summary>
+                <div className="mt"><Comments entityType="finding" entityId={f.id} title="" placeholder="Comment on this finding…" /></div>
+              </details>
             </div>
           ))}
         </div>
@@ -832,6 +843,14 @@ export default function TaskDetail() {
                 {['INFO', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].map((s) => <option key={s}>{s}</option>)}
               </SearchSelect></div>
             <div className="field full"><label>Detail</label><textarea value={findingForm.detail || ''} onChange={(e) => setFindingForm({ ...findingForm, detail: e.target.value })} /></div>
+            <div className="field full"><label>Related equipment (optional)</label>
+              <SearchSelect value={findingForm.equipment_name || ''} onChange={(e) => setFindingForm({ ...findingForm, equipment_name: e.target.value })}>
+                <option value="">— none —</option>
+                {(task.readiness?.equipment_checks || []).map((item) => <option key={item.equipment} value={item.equipment}>{item.equipment}</option>)}
+                {findingForm.equipment_name && !(task.readiness?.equipment_checks || []).some((i) => i.equipment === findingForm.equipment_name) && (
+                  <option value={findingForm.equipment_name}>{findingForm.equipment_name}</option>
+                )}
+              </SearchSelect></div>
           </div>
         </Modal>
       )}

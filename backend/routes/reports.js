@@ -51,8 +51,14 @@ function findingsForTask(taskId) {
   return db.prepare(
     `SELECT tf.id, tf.task_id, tf.execution_id, tf.crew_id, tf.created_by, tf.title, tf.detail,
             tf.severity, tf.lat, tf.lng, tf.captured_at, tf.revision,
-            p.first_name || ' ' || p.last_name AS created_by_name
-     FROM task_finding tf LEFT JOIN person p ON p.id = tf.created_by
+            tf.asset_id, tf.tower_id, tf.equipment_name, tf.checklist_item_id,
+            p.first_name || ' ' || p.last_name AS created_by_name,
+            a.name AS asset_name, tw.tower_id AS tower_code, ci.instruction AS checklist_item_instruction
+     FROM task_finding tf
+     LEFT JOIN person p ON p.id = tf.created_by
+     LEFT JOIN asset a ON a.id = tf.asset_id
+     LEFT JOIN tower tw ON tw.id = tf.tower_id
+     LEFT JOIN checklist_item ci ON ci.id = tf.checklist_item_id
      WHERE tf.task_id = ? ORDER BY tf.captured_at DESC`
   ).all(taskId);
 }

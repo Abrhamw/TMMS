@@ -1291,7 +1291,24 @@ router.get('/mailbox/:taskId', (req, res) => {
       link: `/tasks/${task.id}`,
     };
   });
-  const timeline = [...comments, ...events].sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
+  const findings = db.prepare(
+    `SELECT tf.id, tf.title, tf.detail, tf.severity, tf.captured_at, tf.equipment_name, tf.asset_id, tf.tower_id,
+            p.first_name, p.last_name
+       FROM task_finding tf LEFT JOIN person p ON p.id = tf.created_by
+      WHERE tf.task_id = ? ORDER BY tf.captured_at, tf.id`
+  ).all(taskId).map((row) => ({
+    id: `finding-${row.id}`,
+    kind: 'FINDING',
+    at: row.captured_at,
+    actor: [row.first_name, row.last_name].filter(Boolean).join(' ') || 'Field crew',
+    severity: row.severity,
+    equipment_name: row.equipment_name,
+    body: `${row.severity} finding: ${row.title}${row.detail ? ` — ${row.detail}` : ''}`,
+    task_id: task.id,
+    task_number: task.task_number,
+    link: `/tasks/${task.id}`,
+  }));
+  const timeline = [...comments, ...findings, ...events].sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
   res.json({ task: threadSummary(task, req.user), timeline });
 });
 

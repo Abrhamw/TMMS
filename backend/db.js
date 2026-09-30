@@ -819,6 +819,12 @@ function initSchema() {
   // Comments can target name-keyed entities (equipment) that have no numeric id;
   // those rows carry the name in entity_ref with entity_id pinned to 0.
   migrate('comment', 'entity_ref', 'ALTER TABLE comment ADD COLUMN entity_ref TEXT');
+  // Findings are cross-linked to the infrastructure/equipment/item they concern
+  // so a task's findings are traceable beyond the task boundary.
+  migrate('task_finding', 'asset_id', 'ALTER TABLE task_finding ADD COLUMN asset_id INTEGER REFERENCES asset(id)');
+  migrate('task_finding', 'tower_id', 'ALTER TABLE task_finding ADD COLUMN tower_id INTEGER REFERENCES tower(id)');
+  migrate('task_finding', 'equipment_name', 'ALTER TABLE task_finding ADD COLUMN equipment_name TEXT');
+  migrate('task_finding', 'checklist_item_id', 'ALTER TABLE task_finding ADD COLUMN checklist_item_id INTEGER');
   migrate('message_recipient', 'delivered_at', 'ALTER TABLE message_recipient ADD COLUMN delivered_at TEXT');
   migrate('message_recipient', 'acknowledged_at', 'ALTER TABLE message_recipient ADD COLUMN acknowledged_at TEXT');
   // Everything already sent predates delivery tracking: treat a recipient as
