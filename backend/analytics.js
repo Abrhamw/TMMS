@@ -279,6 +279,7 @@ function complianceAudit(a, d) {
     { label: 'GPS pass rate', value: gps, tone: gpsNum == null ? undefined : gpsNum >= T.gpsTarget ? 'ok' : gpsNum >= T.gpsFloor ? 'warn' : 'bad' },
     { label: 'Expired certs', value: d.expired_certs ?? 0, sub: `of ${d.total_certs ?? 0}`, tone: d.expired_certs ? 'bad' : 'ok' },
     { label: 'Missed equipment', value: d.missed_equipment_total ?? 0, tone: d.missed_equipment_total ? 'warn' : 'ok' },
+    { label: 'Undated assets', value: d.missed_equipment_no_date ?? 0, sub: 'no schedule set', tone: d.missed_equipment_no_date ? 'warn' : 'ok' },
   ];
   if ((d.region_cert_status || []).length) {
     a.bars.push({ title: 'Expired certifications by region', items: d.region_cert_status.map((r) => ({ label: r.region, value: Number(r.expired) || 0, sub: `${r.total} total` })) });
@@ -297,8 +298,10 @@ function complianceAudit(a, d) {
   if (gpsNum != null && gpsNum < T.gpsFloor) ev.findings.push(finding('high', `GPS validation pass rate is only ${gps}.`));
   if (d.expired_certs) ev.findings.push(finding('critical', `${d.expired_certs} certification(s) have expired, creating a compliance exposure.`));
   if (d.missed_equipment_total) ev.findings.push(finding('high', `${d.missed_equipment_total} asset/schedule maintenance item(s) are overdue.`));
-  if (compNum != null && compNum >= T.checklistTarget && !d.expired_certs && !d.missed_equipment_total) ev.findings.push(finding('ok', 'Compliance indicators are within acceptable limits.'));
+  if (d.missed_equipment_no_date) ev.findings.push(finding('medium', `${d.missed_equipment_no_date} in-service asset(s) have no maintenance date set — the preventive schedule is incomplete.`));
+  if (compNum != null && compNum >= T.checklistTarget && !d.expired_certs && !d.missed_equipment_total && !d.missed_equipment_no_date) ev.findings.push(finding('ok', 'Compliance indicators are within acceptable limits.'));
   ev.recommendations.push(recommendation('high', 'Clear the overdue maintenance and certification backlog before the next audit.'));
+  if (d.missed_equipment_no_date) ev.recommendations.push(recommendation('medium', 'Assign next-maintenance dates so every in-service asset carries a schedule.'));
   ev.recommendations.push(recommendation('medium', 'Enforce the checklist and GPS capture steps at submission to protect the compliance rate.'));
   a.evaluation = ev;
   return a;
