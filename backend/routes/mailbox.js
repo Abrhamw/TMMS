@@ -1007,15 +1007,23 @@ router.get('/mailbox', (req, res) => {
   const messages = messagesFor(user, tasks);
   const unreadMessages = messages.filter((message) => message.unread);
   const counts = mailCounts(user);
+  // Badge totals are computed here from the very arrays the folders render, so
+  // a folder's count can never disagree with the number of rows it lists.
+  const reportCount = messages.filter((message) => message.kind === 'REPORT').length;
   const firstPage = (folder) => queryMailFolder(user, { folder, pageSize: 50 }).rows;
   res.json({
     inbox: inbox.map((task) => threadSummary(task, user)),
     sent: sent.map((task) => threadSummary(task, user)),
     history: history.map((task) => threadSummary(task, user)),
     message_count: messages.length,
+    report_count: reportCount,
+    task_inbox_count: inbox.length,
+    history_count: history.length,
     messages,
     unread_messages: unreadMessages,
-    unread_count: unreadMessages.length,
+    // The Unread folder is the activity stream plus unread directed mail, so its
+    // badge counts both (matching the rows folderRows('unread') renders).
+    unread_count: unreadMessages.length + counts.mailinbox_unread,
     mail_inbox: firstPage('mailinbox'),
     mail_outbox: firstPage('outbox'),
     mail_sent: firstPage('mailsent'),
