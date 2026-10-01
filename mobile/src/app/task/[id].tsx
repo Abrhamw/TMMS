@@ -143,6 +143,12 @@ export default function TaskDetailScreen() {
       <Section title="Capture">
         <Pressable
           style={styles.action}
+          onPress={() => router.push({ pathname: '/photo/[id]', params: { id: String(detail.id) } })}
+        >
+          <Text style={styles.actionText}>Take a photo</Text>
+        </Pressable>
+        <Pressable
+          style={styles.action}
           onPress={() => router.push({ pathname: '/finding/[id]', params: { id: String(detail.id) } })}
         >
           <Text style={styles.actionText}>Log a finding</Text>

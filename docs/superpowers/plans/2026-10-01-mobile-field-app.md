@@ -216,15 +216,15 @@ uploaded; attachments attach to tasks/findings.
 - Modify: `mobile/src/db/outbox.ts`, `src/sync/engine.ts`
 - Test: `mobile/src/capture/**/*.test.ts`
 
-- [ ] Task 4.1: Image picker/capture UI writing to app storage; `attachment`
+- [x] Task 4.1: Image picker/capture UI writing to app storage; `attachment`
   outbox items upload via multipart then resolve to `attachment_id`.
-- [ ] Task 4.2: GPS point capture with the web recorder thresholds (min move,
+- [x] Task 4.2: GPS point capture with the web recorder thresholds (min move,
   periodic flush); queue to `POST /api/gps-validations/bulk`.
-- [ ] Test: attachment outbox item is only marked done after its upload 2xx; a
+- [x] Test: attachment outbox item is only marked done after its upload 2xx; a
   queued finding referencing the photo is sent after the upload.
 - [ ] Manual device checklist: camera permission, offline capture, upload on
   reconnect.
-- [ ] Commit.
+- [x] Commit.
 
 ---
 
