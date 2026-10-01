@@ -52,8 +52,23 @@ describe('sync engine', () => {
     expect(await listOutbox(driver, ['pending', 'inflight'])).toHaveLength(0);
   });
 
-  it('marks a definitive 4xx failure and keeps flushing', async () => {
-    await enqueue(driver, { type: 'finding', entity: 'task:1', payload: { task_id: 1, title: 'Bad' } });
+  it('resumes items left inflight by a crash mid-flush', async () => {
+    const item = await enqueue(driver, {
+      type: 'comment',
+      entity: 'task:2',
+      payload: { entity_type: 'TASK', entity_id: 2, body: 'left behind' },
+    });
+    await driver.run("UPDATE outbox SET status = 'inflight' WHERE id = ?", [item.id]);
+    const { client, calls } = fakeClient(async () => ({ id: 10 }));
+
+    const result = await flush({ driver, client });
+
+    expect(result.sent).toBe(1);
+    expect(calls).toHaveLength(1);
+    expect(await listOutbox(driver, ['pending', 'inflight'])).toHaveLength(0);
+  });
+
+  it('marks a definitive 4xx failure and keeps flushing', async () => {    await enqueue(driver, { type: 'finding', entity: 'task:1', payload: { task_id: 1, title: 'Bad' } });
     await enqueue(driver, { type: 'comment', entity: 'task:1', payload: { entity_type: 'TASK', entity_id: 1, body: 'ok' } });
     const events: FlushEvent[] = [];
     const { client } = fakeClient(async (path) => {

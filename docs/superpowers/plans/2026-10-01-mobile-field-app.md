@@ -245,7 +245,7 @@ inspection progress; live breadcrumb tracing; offline tiles.
 - [x] Task 5.3: Live tracing screen — start/stop, distance, breadcrumb; queue
   points to the outbox.
 - [ ] Task 5.4: Offline tile cache for the assigned line bbox.
-- [ ] Verify: typecheck/export; `eas.json` profiles (`development`,
+- [x] Verify: typecheck/export; `eas.json` profiles (`development`,
   `preview`, `production`) valid.
 - [ ] Manual device checklist: tiles render, offline tiles present, GPS trace
   records and syncs.
@@ -278,14 +278,14 @@ acknowledge, cached offline with queued sends.
 **Deliverable:** Robust backoff and conflict surfacing, connectivity edge
 cases resolved, device test pass, EAS build configured.
 
-- [ ] Task 7.1: Sync screen shows pending/failed counts, per-item retry and
+- [x] Task 7.1: Sync screen shows pending/failed counts, per-item retry and
   "Sync now"; failed items are inspectable.
-- [ ] Task 7.2: Handle connectivity flapping, app kill mid-flush, and a
+- [x] Task 7.2: Handle connectivity flapping, app kill mid-flush, and a
   submit rejected as already-submitted (drop locally, refresh status).
 - [ ] Task 7.3: Full device test pass against the manual checklist.
-- [ ] Task 7.4: Finalize EAS build profiles and document the build commands
+- [x] Task 7.4: Finalize EAS build profiles and document the build commands
   (`eas build -p android --profile preview`, iOS via EAS on macOS only).
-- [ ] Verify: all Vitest green; `tsc --noEmit`; `expo export` for both
+- [x] Verify: all Vitest green; `tsc --noEmit`; `expo export` for both
   platforms; backend regression suite green.
 - [ ] Commit.
 

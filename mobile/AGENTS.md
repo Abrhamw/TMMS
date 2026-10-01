@@ -39,3 +39,22 @@ Docs: https://docs.expo.dev/eas/index.md
 - If `ios/` and `android/` directories do not exist, they are generated (Continuous Native Generation). Never create or edit them by hand — configure native behavior in `app.json` and config plugins.
 - Expo Go only includes its bundled native modules. After adding a library with native code, the app needs a development build: `npx expo run:ios|android` locally, or `eas build --profile development`.
 - Prefer recommended Expo modules over third-party libraries, and check your available skills before adding dependencies. Docs: https://docs.expo.dev/versions/latest/index.md
+
+## Build commands
+
+This app needs a development build (not Expo Go) because it uses MapLibre native code.
+`eas.json` defines the `development`, `preview` and `production` profiles.
+
+```bash
+# Development client for a physical device
+npx eas-cli@latest build --profile development --platform android
+
+# Installable APK for testers
+npx eas-cli@latest build --profile preview --platform android
+
+# Store build
+npx eas-cli@latest build --profile production --platform all
+```
+
+iOS builds and `eas submit` require an Apple Developer account and must run through
+EAS (there is no macOS/Xcode in the standard dev container).
