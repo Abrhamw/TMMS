@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, list, get, insertRow, updateRow } = require('../util');
+const { db, list, get, insertRow, updateRow, byClientRef } = require('../util');
 const { haversine } = require('../geo');
 const { can, audit } = require('../auth');
 const { commandScope } = require('../authority');
@@ -103,6 +103,10 @@ router.post('/gps-validations/bulk', (req, res) => {
   const now = new Date().toISOString();
   const created = [];
   for (const b of records) {
+    if (b.client_ref) {
+      const existing = byClientRef('gps_validation', b.client_ref);
+      if (existing) { created.push(existing); continue; }
+    }
     const region = targetRegion(b.target_type, b.target_id);
     if (!region) return res.status(404).json({ error: 'Target not found' });
     if (!targetInScope(commandScope(req.user), b.target_type, b.target_id)) return res.status(403).json({ error: 'Forbidden: target is outside your command scope' });
@@ -116,6 +120,7 @@ router.post('/gps-validations/bulk', (req, res) => {
     });
     const id = insertRow('gps_validation', {
       ...b,
+      client_ref: b.client_ref || null,
       region_id: b.region_id || region,
       distance_m: Math.round(distance),
       tolerance_m: tolerance,

@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, insertRow, safeDelete } = require('../util');
+const { db, insertRow, safeDelete, byClientRef } = require('../util');
 const { can, audit, isGlobal } = require('../auth');
 const { taskVisible, commandScope } = require('../authority');
 
@@ -127,6 +127,11 @@ router.post('/comments', (req, res) => {
   if (req.user.role === 'VIEWER') return res.status(403).json({ error: 'Forbidden: viewers cannot post comments' });
   if (!entityExists(entity_type, entityId, ref)) return res.status(404).json({ error: 'Entity not found' });
   if (!canReadEntity(req, entity_type, entityId, ref)) return res.status(403).json({ error: 'Forbidden: no read access to this entity' });
+  const clientRef = req.body.client_ref ? String(req.body.client_ref) : null;
+  if (clientRef) {
+    const existing = byClientRef('comment', clientRef);
+    if (existing) return res.status(200).json(rowToComment(existing));
+  }
   const now = new Date().toISOString();
   const id = insertRow('comment', {
     entity_type,
@@ -136,6 +141,7 @@ router.post('/comments', (req, res) => {
     body: String(body).trim(),
     created_at: now,
     updated_at: now,
+    client_ref: clientRef,
   });
   audit(req.user, 'CREATE', 'comment', id, { entity_type, entity_id: NAME_ENTITIES.has(entity_type) ? null : entityId, entity_ref: ref });
   res.status(201).json(rowToComment(db.prepare('SELECT * FROM comment WHERE id = ?').get(id)));

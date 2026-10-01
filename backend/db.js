@@ -841,6 +841,15 @@ function initSchema() {
   migrate('task_finding', 'tower_id', 'ALTER TABLE task_finding ADD COLUMN tower_id INTEGER REFERENCES tower(id)');
   migrate('task_finding', 'equipment_name', 'ALTER TABLE task_finding ADD COLUMN equipment_name TEXT');
   migrate('task_finding', 'checklist_item_id', 'ALTER TABLE task_finding ADD COLUMN checklist_item_id INTEGER');
+  // Offline write idempotency: the mobile app tags each queued write with a
+  // client_ref, so a retry after an ambiguous network drop cannot duplicate it.
+  // Web callers never send it and behave exactly as before.
+  migrate('checklist_execution', 'client_ref', 'ALTER TABLE checklist_execution ADD COLUMN client_ref TEXT');
+  migrate('task_finding', 'client_ref', 'ALTER TABLE task_finding ADD COLUMN client_ref TEXT');
+  migrate('attachment', 'client_ref', 'ALTER TABLE attachment ADD COLUMN client_ref TEXT');
+  migrate('gps_validation', 'client_ref', 'ALTER TABLE gps_validation ADD COLUMN client_ref TEXT');
+  migrate('comment', 'client_ref', 'ALTER TABLE comment ADD COLUMN client_ref TEXT');
+  migrate('message', 'client_ref', 'ALTER TABLE message ADD COLUMN client_ref TEXT');
   migrate('message_recipient', 'delivered_at', 'ALTER TABLE message_recipient ADD COLUMN delivered_at TEXT');
   migrate('message_recipient', 'acknowledged_at', 'ALTER TABLE message_recipient ADD COLUMN acknowledged_at TEXT');
   // Everything already sent predates delivery tracking: treat a recipient as
@@ -869,6 +878,12 @@ function initSchema() {
   CREATE INDEX IF NOT EXISTS idx_geofence_target ON geofence(target_id);
   CREATE INDEX IF NOT EXISTS idx_message_parent ON message(parent_id);
   CREATE INDEX IF NOT EXISTS idx_message_forward_of ON message(forward_of_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_checklist_execution_client_ref ON checklist_execution(client_ref) WHERE client_ref IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_task_finding_client_ref ON task_finding(client_ref) WHERE client_ref IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_attachment_client_ref ON attachment(client_ref) WHERE client_ref IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_gps_validation_client_ref ON gps_validation(client_ref) WHERE client_ref IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_comment_client_ref ON comment(client_ref) WHERE client_ref IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_message_client_ref ON message(client_ref) WHERE client_ref IS NOT NULL;
   `);
 
   // Backfill the review queue for validations recorded before review tracking

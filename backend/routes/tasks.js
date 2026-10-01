@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, list, get, insertRow, updateRow, withTx, parseRow } = require('../util');
+const { db, list, get, insertRow, updateRow, withTx, parseRow, byClientRef } = require('../util');
 const { haversine } = require('../geo');
 const { evaluateViolation, flag } = require('../geofence');
 const { can, isGlobal, audit, isCrewUser, isOnCrew, scopeRows } = require('../auth');
@@ -1523,6 +1523,22 @@ router.post('/tasks/:id/checklist', (req, res) => {
   const items = db.prepare('SELECT * FROM checklist_item WHERE template_id = ? ORDER BY sequence').all(tpl.id);
   const now = new Date().toISOString();
 
+  const clientRef = req.body.client_ref ? String(req.body.client_ref) : null;
+  if (clientRef) {
+    const existing = byClientRef('checklist_execution', clientRef);
+    if (existing) {
+      return res.status(200).json({
+        execution_id: existing.id,
+        result: existing.result,
+        advanced: false,
+        templates_done: null,
+        gps_validations_created: 0,
+        execution: existing,
+        already_submitted: true,
+      });
+    }
+  }
+
   // Only a lead / supervisor can submit the run and move the task forward — a
   // crew-member capture (who may now start the task) saves the execution
   // readings/GPS/photos but leaves the task in progress for the lead to submit.
@@ -1553,6 +1569,7 @@ router.post('/tasks/:id/checklist', (req, res) => {
         gps_lat: req.body.finish_gps?.lat ?? null,
         gps_lng: req.body.finish_gps?.lng ?? null,
         gps_accuracy_m: req.body.finish_gps?.accuracy_m ?? null,
+        client_ref: clientRef,
       });
 
       const submitted = (req.body.items || []).reduce((m, i) => { m[i.template_item_id || i.sequence] = i; return m; }, {});

@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { db } = require('../db');
-const { get } = require('../util');
+const { get, byClientRef } = require('../util');
 const { can, isCrewUser, isGlobal, isOnCrew, audit } = require('../auth');
 const { taskVisible } = require('../authority');
 
@@ -39,6 +39,11 @@ router.post('/tasks/:id/findings', (req, res) => {
   }
   const title = String(req.body.title || '').trim();
   if (!title) return res.status(400).json({ error: 'Finding title is required' });
+  const clientRef = req.body.client_ref ? String(req.body.client_ref) : null;
+  if (clientRef) {
+    const existing = byClientRef('task_finding', clientRef);
+    if (existing) return res.status(200).json({ ...existing, created_by_name: personName(existing.created_by) });
+  }
   const now = new Date().toISOString();
   // Cross-link the finding to the infrastructure/equipment/item it concerns.
   // The task's own target is the default so a finding is never orphaned.
@@ -47,8 +52,8 @@ router.post('/tasks/:id/findings', (req, res) => {
   const equipmentName = req.body.equipment_name ? String(req.body.equipment_name).trim().slice(0, 120) : null;
   const checklistItemId = req.body.checklist_item_id != null && req.body.checklist_item_id !== '' ? Number(req.body.checklist_item_id) : null;
   const { lastInsertRowid: id } = db.prepare(
-    `INSERT INTO task_finding (task_id, execution_id, crew_id, created_by, title, detail, severity, lat, lng, captured_at, revision, asset_id, tower_id, equipment_name, checklist_item_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`
+    `INSERT INTO task_finding (task_id, execution_id, crew_id, created_by, title, detail, severity, lat, lng, captured_at, revision, asset_id, tower_id, equipment_name, checklist_item_id, client_ref)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`
   ).run(
     t.id,
     req.body.execution_id || null,
@@ -63,7 +68,8 @@ router.post('/tasks/:id/findings', (req, res) => {
     assetId,
     towerId,
     equipmentName,
-    checklistItemId
+    checklistItemId,
+    clientRef
   );
   const f = db.prepare('SELECT * FROM task_finding WHERE id = ?').get(id);
   res.status(201).json({ ...f, created_by_name: personName(f.created_by) });
@@ -76,6 +82,20 @@ router.post('/tasks/:id/attachments', (req, res) => {
   if (!t) return;
   if (isCrewUser(req.user) && !isOnCrew(req.user, t.crew_id)) {
     return res.status(403).json({ error: 'Forbidden: not your assigned task' });
+  }
+  const clientRef = req.body.client_ref ? String(req.body.client_ref) : null;
+  if (clientRef) {
+    const existing = byClientRef('attachment', clientRef);
+    if (existing) {
+      return res.status(200).json({
+        id: existing.id, task_id: existing.task_id, execution_id: existing.execution_id,
+        checklist_item_id: existing.checklist_item_id, created_by: existing.created_by,
+        kind: existing.kind, file_name: existing.file_name, mime: existing.mime,
+        size_bytes: existing.size_bytes, lat: existing.lat, lng: existing.lng,
+        accuracy_m: existing.accuracy_m, captured_at: existing.captured_at,
+        note: existing.note, created_by_name: personName(existing.created_by),
+      });
+    }
   }
   const data = req.body.data || req.body.base64;
   if (!data || typeof data !== 'string') return res.status(400).json({ error: 'No base64 data supplied' });
@@ -95,8 +115,8 @@ router.post('/tasks/:id/attachments', (req, res) => {
 
   const now = new Date().toISOString();
   const { lastInsertRowid: id } = db.prepare(
-    `INSERT INTO attachment (task_id, execution_id, checklist_item_id, created_by, kind, file_name, stored_name, mime, size_bytes, lat, lng, accuracy_m, captured_at, note)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO attachment (task_id, execution_id, checklist_item_id, created_by, kind, file_name, stored_name, mime, size_bytes, lat, lng, accuracy_m, captured_at, note, client_ref)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     t.id,
     req.body.execution_id || null,
@@ -111,7 +131,8 @@ router.post('/tasks/:id/attachments', (req, res) => {
     req.body.lng ?? null,
     req.body.accuracy_m ?? null,
     req.body.captured_at || now,
-    req.body.note || null
+    req.body.note || null,
+    clientRef
   );
   const a = db.prepare('SELECT id, task_id, execution_id, checklist_item_id, created_by, kind, file_name, mime, size_bytes, lat, lng, accuracy_m, captured_at, note FROM attachment WHERE id = ?').get(id);
   res.status(201).json({ ...a, created_by_name: personName(a.created_by) });

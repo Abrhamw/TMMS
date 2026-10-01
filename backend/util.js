@@ -100,6 +100,13 @@ function safeDelete(table, id) {
   return Number(res.changes) > 0;
 }
 
+// Offline writes carry an optional client_ref; a retried request must return
+// the row the first attempt created instead of inserting a duplicate.
+function byClientRef(table, ref) {
+  if (!ref) return null;
+  return prep(`SELECT * FROM ${table} WHERE client_ref = ?`).get(String(ref));
+}
+
 // node:sqlite's DatabaseSync has no db.transaction() helper, so run a unit of
 // work atomically with explicit BEGIN/COMMIT/ROLLBACK. Not reentrant: wrap only
 // the outermost unit of work and never call it from inside another withTx.
@@ -123,4 +130,4 @@ function nextCode(prefix, table, col, pad = 3) {
   return `${prefix}-${String(n).padStart(pad, '0')}`;
 }
 
-module.exports = { db, prep, parseRow, list, get, insertRow, updateRow, safeDelete, withTx, nextCode };
+module.exports = { db, prep, parseRow, list, get, insertRow, updateRow, safeDelete, byClientRef, withTx, nextCode };

@@ -2,7 +2,7 @@ const express = require('express');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { db, get, insertRow, updateRow } = require('../util');
+const { db, get, insertRow, updateRow, byClientRef } = require('../util');
 const { isGlobal, isCrewUser, isOnCrew, hasPerm } = require('../auth');
 const { authorizedCrewIds, taskVisible, commandScope } = require('../authority');
 
@@ -730,6 +730,11 @@ router.post('/mailbox/messages', (req, res) => {
   if (status === 'SENT' && !subject) return res.status(400).json({ error: 'A subject is required to send a message' });
   const now = new Date().toISOString();
   const primary = rec.to[0];
+  const clientRef = body.client_ref ? String(body.client_ref) : null;
+  if (clientRef) {
+    const existing = byClientRef('message', clientRef);
+    if (existing) return res.status(200).json(mailRow(req.user, existing));
+  }
   const recipientUser = primary ? primaryUserForPerson(primary.person_id) : null;
   // A queued message is a scheduled one: without an explicit time it is due now
   // and the next sweep delivers it.
@@ -756,6 +761,7 @@ router.post('/mailbox/messages', (req, res) => {
     created_at: now,
     updated_at: now,
     sent_at: status === 'SENT' ? now : null,
+    client_ref: clientRef,
   });
   saveRecipients(id, rec.list);
   if (body.attachments !== undefined) saveAttachments(id, sanitizeAttachments(body.attachments));
