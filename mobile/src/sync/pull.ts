@@ -1,11 +1,14 @@
 import type { ApiClient } from '../api/client';
 import type { ChecklistResponse } from '../api/checklistTypes';
+import type { MailFolderPage, MailMessage } from '../api/mailTypes';
 import type { MapData } from '../api/mapTypes';
 import type { SqlDriver } from '../db/driver';
 import {
+  getMessage,
   setSyncMeta,
   upsertChecklist,
   upsertLines,
+  upsertMessages,
   upsertTaskDetail,
   upsertTasks,
   type ServerTask,
@@ -13,6 +16,7 @@ import {
 
 export const TASKS_SYNCED_KEY = 'tasks_synced_at';
 export const MAP_SYNCED_KEY = 'map_synced_at';
+export const MAIL_SYNCED_KEY = 'mail_synced_at';
 
 export async function pullTasks(driver: SqlDriver, client: ApiClient): Promise<number> {
   const tasks = await client.get<ServerTask[]>('/tasks');
@@ -49,4 +53,26 @@ export async function pullMapData(driver: SqlDriver, client: ApiClient): Promise
   await upsertLines(driver, data.lines ?? []);
   await setSyncMeta(driver, MAP_SYNCED_KEY, new Date().toISOString());
   return { lines: data.lines ?? [], towers: data.towers ?? [] };
+}
+
+export async function pullMailbox(
+  driver: SqlDriver,
+  client: ApiClient,
+  folder = 'mailinbox',
+): Promise<MailMessage[]> {
+  const page = await client.get<MailFolderPage>('/mailbox/folder', { folder, page_size: 100 });
+  await upsertMessages(driver, folder, page.rows ?? []);
+  await setSyncMeta(driver, MAIL_SYNCED_KEY, new Date().toISOString());
+  return page.rows ?? [];
+}
+
+export async function pullMessage(
+  driver: SqlDriver,
+  client: ApiClient,
+  id: number,
+): Promise<MailMessage> {
+  const message = await client.get<MailMessage>(`/mailbox/messages/${id}`);
+  const cached = await getMessage<MailMessage>(driver, id);
+  await upsertMessages(driver, 'detail', [cached ? { ...cached, ...message } : message]);
+  return message;
 }

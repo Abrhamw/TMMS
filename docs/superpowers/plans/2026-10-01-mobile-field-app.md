@@ -263,13 +263,13 @@ acknowledge, cached offline with queued sends.
 - Create: `mobile/app/mail/[id].tsx`
 - Modify: `mobile/src/sync/pull.ts`
 
-- [ ] Task 6.1: `GET /api/mailbox`, `/folder`, `/messages/:id` into cache;
+- [x] Task 6.1: `GET /api/mailbox`, `/folder`, `/messages/:id` into cache;
   three-pane-appropriate mobile list + reader.
-- [ ] Task 6.2: Compose/reply/forward/send via the outbox (`message`
+- [x] Task 6.2: Compose/reply/forward/send via the outbox (`message`
   `client_ref`); mark read and acknowledge.
-- [ ] Test: an offline-composed message is queued and sent exactly once.
+- [x] Test: an offline-composed message is queued and sent exactly once.
 - [ ] Manual: read a message offline after a prior sync; send on reconnect.
-- [ ] Commit.
+- [x] Commit.
 
 ---
 

@@ -263,3 +263,55 @@ export async function listLines(driver: SqlDriver): Promise<ServerLine[]> {
   }
   return out;
 }
+
+export async function upsertMessages(
+  driver: SqlDriver,
+  folder: string,
+  messages: Array<{ id: number }>,
+): Promise<number> {
+  const cachedAt = new Date().toISOString();
+  for (const message of messages) {
+    await driver.run(
+      `INSERT INTO message (server_id, folder, payload, cached_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(server_id) DO UPDATE SET
+         folder = CASE
+           WHEN excluded.folder = 'detail' AND message.folder IS NOT NULL AND message.folder <> 'detail'
+             THEN message.folder
+           ELSE excluded.folder
+         END,
+         payload = excluded.payload,
+         cached_at = excluded.cached_at`,
+      [message.id, folder, JSON.stringify(message), cachedAt],
+    );
+  }
+  return messages.length;
+}
+
+export async function listMessages<T = unknown>(driver: SqlDriver, folder: string): Promise<T[]> {
+  const rows = await driver.all<{ payload: string }>(
+    'SELECT payload FROM message WHERE folder = ? ORDER BY server_id DESC',
+    [folder],
+  );
+  const out: T[] = [];
+  for (const row of rows) {
+    try {
+      out.push(JSON.parse(row.payload) as T);
+    } catch {
+      /* skip a corrupt cache row */
+    }
+  }
+  return out;
+}
+
+export async function getMessage<T = unknown>(driver: SqlDriver, id: number): Promise<T | null> {
+  const row = await driver.first<{ payload: string }>(
+    'SELECT payload FROM message WHERE server_id = ?',
+    [id],
+  );
+  if (!row) return null;
+  try {
+    return JSON.parse(row.payload) as T;
+  } catch {
+    return null;
+  }
+}
