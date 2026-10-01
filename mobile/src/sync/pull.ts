@@ -1,6 +1,13 @@
 import type { ApiClient } from '../api/client';
+import type { ChecklistResponse } from '../api/checklistTypes';
 import type { SqlDriver } from '../db/driver';
-import { setSyncMeta, upsertTaskDetail, upsertTasks, type ServerTask } from '../db/queries';
+import {
+  setSyncMeta,
+  upsertChecklist,
+  upsertTaskDetail,
+  upsertTasks,
+  type ServerTask,
+} from '../db/queries';
 
 export const TASKS_SYNCED_KEY = 'tasks_synced_at';
 
@@ -20,4 +27,16 @@ export async function pullTaskDetail(
   await upsertTaskDetail(driver, id, detail);
   await upsertTasks(driver, [detail as unknown as ServerTask]);
   return detail;
+}
+
+export async function pullChecklist(
+  driver: SqlDriver,
+  client: ApiClient,
+  taskId: number,
+): Promise<ChecklistResponse> {
+  const data = await client.get<ChecklistResponse>(`/tasks/${taskId}/checklist`);
+  for (const template of data.templates ?? []) {
+    await upsertChecklist(driver, taskId, template.id, template);
+  }
+  return data;
 }

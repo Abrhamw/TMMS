@@ -1,8 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
+import { useAutoSync } from '../../sync/useAutoSync';
 import { colors } from '../../theme';
 
 export default function TabsLayout() {
+  useAutoSync();
+
   return (
     <Tabs
       screenOptions={{

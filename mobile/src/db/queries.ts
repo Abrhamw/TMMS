@@ -183,3 +183,35 @@ export async function countTasks(driver: SqlDriver): Promise<number> {
   const row = await driver.first<{ c: number }>('SELECT COUNT(*) c FROM task');
   return Number(row?.c ?? 0);
 }
+
+export async function upsertChecklist(
+  driver: SqlDriver,
+  taskId: number,
+  templateId: number,
+  payload: unknown,
+): Promise<void> {
+  await driver.run(
+    `INSERT INTO checklist (task_id, template_id, payload, cached_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(task_id, template_id) DO UPDATE SET payload = excluded.payload, cached_at = excluded.cached_at`,
+    [taskId, templateId, JSON.stringify(payload), new Date().toISOString()],
+  );
+}
+
+export async function getChecklist<T = unknown>(
+  driver: SqlDriver,
+  taskId: number,
+): Promise<Array<{ template_id: number; payload: T }>> {
+  const rows = await driver.all<{ template_id: number; payload: string }>(
+    'SELECT template_id, payload FROM checklist WHERE task_id = ? ORDER BY template_id',
+    [taskId],
+  );
+  const out: Array<{ template_id: number; payload: T }> = [];
+  for (const row of rows) {
+    try {
+      out.push({ template_id: row.template_id, payload: JSON.parse(row.payload) as T });
+    } catch {
+      /* skip a corrupt cache row */
+    }
+  }
+  return out;
+}

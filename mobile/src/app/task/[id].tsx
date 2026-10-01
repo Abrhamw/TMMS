@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../auth/context';
 import { getDb } from '../../db';
 import { getTaskDetail } from '../../db/queries';
@@ -8,7 +8,7 @@ import { pullTaskDetail } from '../../sync/pull';
 import { StatusChip } from '../../components/StatusChip';
 import { BulletList, Field, Section } from '../../components/Section';
 import { targetLabel, type TaskDetail } from '../../api/taskTypes';
-import { colors, spacing } from '../../theme';
+import { colors, radius, spacing } from '../../theme';
 
 function fmtDate(iso?: string | null): string | undefined {
   if (!iso) return undefined;
@@ -118,16 +118,41 @@ export default function TaskDetailScreen() {
           <Text style={styles.muted}>No checklist templates.</Text>
         ) : (
           templates.map((t) => (
-            <View key={t.id} style={styles.template}>
+            <Pressable
+              key={t.id}
+              style={styles.template}
+              onPress={() =>
+                router.push({
+                  pathname: '/checklist/[id]',
+                  params: { id: String(detail.id), templateId: String(t.id) },
+                })
+              }
+            >
               <Text style={styles.templateName}>{t.name ?? t.code ?? `Template ${t.id}`}</Text>
               <Text style={styles.templateMeta}>
                 {[t.code, t.estimated_minutes ? `${t.estimated_minutes} min` : null, t.is_mandatory ? 'Mandatory' : null]
                   .filter(Boolean)
                   .join('  ·  ')}
               </Text>
-            </View>
+              <Text style={styles.templateAction}>Open checklist ›</Text>
+            </Pressable>
           ))
         )}
+      </Section>
+
+      <Section title="Capture">
+        <Pressable
+          style={styles.action}
+          onPress={() => router.push({ pathname: '/finding/[id]', params: { id: String(detail.id) } })}
+        >
+          <Text style={styles.actionText}>Log a finding</Text>
+        </Pressable>
+        <Pressable
+          style={styles.action}
+          onPress={() => router.push({ pathname: '/comment/[id]', params: { id: String(detail.id) } })}
+        >
+          <Text style={styles.actionText}>Add a comment</Text>
+        </Pressable>
       </Section>
 
       <Section title="Activity">
@@ -150,7 +175,17 @@ const styles = StyleSheet.create({
   offline: { color: colors.warning, fontSize: 12, marginBottom: spacing.sm },
   body: { fontSize: 14, color: colors.text, lineHeight: 20 },
   subheading: { fontSize: 13, fontWeight: '600', color: colors.text, marginTop: spacing.sm, marginBottom: 2 },
-  template: { paddingVertical: spacing.xs },
+  template: { paddingVertical: spacing.xs, borderBottomWidth: 1, borderBottomColor: colors.border },
   templateName: { fontSize: 15, color: colors.text, fontWeight: '600' },
   templateMeta: { fontSize: 12, color: colors.muted, marginTop: 2 },
+  templateAction: { fontSize: 13, color: colors.primary, marginTop: 2, fontWeight: '600' },
+  action: {
+    paddingVertical: spacing.sm,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  actionText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
 });
