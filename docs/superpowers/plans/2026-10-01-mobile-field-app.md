@@ -172,37 +172,37 @@ backend dedupes `client_ref`.
 
 ### Task 3.1: Backend `client_ref` idempotency (backend repo)
 
-- [ ] Write the failing test in the existing regression style: POST a finding
+- [x] Write the failing test in the existing regression style: POST a finding
   with `client_ref=X` twice; assert one row and the same id both times.
-- [ ] Implement in `backend/db.js` via `migrate(...)`: add
+- [x] Implement in `backend/db.js` via `migrate(...)`: add
   `client_ref TEXT` to `task_finding`, `attachment`, `gps_validation`,
   `comment`, `message`; create a partial unique index per table on
   `client_ref WHERE client_ref IS NOT NULL`.
-- [ ] In each write route, when `client_ref` is present look up the existing
+- [x] In each write route, when `client_ref` is present look up the existing
   row first and return it; otherwise insert as today.
-- [ ] Run the regression suite (all existing checks green) plus the new test.
-- [ ] Verify: `node --check` on touched files; run the backend suite.
-- [ ] Commit (backend paths only).
+- [x] Run the regression suite (all existing checks green) plus the new test.
+- [x] Verify: `node --check` on touched files; run the backend suite.
+- [x] Commit (backend paths only).
 
 ### Task 3.2: Outbox
 
-- [ ] Test: `enqueue` then `list` is ordered by `created_at`; `done`/`fail`
+- [x] Test: `enqueue` then `list` is ordered by `created_at`; `done`/`fail`
   update status and attempts; items are grouped by entity.
-- [ ] Implement `src/db/outbox.ts`. Run the test. Commit.
+- [x] Implement `src/db/outbox.ts`. Run the test. Commit.
 
 ### Task 3.3: Sync engine
 
-- [ ] Test: with a stub client, the engine flushes per entity in order, stops
+- [x] Test: with a stub client, the engine flushes per entity in order, stops
   the entity's queue on failure, backs off, and never sends an item twice after
   a simulated duplicate response.
-- [ ] Implement `src/sync/engine.ts` (NetInfo trigger, foreground, timer;
+- [x] Implement `src/sync/engine.ts` (NetInfo trigger, foreground, timer;
   exponential backoff; status/`last_error` exposure).
-- [ ] Implement `app/task/[id]/checklist.tsx` (per-item inputs, Save draft,
+- [x] Implement `app/task/[id]/checklist.tsx` (per-item inputs, Save draft,
   resume prefill, Submit) enqueuing to the outbox, and finding/comment
   creation with cross-links.
-- [ ] Integration harness: run the engine against a temp SQLite and the live
+- [x] Integration harness: run the engine against a temp SQLite and the live
   backend; force a resend and assert no duplicate rows server-side.
-- [ ] Commit.
+- [x] Commit.
 
 ---
 
