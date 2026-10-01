@@ -850,6 +850,7 @@ function initSchema() {
   migrate('gps_validation', 'client_ref', 'ALTER TABLE gps_validation ADD COLUMN client_ref TEXT');
   migrate('comment', 'client_ref', 'ALTER TABLE comment ADD COLUMN client_ref TEXT');
   migrate('message', 'client_ref', 'ALTER TABLE message ADD COLUMN client_ref TEXT');
+  migrate('inspection_trace_point', 'client_ref', 'ALTER TABLE inspection_trace_point ADD COLUMN client_ref TEXT');
   migrate('message_recipient', 'delivered_at', 'ALTER TABLE message_recipient ADD COLUMN delivered_at TEXT');
   migrate('message_recipient', 'acknowledged_at', 'ALTER TABLE message_recipient ADD COLUMN acknowledged_at TEXT');
   // Everything already sent predates delivery tracking: treat a recipient as
@@ -884,6 +885,7 @@ function initSchema() {
   CREATE UNIQUE INDEX IF NOT EXISTS uq_gps_validation_client_ref ON gps_validation(client_ref) WHERE client_ref IS NOT NULL;
   CREATE UNIQUE INDEX IF NOT EXISTS uq_comment_client_ref ON comment(client_ref) WHERE client_ref IS NOT NULL;
   CREATE UNIQUE INDEX IF NOT EXISTS uq_message_client_ref ON message(client_ref) WHERE client_ref IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_inspection_trace_point_client_ref ON inspection_trace_point(client_ref) WHERE client_ref IS NOT NULL;
   `);
 
   // Backfill the review queue for validations recorded before review tracking

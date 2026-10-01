@@ -29,7 +29,10 @@ function validatePoints(points) {
       if (Number.isNaN(d.getTime())) throw new Error(`point ${n}: recorded_at must be an ISO date`);
       recorded_at = d.toISOString();
     }
-    return { lat, lng, accuracy_m, recorded_at };
+    // An offline client may tag each queued point so a retried batch cannot
+    // record the same ground position twice. Web callers omit it.
+    const client_ref = p.client_ref != null && p.client_ref !== '' ? String(p.client_ref).slice(0, 120) : null;
+    return { lat, lng, accuracy_m, recorded_at, client_ref };
   });
 }
 

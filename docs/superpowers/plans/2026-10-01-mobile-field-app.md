@@ -238,18 +238,18 @@ inspection progress; live breadcrumb tracing; offline tiles.
 - Modify: `mobile/app/(tabs)/map.tsx`, add `mobile/app/task/[id]/trace.tsx`
 - Create: `mobile/app.json` dev-client config, `mobile/eas.json`
 
-- [ ] Task 5.1: Add `@maplibre/maplibre-react-native`, configure the dev
+- [x] Task 5.1: Add `@maplibre/maplibre-react-native`, configure the dev
   build (`expo-dev-client`), render OSM raster tiles.
-- [ ] Task 5.2: Overlays from `GET /api/lines/:id/route`, tower points and
+- [x] Task 5.2: Overlays from `GET /api/lines/:id/route`, tower points and
   `inspection-progress`; color segments like the web workspace.
-- [ ] Task 5.3: Live tracing screen — start/stop, distance, breadcrumb; queue
+- [x] Task 5.3: Live tracing screen — start/stop, distance, breadcrumb; queue
   points to the outbox.
 - [ ] Task 5.4: Offline tile cache for the assigned line bbox.
 - [ ] Verify: typecheck/export; `eas.json` profiles (`development`,
   `preview`, `production`) valid.
 - [ ] Manual device checklist: tiles render, offline tiles present, GPS trace
   records and syncs.
-- [ ] Commit.
+- [x] Commit.
 
 ---
 

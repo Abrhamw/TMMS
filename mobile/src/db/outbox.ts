@@ -8,7 +8,8 @@ export type OutboxType =
   | 'gps'
   | 'comment'
   | 'mail'
-  | 'task_state';
+  | 'task_state'
+  | 'trace';
 
 export type OutboxStatus = 'pending' | 'inflight' | 'failed' | 'done';
 

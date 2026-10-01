@@ -215,3 +215,51 @@ export async function getChecklist<T = unknown>(
   }
   return out;
 }
+
+export interface ServerLine {
+  id: number;
+  name?: string | null;
+  line_id?: string | null;
+  voltage_kv?: number | null;
+  color?: string | null;
+  route?: Array<[number, number]> | null;
+  region_id?: number | null;
+}
+
+export async function upsertLines(driver: SqlDriver, lines: ServerLine[]): Promise<number> {
+  const cachedAt = new Date().toISOString();
+  for (const line of lines) {
+    await driver.run(
+      `INSERT INTO line (server_id, line_code, name, route_json, payload, cached_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(server_id) DO UPDATE SET
+         line_code = excluded.line_code,
+         name = excluded.name,
+         route_json = excluded.route_json,
+         payload = excluded.payload,
+         cached_at = excluded.cached_at`,
+      [
+        line.id,
+        line.line_id ?? null,
+        line.name ?? null,
+        JSON.stringify(line.route ?? null),
+        JSON.stringify(line),
+        cachedAt,
+      ],
+    );
+  }
+  return lines.length;
+}
+
+export async function listLines(driver: SqlDriver): Promise<ServerLine[]> {
+  const rows = await driver.all<{ payload: string }>('SELECT payload FROM line ORDER BY server_id');
+  const out: ServerLine[] = [];
+  for (const row of rows) {
+    try {
+      out.push(JSON.parse(row.payload) as ServerLine);
+    } catch {
+      /* skip a corrupt cache row */
+    }
+  }
+  return out;
+}

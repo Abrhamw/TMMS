@@ -71,6 +71,14 @@ async function sendItem(deps: FlushDeps, item: OutboxItem): Promise<void> {
     case 'mail':
       await client.post('/mailbox/messages', { ...payload, client_ref: item.client_ref });
       return;
+    case 'trace': {
+      const taskId = Number(payload.task_id);
+      await client.post(`/tasks/${taskId}/trace`, {
+        points: payload.points,
+        crew_id: payload.crew_id ?? undefined,
+      });
+      return;
+    }
     case 'task_state': {
       const taskId = Number(payload.task_id);
       await client.post(`/tasks/${taskId}/state`, payload);

@@ -147,6 +147,14 @@ export default function TaskDetailScreen() {
         >
           <Text style={styles.actionText}>Take a photo</Text>
         </Pressable>
+        {detail.line?.id ? (
+          <Pressable
+            style={styles.action}
+            onPress={() => router.push({ pathname: '/trace/[id]', params: { id: String(detail.id) } })}
+          >
+            <Text style={styles.actionText}>Trace the line</Text>
+          </Pressable>
+        ) : null}
         <Pressable
           style={styles.action}
           onPress={() => router.push({ pathname: '/finding/[id]', params: { id: String(detail.id) } })}

@@ -1870,6 +1870,9 @@ router.post('/tasks/:id/trace', (req, res) => {
     inserted = withTx(() => {
       let n = 0;
       for (const p of points) {
+        // A retried offline batch must not duplicate ground positions it
+        // already recorded, so a point carrying a seen client_ref is skipped.
+        if (p.client_ref && byClientRef('inspection_trace_point', p.client_ref)) continue;
         const proj = route.length >= 2 ? projectPointToRoute(route, p.lat, p.lng) : null;
         insertRow('inspection_trace_point', {
           task_id: t.id,
@@ -1881,6 +1884,7 @@ router.post('/tasks/:id/trace', (req, res) => {
           recorded_at: p.recorded_at || now,
           created_at: now,
           crew_id: crewId,
+          client_ref: p.client_ref || null,
         });
         n += 1;
       }

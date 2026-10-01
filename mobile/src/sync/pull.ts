@@ -1,15 +1,18 @@
 import type { ApiClient } from '../api/client';
 import type { ChecklistResponse } from '../api/checklistTypes';
+import type { MapData } from '../api/mapTypes';
 import type { SqlDriver } from '../db/driver';
 import {
   setSyncMeta,
   upsertChecklist,
+  upsertLines,
   upsertTaskDetail,
   upsertTasks,
   type ServerTask,
 } from '../db/queries';
 
 export const TASKS_SYNCED_KEY = 'tasks_synced_at';
+export const MAP_SYNCED_KEY = 'map_synced_at';
 
 export async function pullTasks(driver: SqlDriver, client: ApiClient): Promise<number> {
   const tasks = await client.get<ServerTask[]>('/tasks');
@@ -39,4 +42,11 @@ export async function pullChecklist(
     await upsertChecklist(driver, taskId, template.id, template);
   }
   return data;
+}
+
+export async function pullMapData(driver: SqlDriver, client: ApiClient): Promise<MapData> {
+  const data = await client.get<MapData>('/map/data');
+  await upsertLines(driver, data.lines ?? []);
+  await setSyncMeta(driver, MAP_SYNCED_KEY, new Date().toISOString());
+  return { lines: data.lines ?? [], towers: data.towers ?? [] };
 }

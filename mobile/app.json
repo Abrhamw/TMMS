@@ -25,7 +25,20 @@
     "plugins": [
       "expo-router",
       "expo-sqlite",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "TMMS Field uses the camera to capture site photos."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "TMMS Field uses your location to confirm where work was completed."
+        }
+      ],
+      "@maplibre/maplibre-react-native"
     ]
   }
 }
