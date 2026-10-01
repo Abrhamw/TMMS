@@ -244,7 +244,7 @@ inspection progress; live breadcrumb tracing; offline tiles.
   `inspection-progress`; color segments like the web workspace.
 - [x] Task 5.3: Live tracing screen — start/stop, distance, breadcrumb; queue
   points to the outbox.
-- [ ] Task 5.4: Offline tile cache for the assigned line bbox.
+- [x] Task 5.4: Offline tile cache for the assigned line bbox.
 - [x] Verify: typecheck/export; `eas.json` profiles (`development`,
   `preview`, `production`) valid.
 - [ ] Manual device checklist: tiles render, offline tiles present, GPS trace

@@ -1,17 +1,19 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   Camera,
   GeoJSONSource,
   Layer,
   Map,
 } from '@maplibre/maplibre-react-native';
+import type { StyleSpecification } from '@maplibre/maplibre-react-native';
 import type { Feature, FeatureCollection } from 'geojson';
 import { useAuth } from '../../auth/context';
 import { getDb } from '../../db';
 import { listLines } from '../../db/queries';
 import { pullMapData } from '../../sync/pull';
 import { OSM_STYLE } from '../../map/osmStyle';
+import { cacheLineTiles, cachedLineIds, styleFileUri } from '../../map/offline';
 import type { MapLine, MapTower } from '../../api/mapTypes';
 import { colors, radius, spacing } from '../../theme';
 
@@ -54,6 +56,28 @@ export default function MapScreen() {
   const [towers, setTowers] = useState<MapTower[]>([]);
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
+  const [mapStyle, setMapStyle] = useState<string | StyleSpecification>(OSM_STYLE);
+  const [saved, setSaved] = useState<Set<number>>(new Set());
+  const [saving, setSaving] = useState(false);
+  const [progress, setProgress] = useState<Record<number, number>>({});
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    void styleFileUri()
+      .then((uri) => {
+        if (alive) setMapStyle(uri);
+      })
+      .catch(() => {
+        /* fall back to the inline style when the file cannot be written */
+      });
+    void cachedLineIds().then((ids) => {
+      if (alive) setSaved(ids);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -95,13 +119,53 @@ export default function MapScreen() {
     return ETHIOPIA_CENTER;
   }, [lines]);
 
+  const cacheableLines = useMemo(
+    () => lines.filter((line) => Array.isArray(line.route) && line.route.length >= 2),
+    [lines],
+  );
+
+  const saveOffline = useCallback(async () => {
+    setSaving(true);
+    setNotice(null);
+    const next = new Set(saved);
+    let added = 0;
+    try {
+      for (const line of cacheableLines) {
+        if (next.has(line.id)) continue;
+        const created = await cacheLineTiles(line, (update) => {
+          setProgress((prev) => ({ ...prev, [update.lineId]: update.percentage }));
+        });
+        if (created) {
+          next.add(line.id);
+          added += 1;
+        }
+      }
+      setSaved(next);
+      setNotice(
+        added > 0
+          ? `Saving ${added} line${added === 1 ? '' : 's'} for offline use.`
+          : 'All lines are already saved offline.',
+      );
+    } catch {
+      setNotice('Could not start the offline download.');
+    } finally {
+      setSaving(false);
+    }
+  }, [cacheableLines, saved]);
+
+  const activePercent = useMemo(() => {
+    const values = Object.values(progress).filter((value) => value > 0 && value < 100);
+    if (values.length === 0) return null;
+    return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+  }, [progress]);
+
   if (loading && lines.length === 0) {
     return <ActivityIndicator style={styles.loading} color={colors.primary} />;
   }
 
   return (
     <View style={styles.screen}>
-      <Map mapStyle={OSM_STYLE} style={styles.map} logo={false} attribution compass>
+      <Map mapStyle={mapStyle} style={styles.map} logo={false} attribution compass>
         <Camera center={initialCenter} zoom={8} duration={0} />
         <GeoJSONSource id="lines" data={lineFeatures}>
           <Layer
@@ -130,8 +194,22 @@ export default function MapScreen() {
         <Text style={styles.panelMeta}>
           {lines.length} line{lines.length === 1 ? '' : 's'}
           {towers.length > 0 ? ` · ${towers.length} towers` : ''}
+          {` · ${saved.size} offline`}
         </Text>
         {offline ? <Text style={styles.offline}>Offline — showing cached lines</Text> : null}
+        {activePercent != null ? (
+          <Text style={styles.offline}>Downloading tiles {activePercent}%</Text>
+        ) : null}
+        {notice ? <Text style={styles.notice}>{notice}</Text> : null}
+        <Pressable
+          style={[styles.save, saving && styles.saveDisabled]}
+          onPress={() => void saveOffline()}
+          disabled={saving || cacheableLines.length === 0}
+        >
+          <Text style={styles.saveText}>
+            {saving ? 'Saving tiles…' : 'Save map offline'}
+          </Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -155,4 +233,14 @@ const styles = StyleSheet.create({
   panelTitle: { fontSize: 14, fontWeight: '700', color: colors.text },
   panelMeta: { fontSize: 13, color: colors.muted, marginTop: 2 },
   offline: { fontSize: 12, color: colors.warning, marginTop: 2 },
+  notice: { fontSize: 12, color: colors.muted, marginTop: 2 },
+  save: {
+    marginTop: spacing.sm,
+    backgroundColor: colors.primary,
+    borderRadius: radius.sm,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+  },
+  saveDisabled: { opacity: 0.6 },
+  saveText: { color: '#ffffff', fontSize: 14, fontWeight: '600' },
 });
