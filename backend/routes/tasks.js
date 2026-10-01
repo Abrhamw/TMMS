@@ -58,6 +58,7 @@ function sendAssignmentInstruction(req, task, crewId) {
   if (!readiness || !readiness.requirements) return null;
 
   const recipients = new Set();
+  // Every active crew member plus the designated lead receives the instruction.
   if (crew.leader_person_id) recipients.add(Number(crew.leader_person_id));
   for (const m of db.prepare('SELECT person_id FROM crew_member WHERE crew_id = ? AND active = 1').all(crew.id)) {
     if (m.person_id) recipients.add(Number(m.person_id));
