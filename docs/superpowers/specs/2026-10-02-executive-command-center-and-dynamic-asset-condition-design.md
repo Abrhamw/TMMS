@@ -219,10 +219,14 @@ Additive tables and migrations in `backend/db.js`:
 - `asset_performance_event(id, asset_id, event_type, severity, occurred_at,
   magnitude, duration_min, source, recorded_by, task_id, client_ref, notes)` —
   discrete performance events.
-- `asset_condition_snapshot(id, asset_id, computed_at, model_version,
-  base_rating, performance_delta, combined_rating, health_index, rul_years,
-  degradation_rate, factors_json, source, created_by)` — dated computed results.
-  `source` is AUTO, WHATIF or EVALUATION.
+- Extend the existing `asset_health_snapshot` additively with `base_rating`,
+  `performance_delta`, `degradation_rate`, `factors_json`, `model_version` and
+  `created_by`. The existing `condition_rating` (from), `suggested_rating` (the
+  combined rating), `health_index`, `remaining_useful_life_years`,
+  `recommendation`, `reasons`, `source` and `report_id` columns already cover
+  the rest, so no new snapshot table is introduced. `source` values used by the
+  dynamic model are AUTO, WHATIF and EVALUATION (the monitor already writes
+  AGENT).
 
 Indexes on `asset_reading(asset_id, recorded_at)` and
 `asset_performance_event(asset_id, occurred_at)`. `client_ref` is unique when
@@ -314,6 +318,23 @@ against the current score and the recommended action. Actions are Accept as
 evaluation, Reset, and Save scenario (persists a `WHATIF` snapshot). An advisory
 banner states that the official rating changes only on accept.
 
+### 7.5 Integration with the asset-condition monitor
+
+The existing `backend/assetMonitor.js` already performs advisory revaluation,
+appends a change-log row to `asset_health_snapshot` only when the rating or
+recommendation moves, and exposes `/asset-monitor` (summary plus recent
+changes) and `/asset-monitor/run`. The dynamic model plugs into it rather than
+duplicating it:
+
+- `candidateAssets()` additionally includes assets that have readings or
+  performance events, so they participate in scheduled revaluation.
+- `revalueAssets()` uses the extended `suggestAssetCondition()` (age baseline
+  plus performance factors) and writes the new snapshot columns. Change
+  detection and the idempotent "only when it moves" rule are unchanged.
+- `GET /executive/degradation` is a thin read over `recentRevaluationData()`
+  plus the current performance breakdown, returning the top-N assets by
+  degradation for Phase B; no second history store is created.
+
 ## 8. Errors, permissions and edge cases
 
 - Permissions: reads `asset:read`; readings, events, simulate, import,
@@ -349,7 +370,7 @@ banner states that the official rating changes only on accept.
 | Phase | Scope | Key files |
 |-------|-------|-----------|
 | A | Tokens and shared viz components; app-wide adoption | `frontend/src/styles.css`, `frontend/src/components/viz/*`, `InfraVisuals.jsx` |
-| C | Tables, engine, endpoints, asset UI, what-if | `backend/db.js`, `backend/assetPerformance.js`, `backend/assetCondition.js`, `backend/routes/assets.js`, asset page |
+| C | Tables, engine, endpoints, monitor integration, asset UI, what-if | `backend/db.js`, `backend/assetPerformance.js`, `backend/assetCondition.js`, `backend/assetMonitor.js`, `backend/routes/assets.js`, asset page |
 | B | Executive backend fields, recommendation engine, Command Center UI | `backend/routes/dashboard.js`, `backend/executiveRecommendations.js`, `frontend/src/pages/ExecutiveSummary.jsx` |
 
 ## 11. Open questions
