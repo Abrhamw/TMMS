@@ -13,7 +13,7 @@ import './styles.css';
 
 // Heavier surfaces (Leaflet map pages, registers, report views) load on demand
 // so a first visit only downloads the shell plus the page actually opened.
-const Overview = lazy(() => import('./pages/Overview'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
 const MapPage = lazy(() => import('./pages/MapPage'));
 const Assets = lazy(() => import('./pages/Assets'));
 const Tasks = lazy(() => import('./pages/Tasks'));
@@ -280,7 +280,7 @@ export default function App() {
           <Route path="/home" element={<Home />} />
           <Route path="/mailbox" element={<Suspend><Mailbox /></Suspend>} />
           <Route path="/executive" element={<RequireExecutive><Suspend><ExecutiveSummary /></Suspend></RequireExecutive>} />
-          <Route path="/dashboard" element={<Suspend><Overview /></Suspend>} />
+          <Route path="/dashboard" element={<Suspend><Dashboard /></Suspend>} />
           <Route path="/overview" element={<Navigate to="/dashboard" replace />} />
           <Route path="/map" element={<Suspend><MapPage /></Suspend>} />
           <Route path="/regions" element={<Navigate to="/infrastructure?manage=regions" replace />} />
