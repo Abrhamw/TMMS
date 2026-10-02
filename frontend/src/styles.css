@@ -1405,3 +1405,27 @@ a.patch-chip:hover { border-color: var(--primary); color: var(--primary); }
   .hero-band { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   .section-card, .kpi-card, .rec-card { break-inside: avoid; }
 }
+
+.topbar { background: var(--surface-1); border-bottom: 1px solid var(--border); }
+.card { background: var(--surface-1); border-radius: var(--radius-lg); box-shadow: var(--elev-1); }
+.modal { background: var(--surface-1); border-radius: var(--radius-lg); box-shadow: var(--elev-2); }
+.modal-backdrop { background: rgba(15, 23, 42, 0.45); backdrop-filter: blur(2px); }
+.btn { border-radius: var(--radius-sm); transition: background 0.15s, box-shadow 0.15s, border-color 0.15s; }
+.btn:focus-visible, a:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+input, select, textarea { border-radius: var(--radius-sm); }
+table th { color: var(--muted); text-transform: uppercase; font-size: var(--text-xs); letter-spacing: 0.03em; }
+.empty { color: var(--muted); }
+
+.ktile { border-radius: var(--radius-lg); box-shadow: var(--elev-1); position: relative; overflow: hidden; }
+.ktile-accent { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--accent); }
+.ktile-spark { margin-top: var(--space-2); }
+.ktile-warn .ktile-accent { background: var(--severity-medium); }
+.ktile-bad .ktile-accent { background: var(--severity-high); }
+.ktile-ok .ktile-accent { background: var(--chart-1); }
+.ktile .ktile-label { font-size: var(--text-xs); }
+.ktile .ktile-value { font-size: var(--text-2xl); }
+.ktile .ktile-sub { font-size: var(--text-xs); }
+.bar-track { background: var(--surface-3); border-radius: 999px; }
+.bar-fill { border-radius: 999px; }
+.donut-hole { background: var(--surface-1); }
+
