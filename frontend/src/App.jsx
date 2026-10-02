@@ -16,6 +16,7 @@ import './styles.css';
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const AssetsHub = lazy(() => import('./pages/AssetsHub'));
 const WorkHub = lazy(() => import('./pages/WorkHub'));
+const AdminHub = lazy(() => import('./pages/AdminHub'));
 const MapPage = lazy(() => import('./pages/MapPage'));
 const Tasks = lazy(() => import('./pages/Tasks'));
 const TaskDetail = lazy(() => import('./pages/TaskDetail'));
@@ -296,7 +297,7 @@ export default function App() {
           <Route path="/schedules" element={<Suspend><Schedules /></Suspend>} />
           <Route path="/checklists" element={<Suspend><Checklists /></Suspend>} />
           <Route path="/certifications" element={<Suspend><Certifications /></Suspend>} />
-          <Route path="/admin" element={<RequireExecutive><Navigate to="/admin/reports" replace /></RequireExecutive>} />
+          <Route path="/admin" element={<RequireExecutive><Suspend><AdminHub /></Suspend></RequireExecutive>} />
           <Route path="/admin/reports" element={<RequireExecutive><Suspend><Reports /></Suspend></RequireExecutive>} />
           <Route path="/admin/value" element={<RequireExecutive><Suspend><Value /></Suspend></RequireExecutive>} />
           <Route path="/admin/organization" element={<RequireExecutive><Suspend><Organization /></Suspend></RequireExecutive>} />
