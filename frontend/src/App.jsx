@@ -15,6 +15,7 @@ import './styles.css';
 // so a first visit only downloads the shell plus the page actually opened.
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const AssetsHub = lazy(() => import('./pages/AssetsHub'));
+const WorkHub = lazy(() => import('./pages/WorkHub'));
 const MapPage = lazy(() => import('./pages/MapPage'));
 const Tasks = lazy(() => import('./pages/Tasks'));
 const TaskDetail = lazy(() => import('./pages/TaskDetail'));
@@ -288,13 +289,13 @@ export default function App() {
           <Route path="/lines" element={<Navigate to="/assets?area=infrastructure&manage=lines" replace />} />
           <Route path="/towers" element={<Navigate to="/assets?area=infrastructure&manage=towers" replace />} />
           <Route path="/assets" element={<Suspend><AssetsHub /></Suspend>} />
-          <Route path="/work" element={<Suspend><Tasks /></Suspend>} />
-          <Route path="/tasks" element={<Navigate to="/work" replace />} />
+          <Route path="/work" element={<Suspend><WorkHub /></Suspend>} />
+          <Route path="/tasks" element={<Suspend><Tasks /></Suspend>} />
           <Route path="/tasks/:id" element={<Suspend><TaskDetail /></Suspend>} />
-          <Route path="/crews" element={<Navigate to="/work" replace />} />
-          <Route path="/schedules" element={<Navigate to="/work" replace />} />
-          <Route path="/checklists" element={<Navigate to="/work" replace />} />
-          <Route path="/certifications" element={<Navigate to="/work" replace />} />
+          <Route path="/crews" element={<Suspend><Crews /></Suspend>} />
+          <Route path="/schedules" element={<Suspend><Schedules /></Suspend>} />
+          <Route path="/checklists" element={<Suspend><Checklists /></Suspend>} />
+          <Route path="/certifications" element={<Suspend><Certifications /></Suspend>} />
           <Route path="/admin" element={<RequireExecutive><Navigate to="/admin/reports" replace /></RequireExecutive>} />
           <Route path="/admin/reports" element={<RequireExecutive><Suspend><Reports /></Suspend></RequireExecutive>} />
           <Route path="/admin/value" element={<RequireExecutive><Suspend><Value /></Suspend></RequireExecutive>} />
