@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('node:path');
 const fs = require('node:fs');
+const gzip = require('./gzip');
 const { db, initSchema, writeAudit } = require('./db');
 const { seedEep, reconcileSeedData } = require('./seed_eep');
 const { ensureAssetCatalog, ensureRegisterDemo, ensureCatalogPrices } = require('./assetCatalog');
@@ -42,6 +43,7 @@ try {
 }
 
 const app = express();
+app.use(gzip);
 app.use(express.json({ limit: '5mb' }));
 
 app.use((req, res, next) => {

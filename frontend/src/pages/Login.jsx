@@ -38,6 +38,7 @@ export default function Login() {
   const nav = useNavigate();
   const [params] = useSearchParams();
   const persona = params.get('persona') || 'other';
+  const add = params.get('add') === '1';
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -82,6 +83,7 @@ export default function Login() {
           <button className="btn btn-sm btn-ghost" type="button" onClick={() => nav('/')}>← Change role</button>
         </div>
         <h2>{t('signInPrompt')}</h2>
+        {add && <div className="alert" style={{ background: '#eff6ff', color: '#1e40af', border: '1px solid #bfdbfe' }}>{t('secondTabHint')}</div>}
         {error && <div className="alert alert-error">{error}</div>}
         <form onSubmit={submit}>
           <label>{t('username')}</label>

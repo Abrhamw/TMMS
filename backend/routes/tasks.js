@@ -128,6 +128,44 @@ function pickTaskFields(body) {
   return out;
 }
 
+const MAX_IN = 500;
+
+function chunk(list, size) {
+  const out = [];
+  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+  return out;
+}
+
+// Fetch rows by primary key, only for the ids actually referenced by a page.
+// Loading whole registers (tower/asset are multi-MB) just to resolve a handful
+// of foreign keys was the dominant cost of the task list.
+function rowsByIds(table, ids) {
+  const out = new Map();
+  const list = [...ids].filter((n) => Number.isInteger(n) && n > 0);
+  if (!list.length) return out;
+  for (const slice of chunk(list, MAX_IN)) {
+    const ph = slice.map(() => '?').join(',');
+    for (const r of db.prepare(`SELECT * FROM ${table} WHERE id IN (${ph})`).all(...slice)) {
+      out.set(r.id, r);
+    }
+  }
+  return out;
+}
+
+function linksByTaskId(taskIds) {
+  const map = new Map();
+  const list = [...new Set(taskIds)].filter((n) => Number.isInteger(n) && n > 0);
+  if (!list.length) return map;
+  for (const slice of chunk(list, MAX_IN)) {
+    const ph = slice.map(() => '?').join(',');
+    for (const l of db.prepare(`SELECT * FROM task_link WHERE task_id IN (${ph})`).all(...slice)) {
+      if (!map.has(l.task_id)) map.set(l.task_id, []);
+      map.get(l.task_id).push(l);
+    }
+  }
+  return map;
+}
+
 // A task may be governed by more than one checklist template. The
 // task_checklist_template join table is the source of truth; the legacy
 // task.checklist_template_id column mirrors the first selection so schedule
@@ -141,13 +179,21 @@ function taskTemplateIds(taskId) {
   return t && t.checklist_template_id ? [t.checklist_template_id] : [];
 }
 
-function taskTemplateIdsMap() {
+function taskTemplateIdsMap(taskIds) {
   const map = new Map();
-  for (const r of db.prepare(
-    'SELECT task_id, template_id FROM task_checklist_template ORDER BY task_id, sequence, template_id'
-  ).all()) {
+  const add = (r) => {
     if (!map.has(r.task_id)) map.set(r.task_id, []);
     map.get(r.task_id).push(r.template_id);
+  };
+  const list = Array.isArray(taskIds) ? [...new Set(taskIds)] : null;
+  if (list && !list.length) return map;
+  const slices = list ? chunk(list, MAX_IN) : [null];
+  for (const slice of slices) {
+    const where = slice ? `WHERE task_id IN (${slice.map(() => '?').join(',')})` : '';
+    const q = db.prepare(
+      `SELECT task_id, template_id FROM task_checklist_template ${where} ORDER BY task_id, sequence, template_id`
+    );
+    for (const r of (slice ? q.all(...slice) : q.all())) add(r);
   }
   return map;
 }
@@ -210,18 +256,21 @@ function indexById(rows) {
   return m;
 }
 
-function taskProgressMap() {
+function taskProgressMap(taskIds) {
+  const list = Array.isArray(taskIds) ? [...new Set(taskIds)].filter((n) => Number.isInteger(n) && n > 0) : null;
+  if (list && !list.length) return new Map();
+  const where = list ? ` AND task_id IN (${list.map(() => '?').join(',')})` : '';
   const rows = db.prepare(
     `SELECT m.task_id,
             SUM(CASE WHEN i.result = 'PASS' THEN 1 ELSE 0 END) AS passed,
             SUM(CASE WHEN i.result IN ('PASS','FAIL') THEN 1 ELSE 0 END) AS graded
      FROM (SELECT task_id, template_id, MAX(id) AS exec_id
              FROM checklist_execution
-            WHERE submitted_at IS NOT NULL
+            WHERE submitted_at IS NOT NULL${where}
             GROUP BY task_id, template_id) m
      JOIN checklist_execution_item i ON i.execution_id = m.exec_id
      GROUP BY m.task_id`
-  ).all();
+  ).all(...(list || []));
   const m = new Map();
   for (const r of rows) {
     const graded = Number(r.graded) || 0;
@@ -236,26 +285,30 @@ function taskProgressMap() {
 }
 
 function taskDetails(rows) {
-  const regions = indexById(list('region'));
-  const substations = indexById(list('substation'));
-  const lines = indexById(db.prepare('SELECT * FROM transmission_line').all());
+  const idSet = (col) => {
+    const s = new Set();
+    for (const t of rows) if (Number.isInteger(t[col]) && t[col] > 0) s.add(t[col]);
+    return s;
+  };
+  const taskIds = rows.map((t) => t.id);
+  const regions = rowsByIds('region', idSet('region_id'));
+  const substations = rowsByIds('substation', idSet('substation_id'));
+  const lines = rowsByIds('transmission_line', idSet('line_id'));
   for (const l of lines.values()) {
     if (typeof l.route_json === 'string') {
       try { l.route_json = JSON.parse(l.route_json); } catch { /* keep raw */ }
     }
   }
-  const towers = indexById(list('tower'));
-  const assets = indexById(list('asset'));
-  const crews = indexById(list('crew'));
-  const templates = indexById(list('checklist_template'));
-  const taskTemplates = taskTemplateIdsMap();
-  const schedules = indexById(list('maintenance_schedule'));
-  const progress = taskProgressMap();
-  const links = new Map();
-  for (const l of db.prepare('SELECT * FROM task_link').all()) {
-    if (!links.has(l.task_id)) links.set(l.task_id, []);
-    links.get(l.task_id).push(l);
-  }
+  const towers = rowsByIds('tower', idSet('tower_id'));
+  const assets = rowsByIds('asset', idSet('asset_id'));
+  const crews = rowsByIds('crew', idSet('crew_id'));
+  const taskTemplates = taskTemplateIdsMap(taskIds);
+  const templateIds = idSet('checklist_template_id');
+  for (const tids of taskTemplates.values()) for (const tid of tids) templateIds.add(tid);
+  const templates = rowsByIds('checklist_template', templateIds);
+  const schedules = rowsByIds('maintenance_schedule', idSet('schedule_id'));
+  const progress = taskProgressMap(taskIds);
+  const links = linksByTaskId(taskIds);
   return rows.map((t) => {
     const p = progress.get(t.id) || { progress_pct: 0, progress_graded: 0, progress_passed: 0 };
     const out = {

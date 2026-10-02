@@ -1,33 +1,44 @@
 import { SearchSelect } from './components';
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Outlet, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import Landing from './pages/Landing';
 import Home from './pages/Home';
-import Overview from './pages/Overview';
-import MapPage from './pages/MapPage';
-import Assets from './pages/Assets';
-import Tasks from './pages/Tasks';
-import TaskDetail from './pages/TaskDetail';
 import ErrorBoundary from './components/ErrorBoundary';
-import Crews from './pages/Crews';
-import Schedules from './pages/Schedules';
-import Checklists from './pages/Checklists';
-import Gps from './pages/Gps';
-import Certifications from './pages/Certifications';
-import Reports from './pages/Reports';
-import Infrastructure from './pages/Infrastructure';
-import Value from './pages/Value';
-import Mailbox from './pages/Mailbox';
-import ExecutiveSummary from './pages/ExecutiveSummary';
-import Settings from './pages/Settings';
-import Organization from './pages/Organization';
-import OperatingModel from './pages/OperatingModel';
 import Login from './pages/Login';
 import GlobalSearch from './components/GlobalSearch';
 import { getStoredUser, getStoredToken, logout, can, CREW_ROLES, listOtherAccounts, switchAccount, removeAccount } from './auth';
 import { t, LOCALES, getLang, setLanguage, getLocale } from './i18n';
 import { api, setApiLocale } from './api';
 import './styles.css';
+
+// Heavier surfaces (Leaflet map pages, registers, report views) load on demand
+// so a first visit only downloads the shell plus the page actually opened.
+const Overview = lazy(() => import('./pages/Overview'));
+const MapPage = lazy(() => import('./pages/MapPage'));
+const Assets = lazy(() => import('./pages/Assets'));
+const Tasks = lazy(() => import('./pages/Tasks'));
+const TaskDetail = lazy(() => import('./pages/TaskDetail'));
+const Crews = lazy(() => import('./pages/Crews'));
+const Schedules = lazy(() => import('./pages/Schedules'));
+const Checklists = lazy(() => import('./pages/Checklists'));
+const Gps = lazy(() => import('./pages/Gps'));
+const Certifications = lazy(() => import('./pages/Certifications'));
+const Reports = lazy(() => import('./pages/Reports'));
+const Infrastructure = lazy(() => import('./pages/Infrastructure'));
+const Value = lazy(() => import('./pages/Value'));
+const Mailbox = lazy(() => import('./pages/Mailbox'));
+const ExecutiveSummary = lazy(() => import('./pages/ExecutiveSummary'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Organization = lazy(() => import('./pages/Organization'));
+const OperatingModel = lazy(() => import('./pages/OperatingModel'));
+
+function RouteFallback() {
+  return <div className="empty" role="status" aria-live="polite">{t('loading')}</div>;
+}
+
+function Suspend({ children }) {
+  return <Suspense fallback={<RouteFallback />}>{children}</Suspense>;
+}
 
 // The signed-in person's job title when present, otherwise their role. Used in
 // the top bar so the header reflects the person, not just the access level.
@@ -160,6 +171,10 @@ function UserMenu() {
           <div className="um-sep" />
           <button type="button" className="um-item um-add" role="menuitem" onClick={() => { setOpen(false); nav('/login', { state: { addAccount: true } }); }}>
             + {t('addAccount')}
+          </button>
+          <button type="button" className="um-item" role="menuitem"
+            onClick={() => { setOpen(false); window.open(`${window.location.origin}/login?add=1`, '_blank', 'noopener,noreferrer'); }}>
+            {t('secondTab')}
           </button>
           <button type="button" className="um-item" role="menuitem" onClick={signOut}>{t('signOut')}</button>
         </div>
@@ -300,28 +315,28 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route element={<RequireAuth><Shell /></RequireAuth>}>
           <Route path="/home" element={<Home />} />
-          <Route path="/mailbox" element={<Mailbox />} />
-          <Route path="/executive" element={<RequireExecutive><ExecutiveSummary /></RequireExecutive>} />
-          <Route path="/overview" element={<Overview />} />
-          <Route path="/map" element={<MapPage />} />
+          <Route path="/mailbox" element={<Suspend><Mailbox /></Suspend>} />
+          <Route path="/executive" element={<RequireExecutive><Suspend><ExecutiveSummary /></Suspend></RequireExecutive>} />
+          <Route path="/overview" element={<Suspend><Overview /></Suspend>} />
+          <Route path="/map" element={<Suspend><MapPage /></Suspend>} />
           <Route path="/regions" element={<Navigate to="/infrastructure?manage=regions" replace />} />
           <Route path="/substations" element={<Navigate to="/infrastructure?manage=substations" replace />} />
           <Route path="/lines" element={<Navigate to="/infrastructure?manage=lines" replace />} />
           <Route path="/towers" element={<Navigate to="/infrastructure?manage=towers" replace />} />
-          <Route path="/assets" element={<Assets />} />
-          <Route path="/tasks" element={<Tasks />} />
-          <Route path="/tasks/:id" element={<TaskDetail />} />
-          <Route path="/crews" element={<Crews />} />
-          <Route path="/schedules" element={<Schedules />} />
-          <Route path="/checklists" element={<Checklists />} />
-          <Route path="/gps" element={<Gps />} />
-          <Route path="/certifications" element={<Certifications />} />
-          <Route path="/reports" element={<RequireReportAccess><Reports /></RequireReportAccess>} />
-          <Route path="/value" element={<RequireExecutive><Value /></RequireExecutive>} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/organization" element={<Organization />} />
-          <Route path="/model" element={<OperatingModel />} />
-          <Route path="/infrastructure" element={<Infrastructure />} />
+          <Route path="/assets" element={<Suspend><Assets /></Suspend>} />
+          <Route path="/tasks" element={<Suspend><Tasks /></Suspend>} />
+          <Route path="/tasks/:id" element={<Suspend><TaskDetail /></Suspend>} />
+          <Route path="/crews" element={<Suspend><Crews /></Suspend>} />
+          <Route path="/schedules" element={<Suspend><Schedules /></Suspend>} />
+          <Route path="/checklists" element={<Suspend><Checklists /></Suspend>} />
+          <Route path="/gps" element={<Suspend><Gps /></Suspend>} />
+          <Route path="/certifications" element={<Suspend><Certifications /></Suspend>} />
+          <Route path="/reports" element={<RequireReportAccess><Suspend><Reports /></Suspend></RequireReportAccess>} />
+          <Route path="/value" element={<RequireExecutive><Suspend><Value /></Suspend></RequireExecutive>} />
+          <Route path="/settings" element={<Suspend><Settings /></Suspend>} />
+          <Route path="/organization" element={<Suspend><Organization /></Suspend>} />
+          <Route path="/model" element={<Suspend><OperatingModel /></Suspend>} />
+          <Route path="/infrastructure" element={<Suspend><Infrastructure /></Suspend>} />
           <Route path="*" element={<Navigate to="/home" replace />} />
         </Route>
       </Routes>
