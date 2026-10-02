@@ -123,6 +123,7 @@ export function TrendLine({ data, width = 520, height = 160, color = '#4338ca', 
   const { line, area } = buildPoints(values, width, height, pad);
   const labels = data || [];
   if (!line) return <div className="muted" style={{ fontSize: 12 }}>No trend data</div>;
+  const fmt = (d) => (valueFormat ? valueFormat(d.value) : String(d.value));
   return (
     <div>
       <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label="trend" preserveAspectRatio="none">
@@ -131,7 +132,7 @@ export function TrendLine({ data, width = 520, height = 160, color = '#4338ca', 
       </svg>
       <div className="viz-trend-labels">
         {labels.map((d, i) => (
-          <span key={d.label || i}>{valueFormat ? valueFormat(d.value) : d.label}</span>
+          <span key={d.label || i} className="viz-trend-label" title={fmt(d)}>{d.label || fmt(d)}</span>
         ))}
       </div>
     </div>

@@ -21,6 +21,11 @@ function conditionSegments(condition) {
   ];
 }
 
+function monthLabel(month) {
+  const d = new Date(`${month}-01T00:00:00Z`);
+  return Number.isNaN(d.getTime()) ? month : d.toLocaleDateString(undefined, { month: 'short', timeZone: 'UTC' });
+}
+
 export default function ExecutiveSummary() {
   const [summary, setSummary] = useState(null);
   const [regions, setRegions] = useState([]);
@@ -129,11 +134,14 @@ export default function ExecutiveSummary() {
             ) : <EmptyState title="No exceptions detected">No critical portfolio exceptions in the current register.</EmptyState>}
           </SectionCard>
           <div className="executive-grid mt">
-            <SectionCard title="12-month maintenance spend" sub="Monthly">
-              <TrendLine data={trends.spend.map((row) => ({ label: row.month.slice(2), value: row.spend }))} valueFormat={(v) => fmtMoney(v, currency)} />
+            <SectionCard title="12-month maintenance spend" sub={`Total ${fmtMoney(composition.total, currency)}`}>
+              <TrendLine data={trends.spend.map((row) => ({ label: monthLabel(row.month), value: row.spend }))} valueFormat={(v) => fmtMoney(v, currency)} />
             </SectionCard>
-            <SectionCard title="Condition trend" sub="Mean rating from snapshots">
-              <TrendLine data={trends.condition.map((row) => ({ label: row.month.slice(2), value: row.rating || 0 }))} color="#14532d" valueFormat={(v) => (v ? Number(v).toFixed(1) : '—')} />
+            <SectionCard title="Condition trend" sub={(() => { const months = trends.condition.filter((row) => row.rating != null); return months.length ? `Latest ${months[months.length - 1].rating}/10` : 'No snapshots yet'; })()}>
+              {(() => {
+                const points = trends.condition.filter((row) => row.rating != null).map((row) => ({ label: monthLabel(row.month), value: row.rating }));
+                return points.length ? <TrendLine data={points} color="#14532d" valueFormat={(v) => `${Number(v).toFixed(1)}/10`} /> : <EmptyState title="No condition snapshots">Run the asset monitor to build a condition history.</EmptyState>;
+              })()}
             </SectionCard>
           </div>
         </div>
@@ -189,7 +197,7 @@ export default function ExecutiveSummary() {
           </SectionCard>
           <div className="executive-grid mt">
             <SectionCard title="Monthly spend">
-              <TrendLine data={trends.spend.map((row) => ({ label: row.month.slice(2), value: row.spend }))} valueFormat={(v) => fmtMoney(v, currency)} />
+              <TrendLine data={trends.spend.map((row) => ({ label: monthLabel(row.month), value: row.spend }))} valueFormat={(v) => fmtMoney(v, currency)} />
             </SectionCard>
             <SectionCard title="Spend summary">
               <div className="exec-stat-grid">
