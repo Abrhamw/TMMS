@@ -127,7 +127,7 @@ function lineBrief(id) {
 }
 
 function assetFilter(req) {
-  const { substation_id, line_id, tower_id, asset_type, parent_asset_id } = req.query;
+  const { substation_id, line_id, tower_id, asset_type, parent_asset_id, region_id, q } = req.query;
   const where = [];
   const args = [];
   if (substation_id) { where.push('substation_id = ?'); args.push(Number(substation_id)); }
@@ -135,6 +135,18 @@ function assetFilter(req) {
   if (tower_id) { where.push('tower_id = ?'); args.push(Number(tower_id)); }
   if (asset_type) { where.push('asset_type = ?'); args.push(asset_type); }
   if (parent_asset_id) { where.push('parent_asset_id = ?'); args.push(Number(parent_asset_id)); }
+  // Assets carry no region column; resolve it through their substation/line parent.
+  if (region_id) {
+    where.push('(substation_id IN (SELECT id FROM substation WHERE region_id = ?) OR line_id IN (SELECT id FROM transmission_line WHERE region_id = ?))');
+    args.push(Number(region_id), Number(region_id));
+  }
+  if (q) {
+    const like = `%${String(q).toLowerCase()}%`;
+    where.push(`(lower(asset_id) LIKE ? OR lower(name) LIKE ? OR lower(asset_type) LIKE ? OR lower(COALESCE(sub_type, '')) LIKE ?
+      OR substation_id IN (SELECT id FROM substation WHERE lower(name) LIKE ?)
+      OR line_id IN (SELECT id FROM transmission_line WHERE lower(name) LIKE ?))`);
+    args.push(like, like, like, like, like, like);
+  }
   return { where, args };
 }
 
@@ -170,11 +182,7 @@ router.get('/assets', (req, res) => {
   if (req.query.brief) return res.json(findAssetBrief(req));
   const page = parsePage(req.query);
   const lk = buildAssetLookups();
-  let raw = findAssetId(req);
-  if (page.q) {
-    raw = raw.filter((a) => [a.asset_id, a.name, a.asset_type, a.sub_type]
-      .some((v) => String(v || '').toLowerCase().includes(page.q)));
-  }
+  const raw = findAssetId(req);
   const paged = paginate(raw, page);
   const rows = (page.paginated ? paged.items : paged).map((a) => enrichAsset(a, lk));
   for (const a of rows) {

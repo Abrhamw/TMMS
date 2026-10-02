@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, Fragment } from 'react';
 import { api, fmtDate, fmtMoney } from '../api';
-import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, CondPill, ConfirmButton, PrintButton, SearchField, useSearchFilter } from '../components';
+import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, CondPill, ConfirmButton, PrintButton, SearchField } from '../components';
 import { can, getStoredUser } from '../auth';
 import { Gauge, Sparkline } from '../components/viz';
 import { crewsInRegion, linesForSubstation, linesInRegion, subsInRegion } from '../cascade';
@@ -12,6 +12,10 @@ import RegisterTree from '../components/RegisterTree';
 import ViewMap from '../components/ViewMap';
 import { entityColor, maxVoltageKv, isEnergized, parseVoltageLevels, voltageChip, popupRows, esc } from '../mapFocus';
 import { t } from '../i18n';
+
+// The register can hold tens of thousands of assets, so filtering, searching
+// and paging all happen on the server. This is the page size requested per view.
+const REGISTER_PAGE_SIZE = 50;
 
 // Voltage shown for an asset: its parent line if known, else the substation's
 // highest declared level.
@@ -192,6 +196,7 @@ export default function Assets() {
   const canWrite = can(getStoredUser(), 'asset:write');
   const canEvaluate = can(getStoredUser(), 'asset:evaluate');
   const [rows, setRows] = useState(null);
+  const [total, setTotal] = useState(0);
   const [regions, setRegions] = useState([]);
   const [subs, setSubs] = useState([]);
   const [lines, setLines] = useState([]);
@@ -203,6 +208,8 @@ export default function Assets() {
   const [regionFilter, setRegionFilter] = useState('');
   const [viewMode, setViewMode] = useState('register');
   const [page, setPage] = useState(1);
+  const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [registerRegion, setRegisterRegion] = useState(null);
   const [catalog, setCatalog] = useState(null);
   const [error, setError] = useState(null);
@@ -219,14 +226,6 @@ export default function Assets() {
   const [sim, setSim] = useState(null);
   const [simResult, setSimResult] = useState(null);
   const [simBusy, setSimBusy] = useState(false);
-  // Assets carry no region column, so resolve it through their substation/line
-  // parent to let a region filter narrow the register.
-  const regionRows = useMemo(() => {
-    if (!regionFilter) return rows;
-    return (rows || []).filter((a) => String(a.substation?.region_id ?? a.line?.region_id ?? '') === String(regionFilter));
-  }, [rows, regionFilter]);
-  const { query, setQuery, results: visible } = useSearchFilter(regionRows);
-
   // Region -> substation/line cascade for the asset form. Picking a region
   // narrows both pickers; picking a substation narrows the line picker to the
   // circuits that terminate there.
@@ -239,27 +238,43 @@ export default function Assets() {
   const formCrews = useMemo(() => crewsInRegion(crews, form?.region_id), [crews, form?.region_id]);
 
   useEffect(() => {
-    setPage(1);
+    const h = setTimeout(() => { setDebouncedQuery(query); setPage(1); }, 300);
+    return () => clearTimeout(h);
   }, [query]);
 
   const load = () => {
     const q = new URLSearchParams();
     if (typeFilter) q.set('asset_type', typeFilter);
     if (subFilter) q.set('substation_id', subFilter);
-    const qs = q.toString();
-    return api.get(`/assets${qs ? `?${qs}` : ''}`).then(setRows).catch((e) => setError(e.message));
+    if (regionFilter) q.set('region_id', regionFilter);
+    if (debouncedQuery) q.set('q', debouncedQuery);
+    q.set('page', page);
+    q.set('page_size', REGISTER_PAGE_SIZE);
+    return api.get(`/assets?${q.toString()}`)
+      .then((res) => {
+        if (Array.isArray(res)) { setRows(res); setTotal(res.length); }
+        else {
+          setRows(res.items || []);
+          setTotal(res.total || 0);
+          const lastPage = Math.max(1, Math.ceil((res.total || 0) / (res.page_size || REGISTER_PAGE_SIZE)));
+          if (res.page > lastPage) setPage(lastPage);
+        }
+      })
+      .catch((e) => setError(e.message));
   };
   useEffect(() => {
-    setPage(1);
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typeFilter, subFilter, regionFilter, debouncedQuery, page]);
+
+  useEffect(() => {
     api.get('/asset-catalog').then(setCatalog).catch(() => {});
     api.get('/regions').then(setRegions).catch(() => {});
     api.get('/substations').then(setSubs).catch(() => {});
     api.get('/lines').then(setLines).catch(() => {});
     api.get('/crews').then(setCrews).catch(() => {});
     api.get('/settings').then((s) => { if (s && s.currency) setCurrency(s.currency); }).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [typeFilter, subFilter]);
+  }, []);
 
   useEffect(() => {
     if (!detail || !sim) return undefined;
@@ -407,10 +422,10 @@ export default function Assets() {
 
   if (!rows || (catalog === null)) return <Page title="Assets"><Loading /></Page>;
 
-  const PAGE_SIZE = 200;
-  const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  const PAGE_SIZE = REGISTER_PAGE_SIZE;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const curPage = Math.min(page, pageCount);
-  const pageRows = visible.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
+  const pageRows = rows || [];
 
   return (
     <Page title="Assets" crumbs="TMMS / Infrastructure"
@@ -422,7 +437,7 @@ export default function Assets() {
       {error && <ErrorNote error={error} />}
       <div className="filters">
         <SearchField value={query} onChange={setQuery} placeholder="Search assets…" />
-        <SearchSelect value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+        <SearchSelect value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}>
           <option value="">All asset types</option>
           {Array.from(new Map(flattenCatalog(catalog).filter((r) => !r.sub_type && r.family !== 'TOWER_PARTS').map((r) => [r.asset_type, r])).values()).map((r) => <option key={r.asset_type} value={r.asset_type}>{r.asset_type}</option>)}
         </SearchSelect>
@@ -430,11 +445,11 @@ export default function Assets() {
           <option value="">All regions</option>
           {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
         </SearchSelect>
-        <SearchSelect value={subFilter} onChange={(e) => setSubFilter(e.target.value)}>
+        <SearchSelect value={subFilter} onChange={(e) => { setSubFilter(e.target.value); setPage(1); }}>
           <option value="">All substations</option>
           {filterSubs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </SearchSelect>
-        <span className="muted">{visible.length} of {rows.length} assets</span>
+        <span className="muted">{total.toLocaleString()} assets</span>
         <span className="grow" />
         <button className={`btn btn-sm${viewMode === 'register' ? ' btn-primary' : ''}`} onClick={() => setViewMode('register')}>Register</button>
         <button className={`btn btn-sm${viewMode === 'table' ? ' btn-primary' : ''}`} onClick={() => setViewMode('table')}>Table</button>
@@ -446,7 +461,7 @@ export default function Assets() {
           <span className="muted">Page {curPage} of {pageCount}</span>
           <button className="btn btn-sm" disabled={curPage >= pageCount} onClick={() => setPage(curPage + 1)}>Next</button>
           <span className="grow" />
-          <span className="muted">Showing {pageRows.length} of {visible.length}</span>
+          <span className="muted">Showing {pageRows.length} of {total.toLocaleString()}</span>
         </div>
       )}
 
@@ -489,7 +504,7 @@ export default function Assets() {
                     </td>
                   </tr>
                 ))}
-                {visible.length === 0 && (
+                {total === 0 && (
                   <tr><td colSpan="12" className="muted center">{query ? 'No assets match your search' : 'No assets found'}</td></tr>
                 )}
               </tbody>
@@ -535,7 +550,7 @@ export default function Assets() {
               </div>
             </div>
           ))}
-          {visible.length === 0 && <div className="card card-pad muted center">{query ? 'No assets match your search' : 'No assets found'}</div>}
+          {total === 0 && <div className="card card-pad muted center">{query ? 'No assets match your search' : 'No assets found'}</div>}
         </div>
       )}
 

@@ -34,16 +34,16 @@ No SQL is needed to keep them. If you later choose to physically remove legacy
 tables, do it from a database backup and outside this tool; the environment
 disables destructive SQL.
 
-## Known follow-up: asset register eager fetch
+## Asset register now server-filtered
 
-The Register tab (`frontend/src/pages/Assets.jsx`) still requests the full
-`GET /assets` collection to power client-side search, region filtering, and its
-three view modes. The API now supports opt-in pagination
-(`?page=&page_size=&q=`), and `GET /assets/summary` covers the Overview tab, but
-the register itself has not been migrated. This is the largest remaining
-over-fetch (about 12 MB on the demo register).
+The Register tab (`frontend/src/pages/Assets.jsx`) no longer downloads the full
+`GET /assets` collection. Its search, asset-type filter, region filter,
+substation filter, and paging are all sent to the server, which returns a
+`{items,total,page,page_size}` envelope (50 rows per view). `GET /assets` gained
+a `region_id` filter and its `q` search now also matches parent substation and
+line names server-side. The table and cards render only the current page; the
+Register tree keeps its own scoped tree endpoint.
 
-Suggested next step: move the register's search, region filter, and pagination
-to the server (the endpoint already accepts `asset_type`, `substation_id`, and
-`q`; add `region_id` server-side), then page the table and cards. Track this as
-the follow-up task rather than mixing it into the area restructure.
+This removes the largest remaining over-fetch (previously about 12 MB on the
+demo register; a page is roughly tens of KB).
+
