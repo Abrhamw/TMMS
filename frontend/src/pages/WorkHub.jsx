@@ -11,6 +11,7 @@ import Crews from './Crews';
 import Certifications from './Certifications';
 
 const TABS = [
+  { key: 'overview', label: 'Overview' },
   { key: 'tasks', label: 'Tasks' },
   { key: 'schedules', label: 'Schedules' },
   { key: 'checklists', label: 'Checklists' },
@@ -73,7 +74,7 @@ export default function WorkHub() {
   const [searchParams] = useSearchParams();
   const initial = useMemo(() => {
     const area = searchParams.get('area');
-    return TABS.some((t) => t.key === area) ? area : 'tasks';
+    return TABS.some((t) => t.key === area) ? area : 'overview';
   }, []);
   const [area, setArea] = useState(initial);
 
@@ -82,7 +83,7 @@ export default function WorkHub() {
       <div className="hub-tabs-bar">
         <Tabs tabs={TABS} active={area} onChange={setArea} />
       </div>
-      <WorkSummary />
+      {area === 'overview' && <WorkSummary />}
       {area === 'tasks' && <Tasks />}
       {area === 'schedules' && <Schedules />}
       {area === 'checklists' && <Checklists />}
