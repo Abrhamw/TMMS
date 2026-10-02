@@ -573,6 +573,13 @@ a.patch-chip:hover { border-color: var(--primary); color: var(--primary); }
 
 /* ---- Infrastructure hub ---- */
 .hub { display: flex; align-items: flex-start; gap: 16px; }
+.hub-tabs-bar { padding: 14px 28px 0; border-bottom: 1px solid var(--border); background: var(--surface, #fff); }
+.data-list-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.data-list-count { margin-left: auto; font-size: 12px; }
+.data-list-table tr.clickable { cursor: pointer; }
+.data-list-table tr.clickable:hover { background: var(--accent-soft); }
+.data-list-pager { display: flex; align-items: center; gap: 12px; justify-content: center; margin-top: 12px; }
+.data-list-expand { width: 40px; text-align: right; }
 .hub-tree { width: 280px; flex: 0 0 280px; max-height: calc(100vh - 190px); overflow: auto; padding: 8px; }
 .hub-main { flex: 1; min-width: 0; }
 .hub-search { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 7px; font-size: 13px; font-family: inherit; margin-bottom: 8px; }

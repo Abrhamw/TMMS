@@ -14,8 +14,8 @@ import './styles.css';
 // Heavier surfaces (Leaflet map pages, registers, report views) load on demand
 // so a first visit only downloads the shell plus the page actually opened.
 const Dashboard = lazy(() => import('./pages/Dashboard'));
+const AssetsHub = lazy(() => import('./pages/AssetsHub'));
 const MapPage = lazy(() => import('./pages/MapPage'));
-const Assets = lazy(() => import('./pages/Assets'));
 const Tasks = lazy(() => import('./pages/Tasks'));
 const TaskDetail = lazy(() => import('./pages/TaskDetail'));
 const Crews = lazy(() => import('./pages/Crews'));
@@ -283,11 +283,11 @@ export default function App() {
           <Route path="/dashboard" element={<Suspend><Dashboard /></Suspend>} />
           <Route path="/overview" element={<Navigate to="/dashboard" replace />} />
           <Route path="/map" element={<Suspend><MapPage /></Suspend>} />
-          <Route path="/regions" element={<Navigate to="/infrastructure?manage=regions" replace />} />
-          <Route path="/substations" element={<Navigate to="/infrastructure?manage=substations" replace />} />
-          <Route path="/lines" element={<Navigate to="/infrastructure?manage=lines" replace />} />
-          <Route path="/towers" element={<Navigate to="/infrastructure?manage=towers" replace />} />
-          <Route path="/assets" element={<Suspend><Assets /></Suspend>} />
+          <Route path="/regions" element={<Navigate to="/assets?area=infrastructure&manage=regions" replace />} />
+          <Route path="/substations" element={<Navigate to="/assets?area=infrastructure&manage=substations" replace />} />
+          <Route path="/lines" element={<Navigate to="/assets?area=infrastructure&manage=lines" replace />} />
+          <Route path="/towers" element={<Navigate to="/assets?area=infrastructure&manage=towers" replace />} />
+          <Route path="/assets" element={<Suspend><AssetsHub /></Suspend>} />
           <Route path="/work" element={<Suspend><Tasks /></Suspend>} />
           <Route path="/tasks" element={<Navigate to="/work" replace />} />
           <Route path="/tasks/:id" element={<Suspend><TaskDetail /></Suspend>} />
