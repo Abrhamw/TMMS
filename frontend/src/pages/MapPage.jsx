@@ -28,6 +28,14 @@ const STATUS_LEGEND = ['OPERATIONAL', 'MAINTENANCE', 'OUT_OF_SERVICE', 'UNDER_CO
 const REGION_COLOR = '#2563eb';
 const DEFAULT_CENTER = [9.0, 39.0];
 const DEFAULT_ZOOM = 6;
+const PROGRESS_COLORS = { none: '#94a3b8', partial: '#d97706', complete: '#16a34a' };
+
+function inspectionColor(l) {
+  const p = l && l.inspection ? Number(l.inspection.tower_progress) || 0 : 0;
+  if (p >= 1) return PROGRESS_COLORS.complete;
+  if (p > 0) return PROGRESS_COLORS.partial;
+  return PROGRESS_COLORS.none;
+}
 
 function bandLabel(kv) {
   const b = voltageBand(kv);
@@ -56,6 +64,7 @@ function linePopup(l) {
       ['Circuits', l.circuit_count],
       ['Region', l.region_name],
       ['Status', l.status],
+      ['Inspection', l.inspection ? `${l.inspection.inspected_towers}/${l.inspection.total_towers} towers (${Math.round((l.inspection.tower_progress || 0) * 100)}%)` : null],
     ]) +
     (l.gps_validated ? '' : '<div class="tmms-pop-warn">GPS: unvalidated</div>') +
     `<a href="/lines/${l.id}" class="tmms-pop-link">Open →</a></div>`;
@@ -185,6 +194,7 @@ export default function MapPage() {
   const [bands, setBands] = useState(() => new Set(VOLTAGE_BANDS.map((b) => b.label)));
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [regionFilter, setRegionFilter] = useState('ALL');
+  const [progressMode, setProgressMode] = useState(false);
 
   useEffect(() => {
     api.get('/map/data').then(setData).catch((e) => setError(e.message));
@@ -298,7 +308,7 @@ export default function MapPage() {
         if (!Array.isArray(l.route) || l.route.length < 2) return;
         if (!bandOk(l.voltage_kv) || !statusOk(l.status) || !regionOk(l.region_id)) return;
         const pts = l.route.map((p) => [p[0], p[1]]);
-        const color = l.color || '#f59e0b';
+        const color = progressMode ? inspectionColor(l) : (l.color || '#f59e0b');
         const weight = l.voltage_kv >= 500 ? 4.5 : l.voltage_kv >= 230 ? 3.5 : 2.5;
         const poly = L.polyline(pts, { color, weight, opacity: 0.9 }).bindPopup(linePopup(l));
         poly.on('mouseover', () => poly.setStyle({ weight: weight + 3, opacity: 1 }));
@@ -482,7 +492,7 @@ export default function MapPage() {
       layerRefs.current = {};
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, bands, statusFilter, regionFilter, !hidden.towers, !hidden.assets]);
+  }, [data, bands, statusFilter, regionFilter, !hidden.towers, !hidden.assets, progressMode]);
 
   function applyVisibility() {
     const Lyr = layerRefs.current;
@@ -761,6 +771,12 @@ export default function MapPage() {
             </label>
           ))}
 
+          <label className="map-toggle">
+            <input type="checkbox" checked={progressMode} onChange={() => setProgressMode((v) => !v)} />
+            <span className="pill-dot" style={{ background: PROGRESS_COLORS.complete }} />
+            <span className="map-toggle-label">Inspection progress</span>
+          </label>
+
           <div className="map-panel-sep" />
           <div className="map-panel-sub">
             <span>{t('mapFilters')}</span>
@@ -823,6 +839,14 @@ export default function MapPage() {
               ],
               notes: [t('mapLegendLineWidth'), t('mapLegendGpsNote')],
             },
+            ...(progressMode ? [{
+              title: 'Inspection progress',
+              entries: [
+                { label: 'Not started', color: PROGRESS_COLORS.none, shape: 'line' },
+                { label: 'In progress', color: PROGRESS_COLORS.partial, shape: 'line' },
+                { label: 'Complete', color: PROGRESS_COLORS.complete, shape: 'line' },
+              ],
+            }] : []),
             { title: t('mapVoltageLegend'), entries: VOLTAGE_BANDS.map((b) => ({ label: b.label, color: b.color, shape: 'dot' })) },
             { title: t('mapStatusLegend'), entries: STATUS_LEGEND.map((k) => ({ label: k, color: STATUS_COLOR[k], shape: 'dot' })), notes: [t('mapLegendStatusNote')] },
           ]} />

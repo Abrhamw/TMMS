@@ -88,6 +88,27 @@ router.get('/map/data', (req, res) => {
     };
   });
 
+  const completedLineIds = new Set();
+  const completedTowerIds = new Set();
+  for (const t of db.prepare("SELECT line_id, tower_id FROM task WHERE status = 'COMPLETED'").all()) {
+    if (t.tower_id != null) completedTowerIds.add(Number(t.tower_id));
+    else if (t.line_id != null) completedLineIds.add(t.line_id);
+  }
+  const towersByLine = new Map();
+  for (const t of towerRows) {
+    const arr = towersByLine.get(t.line_id);
+    if (arr) arr.push(t.id);
+    else towersByLine.set(t.line_id, [t.id]);
+  }
+  const lineInspection = (lineId) => {
+    const ids = towersByLine.get(lineId) || [];
+    const total = ids.length;
+    const inspected = completedLineIds.has(lineId)
+      ? total
+      : ids.reduce((n, id) => n + (completedTowerIds.has(id) ? 1 : 0), 0);
+    return { inspected_towers: inspected, total_towers: total, tower_progress: total ? inspected / total : 0 };
+  };
+
   const lines = lineRows.filter((l) => allow(scope.lineIds, l.id) && lineHome(l.region_id, l.route_json, [subCoord(l.from_substation_id), subCoord(l.to_substation_id)])).map((l) => ({
     id: l.id,
     name: l.name,
@@ -108,6 +129,7 @@ router.get('/map/data', (req, res) => {
     region_name: (regionById.get(l.region_id) || {}).name || null,
     region_id: l.region_id || null,
     gps_validated: l.gps_validated,
+    inspection: lineInspection(l.id),
   }));
 
   const towers = towerRows.filter((t) => allow(scope.towerIds, t.id) && pointHome(lineById.get(t.line_id) ? lineById.get(t.line_id).region_id : null, t.latitude, t.longitude)).map((t) => {

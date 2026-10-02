@@ -9,6 +9,7 @@ const { maintenanceCostForRegions, currencyCode, assetRegion } = require('../mai
 const { deriveCrewStatus } = require('../crewStatus');
 const { taskReadiness, crewReadiness, personPerformanceRows, crewRosterPersonIds } = require('../readiness');
 const { targetHeadline, resolveTarget } = require('../target');
+const { inspectionForLine } = require('../lineInspection');
 const { sendMail } = require('../mail');
 const { buildAnalytics } = require('../analytics');
 const { recentRevaluationData, revalueAssets, changesToData, monitorSummary } = require('../assetMonitor');
@@ -571,6 +572,7 @@ function computeRaw(reportType, params, user) {
       const gps_validations = db.prepare('SELECT * FROM gps_validation WHERE linked_task_id = ? ORDER BY validated_at DESC').all(t.id);
       const lineFrom = line && line.from_substation ? line.from_substation : null;
       const lineTo = line && line.to_substation ? line.to_substation : null;
+      const inspection = line ? inspectionForLine(line.id, Array.isArray(line.route_json) ? line.route_json : []) : null;
       const executorRow = executions.find((e) => e.executed_by) || null;
       const executedBy = executorRow && executorRow.executed_by ? get('person', executorRow.executed_by) : null;
       const target = sub
@@ -601,6 +603,11 @@ function computeRaw(reportType, params, user) {
         { label: 'Verified by', value: personLabel(t.verified_by) || '—' },
         { label: 'Revision', value: t.revision || 1 },
       ];
+      if (inspection) {
+        rows.push({ label: 'Inspected towers', value: `${inspection.inspected_towers} / ${inspection.total_towers}` });
+        rows.push({ label: 'Line inspected', value: `${inspection.inspected_km} / ${Math.round((inspection.total_km || 0) * 10) / 10} km` });
+        rows.push({ label: 'Inspection progress', value: `${Math.round((inspection.tower_progress || 0) * 100)}%` });
+      }
       if (t.cancel_reason) {
         rows.push({ label: 'Cancellation record', value: `${t.cancel_reason} · ${personLabel(t.cancelled_by) || 'Unknown user'} · ${t.cancelled_at ? new Date(t.cancelled_at).toISOString().slice(0, 16).replace('T', ' ') : '—'}` });
       }
@@ -623,6 +630,7 @@ function computeRaw(reportType, params, user) {
           crew,
           region,
           target: { type: sub ? 'SUBSTATION' : line ? (tower ? 'TOWER' : 'LINE') : asset ? 'ASSET' : null, ...resolved },
+          inspection,
           template: tpl,
           executions,
           findings,
@@ -683,6 +691,7 @@ function computeRaw(reportType, params, user) {
         : [];
       const gpsTotal = towerGps.length;
       const gpsFail = towerGps.filter((v) => v.result === 'FAIL' || v.result === 'MANUAL_REVIEW');
+      const inspection = inspectionForLine(l.id, Array.isArray(l.route_json) ? l.route_json : []);
       const rows = [
         { label: 'Line', value: l.name },
         { label: 'Code', value: l.line_id },
@@ -698,11 +707,15 @@ function computeRaw(reportType, params, user) {
         { label: 'Operational status', value: l.operational_status || '—' },
         { label: 'GPS validated', value: l.gps_validated ? 'Yes' : 'No' },
         { label: 'Vegetation clearance', value: l.veg_clearance_m ? `${l.veg_clearance_m} m` : '—' },
+        { label: 'Inspected towers', value: `${inspection.inspected_towers} / ${inspection.total_towers}` },
+        { label: 'Line inspected', value: `${inspection.inspected_km} / ${Math.round((inspection.total_km || 0) * 10) / 10} km` },
+        { label: 'Inspection progress', value: `${Math.round((inspection.tower_progress || 0) * 100)}%` },
       ];
       const document = {
         entity: 'LINE',
         entity_name: l.name,
         line: l,
+        inspection,
         from_substation: fromSub,
         to_substation: toSub,
         towers,

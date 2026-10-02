@@ -8,7 +8,7 @@ const { COMPONENT_CATALOG } = require('../towerComponents');
 const { seedStandardComponents } = require('../towerStandards');
 const { countSubstationBays, substationBayCounts, syncSubstationBayCount, syncLineTowerCount, syncTowerMirror, towerCompliance, towerComplianceSummaryBatch } = require('../integrity');
 const { spaceAlongRoute, distanceAlongRoute } = require('../lineGeometry');
-const { coverage } = require('../inspectionTrace');
+const { inspectionForLine } = require('../lineInspection');
 const { setLineRoute, batchTowers, bulkTowers, bulkResetComponents } = require('../lineWorkspace');
 
 const router = express.Router();
@@ -624,10 +624,7 @@ router.get('/lines/:id/inspection-progress', (req, res) => {
   if (!r) return res.status(404).json({ error: 'Line not found' });
   if (!checkInfra(req, res, 'line', r.id)) return;
   const route = Array.isArray(r.route_json) ? r.route_json : [];
-  const towers = db.prepare('SELECT id, km_marker, latitude, longitude FROM tower WHERE line_id = ? ORDER BY km_marker, id').all(r.id);
-  const tasks = db.prepare('SELECT id, status, tower_id FROM task WHERE line_id = ? OR tower_id IN (SELECT id FROM tower WHERE line_id = ?)').all(r.id, r.id);
-  const traceTaskIds = db.prepare('SELECT DISTINCT task_id FROM inspection_trace_point WHERE line_id = ?').all(r.id).map((x) => x.task_id);
-  res.json(coverage({ lineId: r.id, route, towers, tasks, traceTaskIds }));
+  res.json(inspectionForLine(r.id, route));
 });
 
 // Import a line route from GeoJSON/KML/KMZ/WKT/CSV and auto-compute length.

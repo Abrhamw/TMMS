@@ -49,13 +49,13 @@ function addSub(out, sub) {
   }
 }
 
-function addTower(out, tower, line, { cap = 400, primary = false } = {}) {
+function addTower(out, tower, line, { cap = 400, primary = false, inspected = null } = {}) {
   if (!tower || out.markers.length >= cap) return;
   const pos = pt(tower.latitude, tower.longitude);
   if (!pos) return;
   out.markers.push({
     lat: pos[0], lng: pos[1],
-    color: entityColor(lineKv(line), line ? line.operational_status : null),
+    color: inspected == null ? entityColor(lineKv(line), line ? line.operational_status : null) : (inspected ? '#0d9488' : '#94a3b8'),
     radius: primary ? 8 : 4,
     flash: primary,
     label: tower.tower_id,
@@ -63,6 +63,26 @@ function addTower(out, tower, line, { cap = 400, primary = false } = {}) {
     legendLabel: 'Tower',
   });
   out.fit.push(pos);
+}
+
+const inspectedSet = (insp) => (insp && Array.isArray(insp.inspected_tower_ids)
+  ? new Set(insp.inspected_tower_ids.map(Number))
+  : null);
+
+function addInspection(out, insp) {
+  if (!insp) return;
+  (insp.covered_paths || []).forEach((seg) => {
+    const points = routePts(seg);
+    if (points.length < 2) return;
+    out.polylines.push({ points, color: '#16a34a', weight: 7, label: 'Inspected span', legendLabel: 'Inspected span' });
+    points.forEach((p) => out.fit.push(p));
+  });
+  const trace = (insp.trace_points || []).map((p) => pt(p.lat, p.lng)).filter(Boolean);
+  if (trace.length >= 2) {
+    out.polylines.push({ points: trace, color: '#ea580c', weight: 3, label: 'Crew trace', legendLabel: 'Crew trace' });
+    trace.forEach((p) => out.fit.push(p));
+  }
+  out.inspection = insp;
 }
 
 function addAssetPoint(out, asset, { voltage, flash = true } = {}) {
@@ -96,16 +116,21 @@ function buildAsset(d) {
 
 function buildLine(d) {
   const out = { markers: [], polylines: [], polygons: [], circles: [], fit: [], focus: null };
+  const insp = d.inspection || null;
+  const inspected = inspectedSet(insp);
   addLine(out, d.line, true);
   addSub(out, d.from_substation);
   addSub(out, d.to_substation);
-  (d.towers || []).forEach((t) => addTower(out, t, d.line, { cap: 400 }));
+  (d.towers || []).forEach((t) => addTower(out, t, d.line, { cap: 400, inspected: inspected ? inspected.has(Number(t.id)) : null }));
+  addInspection(out, insp);
   out.focus = out.polylines.length ? [...out.polylines.flatMap((p) => p.points), ...out.fit] : out.fit;
   return out;
 }
 
 function buildTask(d) {
   const out = { markers: [], polylines: [], polygons: [], circles: [], fit: [], focus: null };
+  const insp = d.inspection || null;
+  const inspected = inspectedSet(insp);
   const t = d.target || {};
   if (t.line) {
     addLine(out, t.line, true);
@@ -114,9 +139,10 @@ function buildTask(d) {
     addSub(out, t.line.to_substation);
   }
   addSub(out, t.substation);
-  addTower(out, t.tower, t.line, { primary: true });
+  addTower(out, t.tower, t.line, { primary: true, inspected: t.tower && inspected ? inspected.has(Number(t.tower.id)) : null });
   const voltage = lineKv(t.line) ?? subKv(t.substation);
   const assetPos = t.asset ? addAssetPoint(out, t.asset, { voltage }) : null;
+  addInspection(out, insp);
   out.focus = assetPos ? [assetPos] : (out.polylines.length ? [...out.polylines.flatMap((p) => p.points), ...out.fit] : out.fit);
   return out;
 }
@@ -142,11 +168,15 @@ export default function DocumentGeo({ document, title = 'Location map', showTitl
   const towers = geo.markers.filter((m) => m.legendLabel === 'Tower').length;
   const subs = geo.markers.filter((m) => m.legendLabel && m.legendLabel.startsWith('Substation')).length;
   const routePts = geo.polylines.reduce((n, l) => n + l.points.length, 0);
+  const insp = geo.inspection;
+  const prog = insp && insp.total_towers ? Math.round((insp.tower_progress || 0) * 100) : null;
   const bits = [
     routePts >= 2 ? `route drawn end to end (${routePts} points)` : null,
     towers ? `${towers} tower${towers === 1 ? '' : 's'}` : null,
     subs ? `${subs} substation${subs === 1 ? '' : 's'}` : null,
     geo.circles.length || geo.polygons.length ? 'perimeter shown' : null,
+    insp ? `${insp.inspected_towers}/${insp.total_towers} towers inspected${prog != null ? ` (${prog}%)` : ''}` : null,
+    insp && insp.inspected_km ? `${insp.inspected_km} km covered` : null,
   ].filter(Boolean);
   return (
     <div className="target-map">

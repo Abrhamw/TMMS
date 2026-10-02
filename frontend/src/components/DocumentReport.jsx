@@ -31,7 +31,7 @@ export default function DocumentReport({ data, onOpenEntity }) {
           </table>
         </div>
       )}
-      {(document.entity === 'ASSET' || document.entity === 'LINE') && (
+      {(document.entity === 'ASSET' || document.entity === 'LINE' || document.entity === 'TASK') && (
         <section id={sid('map')} className="card card-pad doc-sec">
           <h4 className="doc-sec-title">Location map</h4>
           <DocumentGeo document={document} showTitle={false} />

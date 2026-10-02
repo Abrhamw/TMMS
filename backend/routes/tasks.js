@@ -7,7 +7,8 @@ const { listForTask } = require('./attachments');
 const { taskProgress } = require('../taskProgress');
 const { syncCrewStatus } = require('../crewStatus');
 const recurrence = require('../recurrence');
-const { validatePoints, coverage } = require('../inspectionTrace');
+const { validatePoints } = require('../inspectionTrace');
+const { lineCoverageFor } = require('../lineInspection');
 const { projectPointToRoute } = require('../lineGeometry');
 const { maxTaskSeq, formatTaskNumber, nextTaskNumber } = require('../taskNumber');
 const { canAssignCrew, taskVisible, authorizedCrewIds } = require('../authority');
@@ -1841,13 +1842,6 @@ router.patch('/tasks/:id/work-items/:itemId', (req, res) => {
   audit(req.user, 'UPDATE', 'task_work_item', item.id, { task_id: t.id, status });
   res.json(get('task_work_item', item.id));
 });
-
-function lineCoverageFor(lineId, route) {
-  const towers = db.prepare('SELECT id, km_marker, latitude, longitude FROM tower WHERE line_id = ? ORDER BY km_marker, id').all(lineId);
-  const tasks = db.prepare('SELECT id, status, tower_id FROM task WHERE line_id = ? OR tower_id IN (SELECT id FROM tower WHERE line_id = ?)').all(lineId, lineId);
-  const traceTaskIds = db.prepare('SELECT DISTINCT task_id FROM inspection_trace_point WHERE line_id = ?').all(lineId).map((r) => r.task_id);
-  return coverage({ lineId, route, towers, tasks, traceTaskIds });
-}
 
 router.post('/tasks/:id/trace', (req, res) => {
   const t = get('task', Number(req.params.id));

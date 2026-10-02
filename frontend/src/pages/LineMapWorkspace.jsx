@@ -145,6 +145,12 @@ export default function LineMapWorkspace({ embedded }) {
     () => (showProgress && progress ? new Set(progress.inspected_tower_ids) : null),
     [showProgress, progress]
   );
+  const tracePoints = useMemo(
+    () => (showProgress && progress && Array.isArray(progress.trace_points)
+      ? progress.trace_points.map((p) => [p.lat, p.lng])
+      : EMPTY),
+    [showProgress, progress]
+  );
 
   const reload = useCallback(async () => {
     if (!lid) return null;
@@ -573,6 +579,7 @@ export default function LineMapWorkspace({ embedded }) {
               lineInfo={detail}
               coveredPaths={coveredPaths}
               inspectedIds={inspectedIds}
+              tracePoints={tracePoints}
               lineId={detail.id}
               height={560}
               onSelect={selectTower}
