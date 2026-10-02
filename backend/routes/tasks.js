@@ -116,7 +116,7 @@ function sendAssignmentInstruction(req, task, crewId) {
 const TASK_WRITABLE = [
   'title', 'description', 'task_type', 'priority', 'priority_reason', 'due_date',
   'scheduled_start', 'scheduled_end', 'region_id', 'substation_id', 'line_id',
-  'tower_id', 'asset_id', 'checklist_template_id', 'checklist_template_ids', 'crew_id',
+  'tower_id', 'tower_from_id', 'tower_to_id', 'asset_id', 'checklist_template_id', 'checklist_template_ids', 'crew_id',
   'permit_required', 'is_energized_work',
 ];
 
@@ -236,6 +236,8 @@ function taskDetail(t) {
   out.substation = t.substation_id ? get('substation', t.substation_id) : null;
   out.line = t.line_id ? get('transmission_line', t.line_id, ['route_json']) : null;
   out.tower = t.tower_id ? get('tower', t.tower_id) : null;
+  out.tower_from = t.tower_from_id ? get('tower', t.tower_from_id) : null;
+  out.tower_to = t.tower_to_id ? get('tower', t.tower_to_id) : null;
   out.asset = t.asset_id ? get('asset', t.asset_id) : null;
   out.crew = t.crew_id ? get('crew', t.crew_id) : null;
   out.checklist_template = t.checklist_template_id ? get('checklist_template', t.checklist_template_id) : null;
@@ -285,9 +287,9 @@ function taskProgressMap(taskIds) {
 }
 
 function taskDetails(rows) {
-  const idSet = (col) => {
+  const idSet = (...cols) => {
     const s = new Set();
-    for (const t of rows) if (Number.isInteger(t[col]) && t[col] > 0) s.add(t[col]);
+    for (const t of rows) for (const col of cols) if (Number.isInteger(t[col]) && t[col] > 0) s.add(t[col]);
     return s;
   };
   const taskIds = rows.map((t) => t.id);
@@ -299,7 +301,7 @@ function taskDetails(rows) {
       try { l.route_json = JSON.parse(l.route_json); } catch { /* keep raw */ }
     }
   }
-  const towers = rowsByIds('tower', idSet('tower_id'));
+  const towers = rowsByIds('tower', idSet('tower_id', 'tower_from_id', 'tower_to_id'));
   const assets = rowsByIds('asset', idSet('asset_id'));
   const crews = rowsByIds('crew', idSet('crew_id'));
   const taskTemplates = taskTemplateIdsMap(taskIds);
@@ -318,6 +320,8 @@ function taskDetails(rows) {
       substation: t.substation_id ? substations.get(t.substation_id) || null : null,
       line: t.line_id ? lines.get(t.line_id) || null : null,
       tower: t.tower_id ? towers.get(t.tower_id) || null : null,
+      tower_from: t.tower_from_id ? towers.get(t.tower_from_id) || null : null,
+      tower_to: t.tower_to_id ? towers.get(t.tower_to_id) || null : null,
       asset: t.asset_id ? assets.get(t.asset_id) || null : null,
       crew: t.crew_id ? crews.get(t.crew_id) || null : null,
       checklist_template: t.checklist_template_id ? templates.get(t.checklist_template_id) || null : null,
@@ -463,6 +467,11 @@ function csvField(v) {
 function taskTarget(t) {
   if (t.asset_id) return { type: 'ASSET', name: get('asset', t.asset_id)?.name || '' };
   if (t.tower_id) return { type: 'TOWER', name: get('tower', t.tower_id)?.tower_id || '' };
+  if (t.tower_from_id && t.tower_to_id) {
+    const from = get('tower', t.tower_from_id);
+    const to = get('tower', t.tower_to_id);
+    return { type: 'SECTION', name: from && to ? `${from.tower_id}-${to.tower_id}` : '' };
+  }
   if (t.substation_id) return { type: 'SUBSTATION', name: get('substation', t.substation_id)?.name || '' };
   if (t.line_id) return { type: 'LINE', name: get('transmission_line', t.line_id)?.name || '' };
   return { type: 'NONE', name: '' };
@@ -751,6 +760,7 @@ router.post('/tasks', (req, res) => {
     return res.status(400).json({ error: 'priority must be CRITICAL|HIGH|MEDIUM|LOW' });
   }
   if (!validateTargets(req, res, fields)) return;
+  normalizeSection(fields);
   try {
     const now = new Date().toISOString();
     const n = maxTaskSeq() + 1;
@@ -795,14 +805,29 @@ router.put('/tasks/:id', (req, res) => {
     }
   }
   if (!validateTargets(req, res, { ...t, ...fields })) return;
+  if (fields.tower_from_id !== undefined || fields.tower_to_id !== undefined) {
+    const merged = { ...t, ...fields };
+    normalizeSection(merged);
+    fields.tower_from_id = merged.tower_from_id;
+    fields.tower_to_id = merged.tower_to_id;
+    fields.line_id = merged.line_id;
+  }
   updateRow('task', Number(req.params.id), { ...fields, updated_at: new Date().toISOString() }, [], 'revision');
   // updateRow drops null values, but clearing a reference is a meaningful edit
-  // (detach a crew or a checklist template from a task). Apply those explicitly.
+  // (detach a crew, a checklist template, a single tower or a section). Apply
+  // those explicitly, and keep single-tower and section targets mutually
+  // exclusive.
   const handledTemplates = fields.checklist_template_ids !== undefined || fields.checklist_template_id !== undefined;
   const clears = ['crew_id'].filter((k) => fields[k] === null);
+  if (fields.tower_id !== undefined && fields.tower_id !== null) clears.push('tower_from_id', 'tower_to_id');
+  if (fields.tower_from_id !== undefined && fields.tower_from_id !== null && fields.tower_to_id !== undefined && fields.tower_to_id !== null) {
+    if (fields.tower_id === undefined || fields.tower_id === null) clears.push('tower_id');
+  }
+  if (fields.tower_from_id === null || fields.tower_to_id === null) clears.push('tower_from_id', 'tower_to_id');
   if (!handledTemplates && fields.checklist_template_id === null) clears.push('checklist_template_id');
-  if (clears.length) {
-    db.prepare(`UPDATE task SET ${clears.map((k) => `${k} = NULL`).join(', ')} WHERE id = ?`).run(Number(req.params.id));
+  const uniqueClears = [...new Set(clears)];
+  if (uniqueClears.length) {
+    db.prepare(`UPDATE task SET ${uniqueClears.map((k) => `${k} = NULL`).join(', ')} WHERE id = ?`).run(Number(req.params.id));
   }
   // The join table is authoritative for which templates govern the task; sync it
   // (and the legacy primary column) whenever the caller touched the selection.
@@ -816,6 +841,27 @@ router.put('/tasks/:id', (req, res) => {
   audit(req.user, 'UPDATE', 'task', Number(req.params.id), fields);
   res.json(taskDetail(get('task', Number(req.params.id))));
 });
+
+function sectionEndpoints(t) {
+  const has = (v) => v !== undefined && v !== null && v !== '';
+  const f = has(t.tower_from_id) ? Number(t.tower_from_id) : null;
+  const g = has(t.tower_to_id) ? Number(t.tower_to_id) : null;
+  return { f, g, any: f != null || g != null, both: f != null && g != null };
+}
+
+function normalizeSection(fields) {
+  const { f, g, both } = sectionEndpoints(fields);
+  if (!both) return;
+  const a = get('tower', f);
+  const b = get('tower', g);
+  if (!a || !b) return;
+  const ka = Number(a.km_marker) || 0;
+  const kb = Number(b.km_marker) || 0;
+  const swap = kb < ka || (kb === ka && b.id < a.id);
+  fields.tower_from_id = swap ? b.id : a.id;
+  fields.tower_to_id = swap ? a.id : b.id;
+  if (fields.line_id === undefined || fields.line_id === null) fields.line_id = a.line_id;
+}
 
 function validateTargets(req, res, t = req.body) {
   const regionId = Number(t.region_id);
@@ -835,6 +881,21 @@ function validateTargets(req, res, t = req.body) {
     const l = get('transmission_line', tw.line_id);
     if (!l || l.region_id !== regionId) { res.status(400).json({ error: 'Tower does not belong to the task region' }); return false; }
     if (t.line_id && Number(t.line_id) !== tw.line_id) { res.status(400).json({ error: 'Tower does not belong to the selected line' }); return false; }
+  }
+  const section = sectionEndpoints(t);
+  if (section.any && !section.both) {
+    res.status(400).json({ error: 'Section requires both tower_from_id and tower_to_id' });
+    return false;
+  }
+  if (section.both) {
+    const from = get('tower', section.f);
+    const to = get('tower', section.g);
+    if (!from || !to) { res.status(400).json({ error: 'Section tower not found' }); return false; }
+    if (from.line_id !== to.line_id) { res.status(400).json({ error: 'Section towers must belong to the same line' }); return false; }
+    const l = get('transmission_line', from.line_id);
+    if (!l || l.region_id !== regionId) { res.status(400).json({ error: 'Section towers do not belong to the task region' }); return false; }
+    if (t.line_id && Number(t.line_id) !== from.line_id) { res.status(400).json({ error: 'Section towers do not belong to the selected line' }); return false; }
+    if (t.tower_id) { res.status(400).json({ error: 'A task cannot target both a single tower and a section' }); return false; }
   }
   if (t.asset_id) {
     const a = get('asset', Number(t.asset_id));

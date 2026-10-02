@@ -7,7 +7,7 @@ import { assetsInScope, crewsInRegion, linesInRegion, subsInRegion, towersInScop
 
 const TITLE = 'Maintenance Tasks';
 const CRUMBS = 'TMMS / Operations';
-const blank = { title: '', task_type: 'PREVENTIVE', priority: 'MEDIUM', description: '', region_id: 1, substation_id: null, line_id: null, tower_id: null, asset_id: null, checklist_template_ids: [], crew_id: null, due_date: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 16) };
+const blank = { title: '', task_type: 'PREVENTIVE', priority: 'MEDIUM', description: '', region_id: 1, substation_id: null, line_id: null, tower_id: null, tower_from_id: null, tower_to_id: null, asset_id: null, checklist_template_ids: [], crew_id: null, due_date: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 16) };
 
 const STATUSES = ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION', 'COMPLETED', 'CANCELLED', 'FAILED'];
 
@@ -66,6 +66,10 @@ export default function Tasks() {
   const formTowers = useMemo(
     () => towersInScope(towers, { regionId: form?.region_id, lineId: form?.line_id }, { lines }),
     [towers, form?.region_id, form?.line_id, lines]
+  );
+  const formLineTowers = useMemo(
+    () => [...formTowers].sort((a, b) => (Number(a.km_marker) || 0) - (Number(b.km_marker) || 0) || a.id - b.id),
+    [formTowers]
   );
   const formAssets = useMemo(
     () => assetsInScope(assets, { regionId: form?.region_id, substationId: form?.substation_id, lineId: form?.line_id }, { subs, lines }),
@@ -363,13 +367,36 @@ export default function Tasks() {
               <SearchSelect value={form.tower_id || ''} onChange={(e) => {
                 const tid = e.target.value ? Number(e.target.value) : null;
                 const tw = towers.find((x) => x.id === tid);
-                setForm({ ...form, tower_id: tid, line_id: tw ? tw.line_id : form.line_id });
+                setForm({ ...form, tower_id: tid, tower_from_id: null, tower_to_id: null, line_id: tw ? tw.line_id : form.line_id });
               }}>
                 <option value="">— none —</option>
                 {(formTowers).map((tw) => (
                   <option key={tw.id} value={tw.id}>{tw.tower_id} ({tw.tower_number})</option>
                 ))}
               </SearchSelect></div>
+            <div className="field"><label>Section from tower</label>
+              <SearchSelect value={form.tower_from_id || ''} onChange={(e) => {
+                const id = e.target.value ? Number(e.target.value) : null;
+                const tw = towers.find((x) => x.id === id);
+                setForm({ ...form, tower_from_id: id, tower_id: null, line_id: tw ? tw.line_id : form.line_id });
+              }}>
+                <option value="">— none —</option>
+                {(formLineTowers).map((tw) => (
+                  <option key={tw.id} value={tw.id}>{tw.tower_id} ({tw.tower_number})</option>
+                ))}
+              </SearchSelect></div>
+            <div className="field"><label>Section to tower</label>
+              <SearchSelect value={form.tower_to_id || ''} onChange={(e) => {
+                const id = e.target.value ? Number(e.target.value) : null;
+                const tw = towers.find((x) => x.id === id);
+                setForm({ ...form, tower_to_id: id, tower_id: null, line_id: tw ? tw.line_id : form.line_id });
+              }}>
+                <option value="">— none —</option>
+                {(formLineTowers).map((tw) => (
+                  <option key={tw.id} value={tw.id}>{tw.tower_id} ({tw.tower_number})</option>
+                ))}
+              </SearchSelect></div>
+            <div className="field full"><span className="muted" style={{ fontSize: 12 }}>Whole line when no tower is chosen; a single tower inspects that tower; a from/to pair inspects that inclusive tower range.</span></div>
             <div className="field"><label>Target asset</label>
               <SearchSelect value={form.asset_id || ''} onChange={(e) => {
                 const aid = e.target.value ? Number(e.target.value) : null;

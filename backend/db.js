@@ -853,6 +853,10 @@ function initSchema() {
   migrate('inspection_trace_point', 'client_ref', 'ALTER TABLE inspection_trace_point ADD COLUMN client_ref TEXT');
   migrate('message_recipient', 'delivered_at', 'ALTER TABLE message_recipient ADD COLUMN delivered_at TEXT');
   migrate('message_recipient', 'acknowledged_at', 'ALTER TABLE message_recipient ADD COLUMN acknowledged_at TEXT');
+  // A line inspection may be split across crews: a section task carries the
+  // inclusive tower range it is responsible for.
+  migrate('task', 'tower_from_id', 'ALTER TABLE task ADD COLUMN tower_from_id INTEGER REFERENCES tower(id)');
+  migrate('task', 'tower_to_id', 'ALTER TABLE task ADD COLUMN tower_to_id INTEGER REFERENCES tower(id)');
   // Everything already sent predates delivery tracking: treat a recipient as
   // delivered only when that person actually has an active account to receive
   // it, mirroring the live delivery rule (accountless people stay undelivered).

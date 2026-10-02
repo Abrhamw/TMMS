@@ -573,12 +573,22 @@ function computeRaw(reportType, params, user) {
       const lineFrom = line && line.from_substation ? line.from_substation : null;
       const lineTo = line && line.to_substation ? line.to_substation : null;
       const inspection = line ? inspectionForLine(line.id, Array.isArray(line.route_json) ? line.route_json : []) : null;
+      const sectionTowers = resolved.tower_from && resolved.tower_to && line
+        ? (() => {
+            const all = db.prepare('SELECT * FROM tower WHERE line_id = ? ORDER BY km_marker, id').all(line.id);
+            const idx = new Map(all.map((x, i) => [x.id, i]));
+            const a = idx.get(resolved.tower_from.id);
+            const b = idx.get(resolved.tower_to.id);
+            if (a == null || b == null) return null;
+            return all.slice(Math.min(a, b), Math.max(a, b) + 1);
+          })()
+        : null;
       const executorRow = executions.find((e) => e.executed_by) || null;
       const executedBy = executorRow && executorRow.executed_by ? get('person', executorRow.executed_by) : null;
       const target = sub
         ? `Substation ${sub.name}${sub.substation_id ? ` (${sub.substation_id})` : ''}`
         : line
-          ? `Line ${line.name}${line.voltage_kv ? ` · ${line.voltage_kv} kV` : ''}${lineFrom && lineTo ? ` · ${lineFrom.name} → ${lineTo.name}` : ''}${tower ? ` · Tower ${tower.tower_id}` : ''}`
+          ? `Line ${line.name}${line.voltage_kv ? ` · ${line.voltage_kv} kV` : ''}${lineFrom && lineTo ? ` · ${lineFrom.name} → ${lineTo.name}` : ''}${tower ? ` · Tower ${tower.tower_id}` : resolved.tower_from && resolved.tower_to ? ` · Towers ${resolved.tower_from.tower_id}–${resolved.tower_to.tower_id}` : ''}`
           : asset
             ? `Asset ${asset.asset_id} — ${asset.name}`
             : '—';
@@ -629,7 +639,9 @@ function computeRaw(reportType, params, user) {
           task: { ...t, ...taskProgress(t.id) },
           crew,
           region,
-          target: { type: sub ? 'SUBSTATION' : line ? (tower ? 'TOWER' : 'LINE') : asset ? 'ASSET' : null, ...resolved },
+          target: { type: sub ? 'SUBSTATION' : line ? (tower ? 'TOWER' : resolved.tower_from && resolved.tower_to ? 'SECTION' : 'LINE') : asset ? 'ASSET' : null, ...resolved },
+          section: resolved.tower_from && resolved.tower_to ? { from: resolved.tower_from, to: resolved.tower_to } : null,
+          towers: sectionTowers,
           inspection,
           template: tpl,
           executions,

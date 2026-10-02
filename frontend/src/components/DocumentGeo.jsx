@@ -7,6 +7,7 @@ import { entityColor, maxVoltageKv, boundaryRing } from '../mapFocus';
 // document always carries a map when the entity has coordinates.
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+const DEFAULT_LAYERS = { route: true, covered: true, trace: true, towers: true };
 const pt = (lat, lng) => {
   const a = num(lat);
   const b = num(lng);
@@ -69,18 +70,20 @@ const inspectedSet = (insp) => (insp && Array.isArray(insp.inspected_tower_ids)
   ? new Set(insp.inspected_tower_ids.map(Number))
   : null);
 
-function addInspection(out, insp) {
+function addInspection(out, insp, L) {
   if (!insp) return;
-  (insp.covered_paths || []).forEach((seg) => {
+  if (L.covered) (insp.covered_paths || []).forEach((seg) => {
     const points = routePts(seg);
     if (points.length < 2) return;
     out.polylines.push({ points, color: '#16a34a', weight: 7, label: 'Inspected span', legendLabel: 'Inspected span' });
     points.forEach((p) => out.fit.push(p));
   });
-  const trace = (insp.trace_points || []).map((p) => pt(p.lat, p.lng)).filter(Boolean);
-  if (trace.length >= 2) {
-    out.polylines.push({ points: trace, color: '#ea580c', weight: 3, label: 'Crew trace', legendLabel: 'Crew trace' });
-    trace.forEach((p) => out.fit.push(p));
+  if (L.trace) {
+    const trace = (insp.trace_points || []).map((p) => pt(p.lat, p.lng)).filter(Boolean);
+    if (trace.length >= 2) {
+      out.polylines.push({ points: trace, color: '#ea580c', weight: 3, label: 'Crew trace', legendLabel: 'Crew trace' });
+      trace.forEach((p) => out.fit.push(p));
+    }
   }
   out.inspection = insp;
 }
@@ -102,61 +105,71 @@ function addAssetPoint(out, asset, { voltage, flash = true } = {}) {
   return pos;
 }
 
-function buildAsset(d) {
+function buildAsset(d, L) {
   const out = { markers: [], polylines: [], polygons: [], circles: [], fit: [], focus: null };
   const a = d.asset || {};
   const voltage = lineKv(d.line) ?? subKv(d.substation);
-  addLine(out, d.line, true);
-  addSub(out, d.substation);
+  if (L.route) {
+    addLine(out, d.line, true);
+    addSub(out, d.substation);
+  }
   addTower(out, d.tower, d.line, { primary: true });
   const pos = addAssetPoint(out, a, { voltage });
   out.focus = pos ? [pos] : (out.fit.length ? out.fit : null);
   return out;
 }
 
-function buildLine(d) {
+function buildLine(d, L) {
   const out = { markers: [], polylines: [], polygons: [], circles: [], fit: [], focus: null };
   const insp = d.inspection || null;
   const inspected = inspectedSet(insp);
-  addLine(out, d.line, true);
-  addSub(out, d.from_substation);
-  addSub(out, d.to_substation);
-  (d.towers || []).forEach((t) => addTower(out, t, d.line, { cap: 400, inspected: inspected ? inspected.has(Number(t.id)) : null }));
-  addInspection(out, insp);
+  if (L.route) {
+    addLine(out, d.line, true);
+    addSub(out, d.from_substation);
+    addSub(out, d.to_substation);
+  }
+  if (L.towers) {
+    (d.towers || []).forEach((t) => addTower(out, t, d.line, { cap: 400, inspected: inspected ? inspected.has(Number(t.id)) : null }));
+  }
+  addInspection(out, insp, L);
   out.focus = out.polylines.length ? [...out.polylines.flatMap((p) => p.points), ...out.fit] : out.fit;
   return out;
 }
 
-function buildTask(d) {
+function buildTask(d, L) {
   const out = { markers: [], polylines: [], polygons: [], circles: [], fit: [], focus: null };
   const insp = d.inspection || null;
   const inspected = inspectedSet(insp);
   const t = d.target || {};
-  if (t.line) {
+  if (L.route && t.line) {
     addLine(out, t.line, true);
     // A line's start and end terminals, so the printed map shows where it runs.
     addSub(out, t.line.from_substation);
     addSub(out, t.line.to_substation);
   }
-  addSub(out, t.substation);
+  if (L.route) addSub(out, t.substation);
   addTower(out, t.tower, t.line, { primary: true, inspected: t.tower && inspected ? inspected.has(Number(t.tower.id)) : null });
+  if (L.towers) {
+    (d.towers || []).forEach((tw) => addTower(out, tw, t.line, { cap: 400, inspected: inspected ? inspected.has(Number(tw.id)) : null }));
+  }
   const voltage = lineKv(t.line) ?? subKv(t.substation);
   const assetPos = t.asset ? addAssetPoint(out, t.asset, { voltage }) : null;
-  addInspection(out, insp);
+  addInspection(out, insp, L);
   out.focus = assetPos ? [assetPos] : (out.polylines.length ? [...out.polylines.flatMap((p) => p.points), ...out.fit] : out.fit);
   return out;
 }
 
-function build(document) {
+function build(document, layers) {
   if (!document) return null;
-  if (document.entity === 'ASSET') return buildAsset(document);
-  if (document.entity === 'LINE') return buildLine(document);
-  if (document.entity === 'TASK') return buildTask(document);
+  const L = { ...DEFAULT_LAYERS, ...(layers || {}) };
+  if (document.entity === 'ASSET') return buildAsset(document, L);
+  if (document.entity === 'LINE') return buildLine(document, L);
+  if (document.entity === 'TASK') return buildTask(document, L);
   return null;
 }
 
-export default function DocumentGeo({ document, title = 'Location map', showTitle = true }) {
-  const geo = build(document);
+export default function DocumentGeo({ document, title = 'Location map', showTitle = true, layers }) {
+  const geo = build(document, layers);
   if (!geo) return null;
   const hasGeometry = geo.markers.length > 0 || geo.polylines.length > 0 || geo.circles.length > 0 || geo.polygons.length > 0;
   if (!hasGeometry) return null;

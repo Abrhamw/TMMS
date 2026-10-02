@@ -30,6 +30,8 @@ function resolveTarget({ task, asset } = {}) {
     || (a && a.line_id ? get('transmission_line', a.line_id, ['route_json']) : null);
   const tower = (task && task.tower_id ? get('tower', task.tower_id) : null)
     || (a && a.tower_id ? get('tower', a.tower_id) : null);
+  const towerFrom = task && task.tower_from_id ? get('tower', task.tower_from_id) : null;
+  const towerTo = task && task.tower_to_id ? get('tower', task.tower_to_id) : null;
   const region = task && task.region_id ? get('region', task.region_id) : null;
   // A line's terminals are what make "start → end" legible on a printed map.
   if (line) {
@@ -41,6 +43,8 @@ function resolveTarget({ task, asset } = {}) {
     substation: substation || null,
     line: line || null,
     tower: tower || null,
+    tower_from: towerFrom || null,
+    tower_to: towerTo || null,
     region: region || null,
   };
 }
@@ -55,6 +59,10 @@ function targetHeadline({ taskType, taskTitle, target } = {}) {
   if (type) bits.push(type);
   if (taskTitle && taskTitle !== infra && taskTitle !== asset) bits.push(taskTitle);
   if (infra && !bits.some((b) => b.includes(infra))) bits.push(infra);
+  const section = target && target.tower_from && target.tower_to
+    ? `Towers ${target.tower_from.tower_id}–${target.tower_to.tower_id}`
+    : null;
+  if (section && !bits.some((b) => b.includes(section))) bits.push(section);
   if (asset && !bits.some((b) => b.includes(asset))) bits.push(asset);
   return bits.join(' — ');
 }

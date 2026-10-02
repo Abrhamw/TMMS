@@ -61,13 +61,21 @@ function coverage({ lineId, route, towers, tasks, traceTaskIds }) {
   );
   out.total_towers = ordered.length;
   const list = tasks || [];
-  const lineComplete = list.some((t) => t.status === 'COMPLETED' && t.tower_id == null);
+  const lineComplete = list.some((t) => t.status === 'COMPLETED' && t.tower_id == null && t.tower_from_id == null && t.tower_to_id == null);
   const completedTowers = new Set(
     list.filter((t) => t.status === 'COMPLETED' && t.tower_id != null).map((t) => Number(t.tower_id))
   );
   const inspected = new Set();
   for (const tw of ordered) {
     if (lineComplete || completedTowers.has(Number(tw.id))) inspected.add(tw.id);
+  }
+  const index = new Map(ordered.map((tw, i) => [Number(tw.id), i]));
+  for (const s of list) {
+    if (s.status !== 'COMPLETED' || s.tower_from_id == null || s.tower_to_id == null) continue;
+    const a = index.get(Number(s.tower_from_id));
+    const b = index.get(Number(s.tower_to_id));
+    if (a == null || b == null) continue;
+    for (let i = Math.min(a, b); i <= Math.max(a, b); i++) inspected.add(ordered[i].id);
   }
   out.inspected_tower_ids = ordered.filter((tw) => inspected.has(tw.id)).map((tw) => tw.id);
   out.inspected_towers = out.inspected_tower_ids.length;

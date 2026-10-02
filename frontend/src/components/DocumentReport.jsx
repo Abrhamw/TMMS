@@ -16,6 +16,7 @@ import AnalyticsBlock from './AnalyticsBlock';
 // while its item detail is shown only when the reader selects it.
 export default function DocumentReport({ data, onOpenEntity }) {
   const uid = useId();
+  const [layers, setLayers] = useState({ route: true, covered: true, trace: true, towers: true });
   if (!data) return <div className="muted">No data</div>;
   const metricRows = (data.rows || []).filter((r) => r && 'label' in r);
   const document = data.document || {};
@@ -34,7 +35,21 @@ export default function DocumentReport({ data, onOpenEntity }) {
       {(document.entity === 'ASSET' || document.entity === 'LINE' || document.entity === 'TASK') && (
         <section id={sid('map')} className="card card-pad doc-sec">
           <h4 className="doc-sec-title">Location map</h4>
-          <DocumentGeo document={document} showTitle={false} />
+          {(document.entity === 'LINE' || document.entity === 'TASK') && (
+            <div className="no-print mb" style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13 }}>
+              {[['route', 'Route'], ['covered', 'Inspected spans'], ['trace', 'Crew trace'], ['towers', 'Tower status']].map(([key, label]) => (
+                <label key={key} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={layers[key]}
+                    onChange={(e) => setLayers({ ...layers, [key]: e.target.checked })}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          <DocumentGeo document={document} showTitle={false} layers={layers} />
         </section>
       )}
       <DocumentSections document={document} onOpenEntity={onOpenEntity} sid={sid} />
