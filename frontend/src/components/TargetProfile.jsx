@@ -21,9 +21,9 @@ function KvRows({ rows, labelWidth = 170 }) {
 // tower, the asset and whether it is installed indoors or outdoors; the
 // certifications and test equipment still to be secured; and the people who
 // created, assigned, executed and verified the work, in lifecycle order.
-export default function TargetProfile({ target, readiness, workflow, detailTitle = 'Work location detail', mapTitle = 'Route map', substationMapTitle = 'Location map' }) {
-  const routeMode = hasRouteSketch(target);
-  const mapMode = !routeMode && hasSubstationMap(target);
+export default function TargetProfile({ target, readiness, workflow, detailTitle = 'Work location detail', mapTitle = 'Route map', substationMapTitle = 'Location map', withMap = true }) {
+  const routeMode = withMap && hasRouteSketch(target);
+  const mapMode = withMap && !routeMode && hasSubstationMap(target);
   // The substation map caption already states the premises/asset description, so
   // drop those rows from the detail when the map carries them.
   const details = targetDetailRows(target).filter((r) => !(mapMode && (r.label === 'Premises detail' || r.label === 'Asset detail')));

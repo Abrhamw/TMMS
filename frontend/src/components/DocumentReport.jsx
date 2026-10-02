@@ -153,7 +153,7 @@ function DocumentSections({ document, onOpenEntity, sid }) {
     const target = document.target || {};
     return (
       <Sections items={[
-        { key: 'target', id: sid('target'), title: 'Target profile', body: <TargetProfile target={target} readiness={document.dispatch_audit} workflow={document.workflow} /> },
+        { key: 'target', id: sid('target'), title: 'Target profile', body: <TargetProfile target={target} readiness={document.dispatch_audit} workflow={document.workflow} withMap={false} /> },
         { key: 'desc', id: sid('desc'), title: 'Description', body: <p className="muted" style={{ fontSize: 13, margin: 0 }}>{t.description || 'No description.'}</p> },
         {
           key: 'summary', id: sid('summary'), title: 'Outcome summary',
