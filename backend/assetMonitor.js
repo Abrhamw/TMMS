@@ -27,6 +27,8 @@ function candidateAssets() {
     `SELECT a.* FROM asset a WHERE a.id IN (
        SELECT asset_id FROM asset_maintenance_event WHERE asset_id IS NOT NULL
        UNION SELECT asset_id FROM task WHERE asset_id IS NOT NULL
+       UNION SELECT asset_id FROM asset_reading WHERE asset_id IS NOT NULL
+       UNION SELECT asset_id FROM asset_performance_event WHERE asset_id IS NOT NULL
      )`
   ).all().filter((a) => !DEAD_LIFECYCLE.includes(String(a.lifecycle_status || '').toUpperCase()));
 }
@@ -83,6 +85,11 @@ function revalueAssets({ source = 'AGENT', onDegraded } = {}) {
       recommendation_label: suggestion.recommendation_label,
       confidence: suggestion.confidence,
       reasons: suggestion.reasons || [],
+      base_rating: suggestion.base_rating != null ? suggestion.base_rating : null,
+      performance_delta: suggestion.performance_delta != null ? suggestion.performance_delta : null,
+      degradation_rate: suggestion.degradation_rate != null ? suggestion.degradation_rate : null,
+      factors: suggestion.factors || [],
+      model_version: (suggestion.performance && suggestion.performance.model_version) || null,
       source,
     });
   }
@@ -98,14 +105,15 @@ function revalueAssets({ source = 'AGENT', onDegraded } = {}) {
   }
   const stmt = db.prepare(
     `INSERT INTO asset_health_snapshot
-       (asset_id, captured_at, condition_rating, suggested_rating, health_index, remaining_useful_life_years, recommendation, source, reasons, report_id)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`
+       (asset_id, captured_at, condition_rating, suggested_rating, health_index, remaining_useful_life_years, recommendation, source, reasons, report_id, base_rating, performance_delta, degradation_rate, factors_json, model_version)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   );
   const tx = (rows) => withTx(() => {
     for (const c of rows) {
       stmt.run(
         c.asset_pk, now, c.from_rating, c.to_rating, c.health_index, c.remaining_useful_life_years,
-        c.recommendation, source, JSON.stringify(c.reasons || []), c.delta < 0 ? reportId : null
+        c.recommendation, source, JSON.stringify(c.reasons || []), c.delta < 0 ? reportId : null,
+        c.base_rating, c.performance_delta, c.degradation_rate, JSON.stringify(c.factors || []), c.model_version
       );
     }
   });

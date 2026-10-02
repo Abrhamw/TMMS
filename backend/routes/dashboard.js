@@ -5,6 +5,7 @@ const { taskVisible, authorizedCrewIds, readCrewIds, regionWideRead, isManager }
 const { taskReadiness } = require('../readiness');
 const { maintenanceCostForRegions } = require('../maintenanceCost');
 const { computeRegionValuation, mergeValuations } = require('./register');
+const { recentRevaluationData } = require('../assetMonitor');
 
 const router = express.Router();
 
@@ -335,6 +336,33 @@ router.get('/executive/summary', (req, res) => {
     equipment,
     recommendations,
   });
+});
+
+router.get('/executive/degradation', (req, res) => {
+  if (!['ADMIN', 'EXECUTIVE'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Forbidden: executive views are limited to ADMIN and EXECUTIVE accounts' });
+  }
+  const limit = Math.max(1, Math.min(50, Number(req.query.limit) || 10));
+  const changes = recentRevaluationData({ days: 180 }).changes;
+  const attention = changes
+    .filter((c) => Number(c.delta) < 0)
+    .sort((a, b) => Number(a.delta) - Number(b.delta))
+    .slice(0, limit)
+    .map((c) => ({
+      asset_id: c.asset_pk,
+      asset_code: c.asset_code,
+      asset_name: c.asset_name,
+      asset_type: c.asset_type,
+      region: c.region,
+      current_rating: c.from_rating,
+      suggested_rating: c.to_rating,
+      delta: c.delta,
+      health_index: c.health_index,
+      recommendation: c.recommendation,
+      reasons: c.reasons,
+      captured_at: c.captured_at || null,
+    }));
+  res.json({ generated_at: new Date().toISOString(), count: attention.length, attention });
 });
 
 module.exports = router;

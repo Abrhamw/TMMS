@@ -149,6 +149,35 @@ function initSchema() {
     cost REAL
   );
 
+  CREATE TABLE IF NOT EXISTS asset_reading (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id INTEGER NOT NULL REFERENCES asset(id),
+    reading_type TEXT NOT NULL,
+    value_num REAL NOT NULL,
+    unit TEXT,
+    recorded_at TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'MANUAL',
+    recorded_by INTEGER REFERENCES person(id),
+    task_id INTEGER REFERENCES task(id),
+    client_ref TEXT,
+    notes TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS asset_performance_event (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id INTEGER NOT NULL REFERENCES asset(id),
+    event_type TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'MEDIUM',
+    occurred_at TEXT NOT NULL,
+    magnitude REAL,
+    duration_min REAL,
+    source TEXT NOT NULL DEFAULT 'MANUAL',
+    recorded_by INTEGER REFERENCES person(id),
+    task_id INTEGER REFERENCES task(id),
+    client_ref TEXT,
+    notes TEXT
+  );
+
   CREATE TABLE IF NOT EXISTS tower_component (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tower_id INTEGER NOT NULL REFERENCES tower(id) ON DELETE CASCADE,
@@ -857,6 +886,15 @@ function initSchema() {
   // inclusive tower range it is responsible for.
   migrate('task', 'tower_from_id', 'ALTER TABLE task ADD COLUMN tower_from_id INTEGER REFERENCES tower(id)');
   migrate('task', 'tower_to_id', 'ALTER TABLE task ADD COLUMN tower_to_id INTEGER REFERENCES tower(id)');
+  // Performance-aware condition snapshots: the asset monitor records how much
+  // of a suggested rating came from the age baseline versus live performance
+  // (loading, faults, thermal), so the change-log can explain a degradation.
+  migrate('asset_health_snapshot', 'base_rating', 'ALTER TABLE asset_health_snapshot ADD COLUMN base_rating REAL');
+  migrate('asset_health_snapshot', 'performance_delta', 'ALTER TABLE asset_health_snapshot ADD COLUMN performance_delta REAL');
+  migrate('asset_health_snapshot', 'degradation_rate', 'ALTER TABLE asset_health_snapshot ADD COLUMN degradation_rate REAL');
+  migrate('asset_health_snapshot', 'factors_json', 'ALTER TABLE asset_health_snapshot ADD COLUMN factors_json TEXT');
+  migrate('asset_health_snapshot', 'model_version', 'ALTER TABLE asset_health_snapshot ADD COLUMN model_version TEXT');
+  migrate('asset_health_snapshot', 'created_by', 'ALTER TABLE asset_health_snapshot ADD COLUMN created_by INTEGER REFERENCES person(id)');
   // Everything already sent predates delivery tracking: treat a recipient as
   // delivered only when that person actually has an active account to receive
   // it, mirroring the live delivery rule (accountless people stay undelivered).
@@ -890,6 +928,10 @@ function initSchema() {
   CREATE UNIQUE INDEX IF NOT EXISTS uq_comment_client_ref ON comment(client_ref) WHERE client_ref IS NOT NULL;
   CREATE UNIQUE INDEX IF NOT EXISTS uq_message_client_ref ON message(client_ref) WHERE client_ref IS NOT NULL;
   CREATE UNIQUE INDEX IF NOT EXISTS uq_inspection_trace_point_client_ref ON inspection_trace_point(client_ref) WHERE client_ref IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_asset_reading_asset ON asset_reading(asset_id, recorded_at);
+  CREATE INDEX IF NOT EXISTS idx_asset_event_asset ON asset_performance_event(asset_id, occurred_at);
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_reading_client_ref ON asset_reading(client_ref) WHERE client_ref IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_performance_event_client_ref ON asset_performance_event(client_ref) WHERE client_ref IS NOT NULL;
   `);
 
   // Backfill the review queue for validations recorded before review tracking

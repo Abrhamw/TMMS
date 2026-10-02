@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, list, get, parseRow, insertRow, updateRow, safeDelete } = require('../util');
+const { db, list, get, parseRow, insertRow, updateRow, safeDelete, byClientRef } = require('../util');
 const { can, isGlobal, audit } = require('../auth');
 const { commandScope } = require('../authority');
 
@@ -11,6 +11,8 @@ const { maintenanceCostForRegions } = require('../maintenanceCost');
 const { syncSubstationBayCount, syncTowerFromAsset } = require('../integrity');
 const { computeHealth, suggestAssetCondition } = require('../assetCondition');
 const { ASSET_TEMPLATE, assetRecords, parseInfra, firstNonEmpty, num } = require('../assetImport');
+const { evaluatePerformance, READING_TYPES, EVENT_TYPES, EVENT_SEVERITIES, MODEL_VERSION } = require('../assetPerformance');
+const { parseCsv } = require('../infraImport');
 
 // Tower structures live in the tower table; their asset rows are created and
 // kept in sync automatically (integrity.syncTowerMirror). Users must not
@@ -552,7 +554,8 @@ router.post('/assets/:id/evaluation', (req, res) => {
   const a = get('asset', Number(req.params.id), ['metadata']);
   if (!a) return res.status(404).json({ error: 'Asset not found' });
   if (!scopeAllowsAsset(commandScope(req.user), a.id)) return res.status(403).json({ error: 'Forbidden: asset is outside your command scope' });
-  const suggestion = req.body.use_suggested ? suggestAssetCondition(a) : null;
+  const combined = req.body.combined === true || req.body.combined === 'true';
+  const suggestion = (req.body.use_suggested || combined) ? suggestAssetCondition(a) : null;
   const rating = suggestion
     ? suggestion.suggested_rating
     : (req.body.condition_rating == null ? a.condition_rating : Number(req.body.condition_rating));
@@ -577,8 +580,34 @@ router.post('/assets/:id/evaluation', (req, res) => {
     lifecycle_status: lifecycle,
   }, [], 'revision');
   audit(req.user, 'EVALUATE', 'asset', a.id, { condition_rating: rating, suggested: !!suggestion, health_index: health.health_index });
+  const snapshotComputed = suggestion
+    ? {
+      combined_rating: rating,
+      health_index: health.health_index,
+      rul_years: health.remaining_useful_life_years,
+      base_rating: suggestion.base_rating,
+      performance_delta: suggestion.performance_delta,
+      degradation_rate: suggestion.degradation_rate,
+      factors: suggestion.factors,
+      recommendation: suggestion.recommendation,
+      reasons: suggestion.reasons,
+      model_version: (suggestion.performance && suggestion.performance.model_version) || MODEL_VERSION,
+    }
+    : {
+      combined_rating: rating,
+      health_index: health.health_index,
+      rul_years: health.remaining_useful_life_years,
+      base_rating: rating,
+      performance_delta: 0,
+      degradation_rate: 0,
+      factors: [],
+      recommendation: null,
+      reasons: [],
+      model_version: MODEL_VERSION,
+    };
+  writeSnapshot(a, snapshotComputed, 'EVALUATION', req.user.person_id, { condition_rating: a.condition_rating, reasons: suggestion ? suggestion.reasons : [] });
   const updated = enrichAsset(get('asset', a.id, ['metadata']));
-  updated.evaluation = suggestion ? { recommendation: suggestion.recommendation, reasons: suggestion.reasons } : null;
+  updated.evaluation = suggestion ? { recommendation: suggestion.recommendation, reasons: suggestion.reasons, performance_delta: suggestion.performance_delta } : null;
   res.json(updated);
 });
 
@@ -811,6 +840,232 @@ router.get('/maintenance-cost', (req, res) => {
       : [req.user.region_id];
   const data = maintenanceCostForRegions(regionIds, { from: req.query.from, to: req.query.to });
   res.json(data);
+});
+
+function isoOr(value) {
+  if (!value) return null;
+  const t = Date.parse(value);
+  if (Number.isNaN(t)) return null;
+  return new Date(t).toISOString();
+}
+
+function numOrNull(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseFactors(value) {
+  try {
+    const f = typeof value === 'string' ? JSON.parse(value) : value;
+    return Array.isArray(f) ? f : [];
+  } catch (_) { return []; }
+}
+
+function loadPerformance(asset) {
+  const readings = db.prepare('SELECT * FROM asset_reading WHERE asset_id = ? ORDER BY recorded_at DESC').all(asset.id);
+  const events = db.prepare('SELECT * FROM asset_performance_event WHERE asset_id = ? ORDER BY occurred_at DESC').all(asset.id);
+  const snapshots = db.prepare('SELECT * FROM asset_health_snapshot WHERE asset_id = ? ORDER BY captured_at DESC, id DESC LIMIT 30').all(asset.id)
+    .map((s) => ({ ...s, factors: parseFactors(s.factors_json) }));
+  return { readings, events, snapshots };
+}
+
+function writeSnapshot(asset, computed, source, userId, extra = {}) {
+  const now = new Date().toISOString();
+  const info = db.prepare(
+    `INSERT INTO asset_health_snapshot
+       (asset_id, captured_at, condition_rating, suggested_rating, health_index, remaining_useful_life_years, recommendation, source, reasons, base_rating, performance_delta, degradation_rate, factors_json, model_version, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).run(
+    asset.id, now,
+    extra.condition_rating != null ? extra.condition_rating : asset.condition_rating,
+    computed.combined_rating != null ? computed.combined_rating : computed.suggested_rating,
+    computed.health_index, computed.rul_years != null ? computed.rul_years : computed.remaining_useful_life_years,
+    computed.recommendation, source, JSON.stringify(extra.reasons || computed.reasons || []),
+    computed.base_rating, computed.performance_delta, computed.degradation_rate,
+    JSON.stringify(computed.factors || []), computed.model_version || MODEL_VERSION, userId || null
+  );
+  return get('asset_health_snapshot', Number(info.lastInsertRowid));
+}
+
+function simulateInputs(asset, readings, events, body, now) {
+  const clone = { ...asset };
+  const rs = readings.slice();
+  const es = events.slice();
+  const at = new Date(now).toISOString();
+  if (body.age_years != null && Number.isFinite(Number(body.age_years))) {
+    clone.installation_date = new Date(now - Number(body.age_years) * 365.25 * 864e5).toISOString();
+  }
+  if (body.months_since_maintenance != null && Number.isFinite(Number(body.months_since_maintenance))) {
+    clone.last_maintenance_at = new Date(now - Number(body.months_since_maintenance) * 30.44 * 864e5).toISOString();
+  }
+  if (body.load_pct != null && Number.isFinite(Number(body.load_pct))) rs.push({ reading_type: 'LOAD_PCT', value_num: Number(body.load_pct), recorded_at: at });
+  if (body.ambient_c != null && Number.isFinite(Number(body.ambient_c))) rs.push({ reading_type: 'AMBIENT_C', value_num: Number(body.ambient_c), recorded_at: at });
+  if (body.thermal_c != null && Number.isFinite(Number(body.thermal_c))) rs.push({ reading_type: 'TOP_OIL_C', value_num: Number(body.thermal_c), recorded_at: at });
+  const faults = Math.max(0, Math.min(20, Number(body.through_faults) || 0));
+  for (let i = 0; i < faults; i++) es.push({ event_type: 'THROUGH_FAULT', severity: 'HIGH', occurred_at: at });
+  const trips = Math.max(0, Math.min(20, Number(body.trips) || 0));
+  for (let i = 0; i < trips; i++) es.push({ event_type: 'TRIP', severity: 'HIGH', occurred_at: at });
+  if (body.environment) es.push({ event_type: 'CORROSION_SEVERE', severity: 'MEDIUM', occurred_at: at });
+  return { asset: clone, readings: rs, events: es };
+}
+
+router.get('/assets/:id/performance', (req, res) => {
+  if (!can(req, 'asset:read')) return res.status(403).json({ error: 'Forbidden: requires asset:read' });
+  const a = get('asset', Number(req.params.id), ['metadata']);
+  if (!a) return res.status(404).json({ error: 'Asset not found' });
+  if (!scopeAllowsAsset(commandScope(req.user), a.id)) return res.status(403).json({ error: 'Forbidden: asset is outside your command scope' });
+  const data = loadPerformance(a);
+  const computed = evaluatePerformance(a, data.readings, data.events);
+  res.json({
+    asset_id: a.id,
+    asset_code: a.asset_id,
+    vocab: { reading_types: READING_TYPES, event_types: EVENT_TYPES, severities: EVENT_SEVERITIES },
+    readings: data.readings,
+    events: data.events,
+    snapshots: data.snapshots,
+    computed,
+  });
+});
+
+router.post('/assets/:id/readings', (req, res) => {
+  if (!can(req, 'asset:evaluate')) return res.status(403).json({ error: 'Forbidden: requires asset:evaluate' });
+  const a = get('asset', Number(req.params.id), ['metadata']);
+  if (!a) return res.status(404).json({ error: 'Asset not found' });
+  if (!scopeAllowsAsset(commandScope(req.user), a.id)) return res.status(403).json({ error: 'Forbidden: asset is outside your command scope' });
+  const type = String(req.body.reading_type || '').toUpperCase();
+  if (!READING_TYPES.includes(type)) return res.status(400).json({ error: `reading_type must be one of: ${READING_TYPES.join(', ')}` });
+  const value = Number(req.body.value_num);
+  if (!Number.isFinite(value)) return res.status(400).json({ error: 'value_num must be numeric' });
+  const recorded_at = isoOr(req.body.recorded_at) || new Date().toISOString();
+  const ref = req.body.client_ref ? String(req.body.client_ref) : null;
+  const existing = byClientRef('asset_reading', ref);
+  if (existing) return res.status(200).json(existing);
+  const id = insertRow('asset_reading', {
+    asset_id: a.id,
+    reading_type: type,
+    value_num: value,
+    unit: req.body.unit || null,
+    recorded_at,
+    source: req.body.source || 'MANUAL',
+    recorded_by: req.user.person_id || null,
+    task_id: req.body.task_id || null,
+    client_ref: ref,
+    notes: req.body.notes || null,
+  });
+  audit(req.user, 'CREATE', 'asset_reading', id, { asset_id: a.id, reading_type: type, value_num: value });
+  res.status(201).json(get('asset_reading', id));
+});
+
+router.post('/assets/:id/performance-events', (req, res) => {
+  if (!can(req, 'asset:evaluate')) return res.status(403).json({ error: 'Forbidden: requires asset:evaluate' });
+  const a = get('asset', Number(req.params.id), ['metadata']);
+  if (!a) return res.status(404).json({ error: 'Asset not found' });
+  if (!scopeAllowsAsset(commandScope(req.user), a.id)) return res.status(403).json({ error: 'Forbidden: asset is outside your command scope' });
+  const type = String(req.body.event_type || '').toUpperCase();
+  if (!EVENT_TYPES.includes(type)) return res.status(400).json({ error: `event_type must be one of: ${EVENT_TYPES.join(', ')}` });
+  const severity = String(req.body.severity || 'MEDIUM').toUpperCase();
+  if (!EVENT_SEVERITIES.includes(severity)) return res.status(400).json({ error: `severity must be one of: ${EVENT_SEVERITIES.join(', ')}` });
+  const occurred_at = isoOr(req.body.occurred_at) || new Date().toISOString();
+  const ref = req.body.client_ref ? String(req.body.client_ref) : null;
+  const existing = byClientRef('asset_performance_event', ref);
+  if (existing) return res.status(200).json(existing);
+  const id = insertRow('asset_performance_event', {
+    asset_id: a.id,
+    event_type: type,
+    severity,
+    occurred_at,
+    magnitude: numOrNull(req.body.magnitude),
+    duration_min: numOrNull(req.body.duration_min),
+    source: req.body.source || 'MANUAL',
+    recorded_by: req.user.person_id || null,
+    task_id: req.body.task_id || null,
+    client_ref: ref,
+    notes: req.body.notes || null,
+  });
+  audit(req.user, 'CREATE', 'asset_performance_event', id, { asset_id: a.id, event_type: type, severity });
+  res.status(201).json(get('asset_performance_event', id));
+});
+
+router.post('/assets/:id/performance/simulate', (req, res) => {
+  if (!can(req, 'asset:evaluate')) return res.status(403).json({ error: 'Forbidden: requires asset:evaluate' });
+  const a = get('asset', Number(req.params.id), ['metadata']);
+  if (!a) return res.status(404).json({ error: 'Asset not found' });
+  if (!scopeAllowsAsset(commandScope(req.user), a.id)) return res.status(403).json({ error: 'Forbidden: asset is outside your command scope' });
+  const data = loadPerformance(a);
+  const now = Date.now();
+  const { asset, readings, events } = simulateInputs(a, data.readings, data.events, req.body || {}, now);
+  const current = evaluatePerformance(a, data.readings, data.events, { now });
+  const computed = evaluatePerformance(asset, readings, events, { now });
+  res.json({ computed, current, delta_vs_current: Math.round((computed.combined_rating - current.combined_rating) * 10) / 10 });
+});
+
+router.post('/assets/:id/performance/snapshots', (req, res) => {
+  if (!can(req, 'asset:evaluate')) return res.status(403).json({ error: 'Forbidden: requires asset:evaluate' });
+  const a = get('asset', Number(req.params.id), ['metadata']);
+  if (!a) return res.status(404).json({ error: 'Asset not found' });
+  if (!scopeAllowsAsset(commandScope(req.user), a.id)) return res.status(403).json({ error: 'Forbidden: asset is outside your command scope' });
+  const source = ['AUTO', 'WHATIF', 'EVALUATION'].includes(String(req.body.source || '').toUpperCase())
+    ? String(req.body.source).toUpperCase()
+    : 'AUTO';
+  const data = loadPerformance(a);
+  const computed = evaluatePerformance(a, data.readings, data.events);
+  const snap = writeSnapshot(a, computed, source, req.user.person_id);
+  audit(req.user, 'SNAPSHOT', 'asset_health_snapshot', snap.id, { asset_id: a.id, source });
+  res.status(201).json(snap);
+});
+
+router.post('/assets/performance/import', (req, res) => {
+  if (!can(req, 'asset:evaluate')) return res.status(403).json({ error: 'Forbidden: requires asset:evaluate' });
+  const csv = req.body.csv || req.body.data || '';
+  const dry = req.body.dry_run === true || req.body.dry_run === 'true';
+  const rows = parseCsv(csv);
+  const scope = commandScope(req.user);
+  const results = [];
+  let created = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const line = i + 2;
+    const code = row.asset_code || row.asset_id;
+    const kind = String(row.kind || 'READING').toUpperCase();
+    const type = String(row.type || '').toUpperCase();
+    const asset = code ? db.prepare('SELECT * FROM asset WHERE asset_id = ?').get(code) : null;
+    if (!asset) { results.push({ line, status: 'error', reason: `unknown asset: ${code || '(blank)'}` }); continue; }
+    if (!scopeAllowsAsset(scope, asset.id)) { results.push({ line, status: 'error', reason: 'asset outside your command scope' }); continue; }
+    const when = isoOr(row.occurred_at || row.recorded_at) || new Date().toISOString();
+    if (kind === 'EVENT') {
+      if (!EVENT_TYPES.includes(type)) { results.push({ line, status: 'error', reason: `unknown event_type: ${type || '(blank)'}` }); continue; }
+      const severity = String(row.severity || 'MEDIUM').toUpperCase();
+      if (!EVENT_SEVERITIES.includes(severity)) { results.push({ line, status: 'error', reason: `invalid severity: ${severity}` }); continue; }
+      const ref = row.client_ref || `import:${code}:EVENT:${type}:${when}`;
+      const existing = byClientRef('asset_performance_event', ref);
+      if (existing) { results.push({ line, status: 'duplicate', id: existing.id }); continue; }
+      if (!dry) {
+        const id = insertRow('asset_performance_event', { asset_id: asset.id, event_type: type, severity, occurred_at: when, magnitude: numOrNull(row.magnitude), duration_min: numOrNull(row.duration_min), source: 'IMPORT', recorded_by: req.user.person_id || null, client_ref: ref, notes: row.notes || null });
+        results.push({ line, status: 'created', id });
+        created += 1;
+      } else {
+        results.push({ line, status: 'would_create' });
+      }
+      continue;
+    }
+    if (!READING_TYPES.includes(type)) { results.push({ line, status: 'error', reason: `unknown reading_type: ${type || '(blank)'}` }); continue; }
+    const value = numOrNull(row.value != null ? row.value : row.value_num);
+    if (value == null) { results.push({ line, status: 'error', reason: 'value must be numeric' }); continue; }
+    const ref = row.client_ref || `import:${code}:READING:${type}:${when}`;
+    const existing = byClientRef('asset_reading', ref);
+    if (existing) { results.push({ line, status: 'duplicate', id: existing.id }); continue; }
+    if (!dry) {
+      const id = insertRow('asset_reading', { asset_id: asset.id, reading_type: type, value_num: value, unit: row.unit || null, recorded_at: when, source: 'IMPORT', recorded_by: req.user.person_id || null, client_ref: ref, notes: row.notes || null });
+      results.push({ line, status: 'created', id });
+      created += 1;
+    } else {
+      results.push({ line, status: 'would_create' });
+    }
+  }
+  const errors = results.filter((r) => r.status === 'error').length;
+  if (!dry) audit(req.user, 'IMPORT', 'asset_performance', null, { created, errors, total: rows.length });
+  res.json({ dry_run: dry, total: rows.length, created, errors, results });
 });
 
 module.exports = router;

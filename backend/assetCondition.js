@@ -12,45 +12,11 @@
 // same number (confirming a suggestion never ratchets the rating down again).
 
 const { db, get } = require('./util');
-
-const MOUNT = 365.25 * 24 * 3600 * 1000;
-
-function ageYears(dateStr) {
-  if (!dateStr) return null;
-  const t = Date.parse(dateStr);
-  if (Number.isNaN(t)) return null;
-  return Math.max(0, (Date.now() - t) / MOUNT);
-}
+const { ageYears, ageBaseline, computeHealth, RECOMMENDATION_LABELS } = require('./assetBaseline');
+const { evaluatePerformance } = require('./assetPerformance');
 
 function inClause(n) {
   return new Array(n).fill('?').join(',');
-}
-
-// Age-driven health index and remaining useful life, shared by the asset
-// endpoints and the condition suggestion so both show the same numbers.
-function computeHealth(asset) {
-  const rating = asset && asset.condition_rating != null ? Number(asset.condition_rating) : 7;
-  const years = ageYears(asset && asset.installation_date);
-  const age = years == null ? 5 : years;
-  const condFactor = rating / 10;
-  const ageFactor = Math.max(0, 1 - age / 45);
-  const h = Math.round((condFactor * 0.7 + ageFactor * 0.3) * 1000) / 10;
-  return {
-    health_index: Math.max(1, Math.min(100, h)),
-    remaining_useful_life_years: Math.round((rating / 10) * Math.max(2, 40 - age) * 10) / 10,
-  };
-}
-
-// The condition an asset of this age would be expected to hold before any
-// recorded incident is taken into account.
-function ageBaseline(years) {
-  if (years == null) return 7;
-  if (years < 10) return 9;
-  if (years < 20) return 8;
-  if (years < 30) return 7;
-  if (years < 35) return 6;
-  if (years < 45) return 5;
-  return 4;
 }
 
 function rankRecommendation(rating, asset, evidence) {
@@ -62,13 +28,6 @@ function rankRecommendation(rating, asset, evidence) {
   if (evidence.critical_fails > 0 || evidence.findings_critical > 0 || evidence.gps_fails > 0) return 'INSPECT';
   return 'MONITOR';
 }
-
-const RECOMMENDATION_LABELS = {
-  REPLACE: 'Replace / plan renewal',
-  REPAIR: 'Repair',
-  INSPECT: 'Inspect',
-  MONITOR: 'Monitor',
-};
 
 function suggestAssetCondition(asset) {
   if (!asset) return null;
@@ -166,6 +125,28 @@ function suggestAssetCondition(asset) {
     reasons.push(`last recorded post-maintenance condition was ${lastConditionAfter.condition_after}/10`);
   }
 
+  const readings = db.prepare('SELECT * FROM asset_reading WHERE asset_id = ? ORDER BY recorded_at DESC').all(asset.id);
+  const perfEvents = db.prepare('SELECT * FROM asset_performance_event WHERE asset_id = ? ORDER BY occurred_at DESC').all(asset.id);
+  const hasPerformance = readings.length > 0 || perfEvents.length > 0;
+  const performance = hasPerformance
+    ? evaluatePerformance(asset, readings, perfEvents, { baseRating: score })
+    : {
+      base_rating: score,
+      performance_delta: 0,
+      combined_rating: score,
+      degradation_rate: 0,
+      factors: [],
+      confidence: 'LOW',
+      model_version: null,
+      reasons: [],
+    };
+  if (hasPerformance) {
+    score = performance.combined_rating;
+    for (const f of performance.factors) {
+      if (f.contribution < 0 && !reasons.includes(f.reason)) reasons.push(f.reason);
+    }
+  }
+
   const suggested = Math.max(1, Math.min(10, Math.round(score)));
   const health = computeHealth({ ...asset, condition_rating: suggested });
   const evidence = {
@@ -196,9 +177,15 @@ function suggestAssetCondition(asset) {
     remaining_useful_life_years: health.remaining_useful_life_years,
     recommendation,
     recommendation_label: RECOMMENDATION_LABELS[recommendation],
-    confidence: hasFieldEvidence ? 'HIGH' : 'LOW',
+    confidence: (hasFieldEvidence || hasPerformance) ? 'HIGH' : 'LOW',
     reasons,
     evidence,
+    performance: hasPerformance ? performance : null,
+    base_rating: performance.base_rating,
+    performance_delta: performance.performance_delta,
+    combined_rating: performance.combined_rating,
+    degradation_rate: performance.degradation_rate,
+    factors: performance.factors,
     generated_at: new Date().toISOString(),
   };
 }
