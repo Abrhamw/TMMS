@@ -225,61 +225,24 @@ function Shell() {
 }
 
 function buildNav(isCrew, isExecutive, isAdmin) {
-  if (isCrew) {
-    return [
-      { group: 'overviewGroup', items: [
-        { to: '/home', key: 'myDay', ico: '⌂' },
-        { to: '/mailbox', key: 'mailbox', ico: '✉' },
-        { to: '/map', key: 'map', ico: '⌖' },
-        { to: '/model', key: 'systemMap', ico: '⌗' },
-      ]},
-    ];
-  }
-  if (isExecutive) {
-    return [
-      { group: 'overviewGroup', items: [
-        { to: '/home', key: 'home', ico: '⌂' },
-        { to: '/mailbox', key: 'mailbox', ico: '✉' },
-        { to: '/overview', key: 'dashboard', ico: '◫' },
-        { to: '/map', key: 'map', ico: '⌖' },
-        { to: '/executive', key: 'executiveSummary', ico: '◷' },
-        { to: '/value', key: 'valueCost', ico: '◔' },
-        { to: '/reports', key: 'reports', ico: '▤' },
-      ]},
-    ];
-  }
   const nav = [
     { group: 'overviewGroup', items: [
-      { to: '/home', key: 'home', ico: '⌂' },
+      { to: '/home', key: isCrew ? 'myDay' : 'home', ico: '⌂' },
       { to: '/mailbox', key: 'mailbox', ico: '✉' },
-      { to: '/overview', key: 'dashboard', ico: '◫' },
+    ]},
+    { group: 'workspaceGroup', items: [
+      { to: '/dashboard', key: 'dashboard', ico: '◫' },
+      { to: '/assets', key: 'assets', ico: '▤' },
+      { to: '/work', key: 'work', ico: '☰' },
       { to: '/map', key: 'map', ico: '⌖' },
     ]},
-    { group: 'infrastructureGroup', items: [
-      { to: '/infrastructure', key: 'infrastructure', ico: '▣' },
-      { to: '/assets', key: 'assets', ico: '▤' },
-    ]},
-    { group: 'operationsGroup', items: [
-      { to: '/tasks', key: 'tasks', ico: '☰' },
-      { to: '/crews', key: 'crews', ico: '☺' },
-      { to: '/schedules', key: 'schedules', ico: '⟲' },
-      { to: '/checklists', key: 'checklists', ico: '☑' },
-    ]},
-    { group: 'complianceGroup', items: [
-      { to: '/gps', key: 'gps', ico: '⌘' },
-      { to: '/certifications', key: 'certifications', ico: '⊚' },
-      { to: '/reports', key: 'reports', ico: '▤' },
-      { to: '/settings', key: 'settings', ico: '⚙' },
-    ]},
-    { group: 'governanceGroup', items: [
-      { to: '/organization', key: 'organization', ico: '⛊' },
-      { to: '/model', key: 'systemMap', ico: '⌗' },
-    ]},
   ];
-  if (isAdmin) nav.splice(4, 0, { group: 'managementGroup', items: [
-    { to: '/value', key: 'valueCost', ico: '◔' },
-  ]});
-  if (isAdmin) nav[0].items.push({ to: '/executive', key: 'executiveSummary', ico: '◷' });
+  if (isAdmin || isExecutive) {
+    nav.push({ group: 'managementGroup', items: [
+      { to: '/admin', key: 'admin', ico: '⚙' },
+      { to: '/executive', key: 'executiveSummary', ico: '◷' },
+    ]});
+  }
   return nav;
 }
 
@@ -317,20 +280,28 @@ export default function App() {
           <Route path="/home" element={<Home />} />
           <Route path="/mailbox" element={<Suspend><Mailbox /></Suspend>} />
           <Route path="/executive" element={<RequireExecutive><Suspend><ExecutiveSummary /></Suspend></RequireExecutive>} />
-          <Route path="/overview" element={<Suspend><Overview /></Suspend>} />
+          <Route path="/dashboard" element={<Suspend><Overview /></Suspend>} />
+          <Route path="/overview" element={<Navigate to="/dashboard" replace />} />
           <Route path="/map" element={<Suspend><MapPage /></Suspend>} />
           <Route path="/regions" element={<Navigate to="/infrastructure?manage=regions" replace />} />
           <Route path="/substations" element={<Navigate to="/infrastructure?manage=substations" replace />} />
           <Route path="/lines" element={<Navigate to="/infrastructure?manage=lines" replace />} />
           <Route path="/towers" element={<Navigate to="/infrastructure?manage=towers" replace />} />
           <Route path="/assets" element={<Suspend><Assets /></Suspend>} />
-          <Route path="/tasks" element={<Suspend><Tasks /></Suspend>} />
+          <Route path="/work" element={<Suspend><Tasks /></Suspend>} />
+          <Route path="/tasks" element={<Navigate to="/work" replace />} />
           <Route path="/tasks/:id" element={<Suspend><TaskDetail /></Suspend>} />
-          <Route path="/crews" element={<Suspend><Crews /></Suspend>} />
-          <Route path="/schedules" element={<Suspend><Schedules /></Suspend>} />
-          <Route path="/checklists" element={<Suspend><Checklists /></Suspend>} />
+          <Route path="/crews" element={<Navigate to="/work" replace />} />
+          <Route path="/schedules" element={<Navigate to="/work" replace />} />
+          <Route path="/checklists" element={<Navigate to="/work" replace />} />
+          <Route path="/certifications" element={<Navigate to="/work" replace />} />
+          <Route path="/admin" element={<RequireExecutive><Navigate to="/admin/reports" replace /></RequireExecutive>} />
+          <Route path="/admin/reports" element={<RequireExecutive><Suspend><Reports /></Suspend></RequireExecutive>} />
+          <Route path="/admin/value" element={<RequireExecutive><Suspend><Value /></Suspend></RequireExecutive>} />
+          <Route path="/admin/organization" element={<RequireExecutive><Suspend><Organization /></Suspend></RequireExecutive>} />
+          <Route path="/admin/settings" element={<RequireExecutive><Suspend><Settings /></Suspend></RequireExecutive>} />
+          <Route path="/admin/tools" element={<RequireExecutive><Suspend><OperatingModel /></Suspend></RequireExecutive>} />
           <Route path="/gps" element={<Suspend><Gps /></Suspend>} />
-          <Route path="/certifications" element={<Suspend><Certifications /></Suspend>} />
           <Route path="/reports" element={<RequireReportAccess><Suspend><Reports /></Suspend></RequireReportAccess>} />
           <Route path="/value" element={<RequireExecutive><Suspend><Value /></Suspend></RequireExecutive>} />
           <Route path="/settings" element={<Suspend><Settings /></Suspend>} />
