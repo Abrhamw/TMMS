@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, Fragment } from 'react';
 import { api, fmtDate, fmtMoney } from '../api';
 import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, CondPill, ConfirmButton, PrintButton, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
+import { Gauge, Sparkline } from '../components/viz';
 import { crewsInRegion, linesForSubstation, linesInRegion, subsInRegion } from '../cascade';
 import MapPicker from '../components/MapPicker';
 import Comments from '../components/Comments';
@@ -178,6 +179,15 @@ function familyOf(cat, type) {
   return flattenCatalog(cat).find((r) => r.asset_type === type && !r.sub_type)?.family || '';
 }
 
+const SIM_FIELDS = [
+  ['load_pct', 'Peak loading %', 0, 200, 5],
+  ['thermal_c', 'Top-oil temp (C)', 20, 120, 1],
+  ['through_faults', 'Through-faults (12m)', 0, 10, 1],
+  ['trips', 'Trips (12m)', 0, 10, 1],
+  ['age_years', 'Age (years)', 0, 60, 1],
+  ['months_since_maintenance', 'Months since maintenance', 0, 60, 1],
+];
+
 export default function Assets() {
   const canWrite = can(getStoredUser(), 'asset:write');
   const canEvaluate = can(getStoredUser(), 'asset:evaluate');
@@ -202,6 +212,13 @@ export default function Assets() {
   const [currency, setCurrency] = useState('USD');
   const [addEv, setAddEv] = useState(null);
   const [evalState, setEvalState] = useState(null);
+  const [perf, setPerf] = useState(null);
+  const [perfReading, setPerfReading] = useState(null);
+  const [perfEvent, setPerfEvent] = useState(null);
+  const [perfCsv, setPerfCsv] = useState(null);
+  const [sim, setSim] = useState(null);
+  const [simResult, setSimResult] = useState(null);
+  const [simBusy, setSimBusy] = useState(false);
   // Assets carry no region column, so resolve it through their substation/line
   // parent to let a region filter narrow the register.
   const regionRows = useMemo(() => {
@@ -244,6 +261,19 @@ export default function Assets() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [typeFilter, subFilter]);
 
+  useEffect(() => {
+    if (!detail || !sim) return undefined;
+    let cancelled = false;
+    const h = setTimeout(() => {
+      setSimBusy(true);
+      api.post(`/assets/${detail.id}/performance/simulate`, sim)
+        .then((out) => { if (!cancelled) setSimResult(out); })
+        .catch((e) => { if (!cancelled) setError(e.message); })
+        .finally(() => { if (!cancelled) setSimBusy(false); });
+    }, 350);
+    return () => { cancelled = true; clearTimeout(h); };
+  }, [sim, detail]);
+
   async function save() {
     try {
       let metadata = form.metadata;
@@ -266,11 +296,76 @@ export default function Assets() {
     try {
       setDetail(await api.get(`/assets/${a.id}`));
       setEvalState(null);
+      setPerf(null);
+      setPerfReading(null);
+      setPerfEvent(null);
+      setPerfCsv(null);
+      setSim(null);
+      setSimResult(null);
+      api.get(`/assets/${a.id}/performance`).then(setPerf).catch(() => {});
       if (canEvaluate) {
         api.get(`/assets/${a.id}/condition-suggestion`)
           .then((s) => setEvalState({ suggestion: s, rating: s.suggested_rating, notes: '', busy: false }))
           .catch(() => {});
       }
+    } catch (e) { setError(e.message); }
+  }
+
+  async function refreshPerf() {
+    if (!detail) return;
+    try { setPerf(await api.get(`/assets/${detail.id}/performance`)); } catch (e) { setError(e.message); }
+  }
+
+  async function addReading() {
+    if (!detail || !perfReading) return;
+    try {
+      await api.post(`/assets/${detail.id}/readings`, {
+        reading_type: perfReading.reading_type,
+        value_num: Number(perfReading.value_num),
+        recorded_at: perfReading.recorded_at,
+      });
+      setPerfReading(null);
+      await refreshPerf();
+    } catch (e) { setError(e.message); }
+  }
+
+  async function addPerfEvent() {
+    if (!detail || !perfEvent) return;
+    try {
+      await api.post(`/assets/${detail.id}/performance-events`, {
+        event_type: perfEvent.event_type,
+        severity: perfEvent.severity,
+        occurred_at: perfEvent.occurred_at,
+        magnitude: perfEvent.magnitude === '' ? null : perfEvent.magnitude,
+      });
+      setPerfEvent(null);
+      await refreshPerf();
+    } catch (e) { setError(e.message); }
+  }
+
+  async function runImport(dry) {
+    if (!detail || !perfCsv) return;
+    try {
+      const out = await api.post('/assets/performance/import', { csv: perfCsv.csv, dry_run: dry });
+      setPerfCsv({ ...perfCsv, result: out });
+      if (!dry) await refreshPerf();
+    } catch (e) { setError(e.message); }
+  }
+
+  async function saveScenario() {
+    if (!detail) return;
+    try {
+      await api.post(`/assets/${detail.id}/performance/snapshots`, { source: 'WHATIF' });
+      await refreshPerf();
+    } catch (e) { setError(e.message); }
+  }
+
+  async function acceptSimulated() {
+    if (!detail || !simResult) return;
+    try {
+      const updated = await api.post(`/assets/${detail.id}/evaluation`, { combined: true, evaluation_notes: `What-if accepted: ${simResult.computed.combined_rating}/10` });
+      setDetail({ ...detail, ...updated });
+      await refreshPerf();
     } catch (e) { setError(e.message); }
   }
 
@@ -581,6 +676,160 @@ export default function Assets() {
               <Comments entityType="asset" entityId={detail.id} />
             </div>
           </div>
+          {perf && (() => {
+            const c = perf.computed;
+            const deltaAbs = Math.abs(Number(c.performance_delta) || 0);
+            const total = (Number(c.base_rating) || 0) + deltaAbs || 1;
+            const basePct = ((Number(c.base_rating) || 0) / total) * 100;
+            const daPct = (deltaAbs / total) * 100;
+            const ageYearsDefault = detail.installation_date ? Math.max(0, Math.round(((Date.now() - new Date(detail.installation_date).getTime()) / (365.25 * 864e5)) * 10) / 10) : 0;
+            const monthsMaintDefault = detail.last_maintenance_at ? Math.max(0, Math.round((Date.now() - new Date(detail.last_maintenance_at).getTime()) / (30.44 * 864e5))) : 12;
+            const simV = sim || { load_pct: 80, thermal_c: 60, through_faults: 0, trips: 0, age_years: ageYearsDefault, months_since_maintenance: monthsMaintDefault, environment: false };
+            const trend = (perf.readings || []).slice().sort((a, b) => new Date(a.recorded_at) - new Date(b.recorded_at)).map((r) => Number(r.value_num)).filter((n) => Number.isFinite(n));
+            return (
+              <div className="mt">
+                <div className="card-head">
+                  <h3 className="card-title">Condition &amp; Performance</h3>
+                  <span className="muted">Advisory — accept to make the rating official</span>
+                </div>
+                <div className="grid grid-3" style={{ alignItems: 'start' }}>
+                  <div className="card card-pad">
+                    <Gauge value={c.combined_rating} max={10} sub={`${c.recommendation_label || c.recommendation || ''}`} bands={[{ max: 3, color: '#dc2626' }, { max: 5, color: '#ea580c' }, { max: 7, color: '#d97706' }, { max: 10, color: '#16a34a' }]} />
+                    <div className="muted" style={{ fontSize: 12, textAlign: 'center' }}>
+                      Base {c.base_rating} · performance {c.performance_delta} · {c.confidence} confidence · RUL {c.remaining_useful_life_years ?? '—'} yr
+                    </div>
+                    <div className="contribution-bar mt">
+                      <div className="contribution-seg" style={{ width: `${basePct}%`, background: '#14532d' }}>Base</div>
+                      {deltaAbs > 0 && <div className="contribution-seg" style={{ width: `${daPct}%`, background: '#dc2626' }}>{c.performance_delta}</div>}
+                    </div>
+                    <div className="muted" style={{ fontSize: 11 }}>{c.reasons?.join('; ')}</div>
+                  </div>
+                  <div className="card card-pad">
+                    <b>Factors</b>
+                    {(c.factors || []).length ? (
+                      <table className="factor-table mt">
+                        <thead><tr><th>Factor</th><th>Value</th><th>Δ</th></tr></thead>
+                        <tbody>
+                          {c.factors.map((f) => (
+                            <tr key={f.key}>
+                              <td>{f.label}<div className="muted" style={{ fontSize: 11 }}>{f.reason}</div></td>
+                              <td>{f.value}</td>
+                              <td className={f.contribution < 0 ? 'contribution-neg' : 'contribution-pos'}>{f.contribution}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : <div className="muted mt">No operational readings or performance events recorded.</div>}
+                  </div>
+                  <div className="card card-pad">
+                    <b>Reading trend</b>
+                    {trend.length ? <div className="mt"><Sparkline values={trend} width={220} height={48} /></div> : <div className="muted mt">No readings recorded.</div>}
+                    <div className="muted mt" style={{ fontSize: 12 }}>
+                      {(perf.readings || []).length} reading(s) · {(perf.events || []).length} event(s) · {(perf.snapshots || []).length} snapshot(s)
+                    </div>
+                  </div>
+                </div>
+                {canEvaluate && (
+                  <div className="grid grid-2 mt" style={{ alignItems: 'start' }}>
+                    <div className="card card-pad">
+                      <b>Record data</b>
+                      <div className="mt">
+                        {perfReading ? (
+                          <div className="grid grid-2" style={{ rowGap: 6 }}>
+                            <div className="field"><label>Reading type</label>
+                              <SearchSelect value={perfReading.reading_type} onChange={(e) => setPerfReading({ ...perfReading, reading_type: e.target.value })}>
+                                {perf.vocab.reading_types.map((x) => <option key={x} value={x}>{x}</option>)}
+                              </SearchSelect>
+                            </div>
+                            <div className="field"><label>Value</label><input type="number" step="any" value={perfReading.value_num} onChange={(e) => setPerfReading({ ...perfReading, value_num: e.target.value })} /></div>
+                            <div className="field"><label>Date</label><input type="date" value={perfReading.recorded_at} onChange={(e) => setPerfReading({ ...perfReading, recorded_at: e.target.value })} /></div>
+                            <div className="field" style={{ alignSelf: 'end' }}>
+                              <button className="btn btn-sm btn-primary" onClick={addReading}>Save reading</button>{' '}
+                              <button className="btn btn-sm" onClick={() => setPerfReading(null)}>Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button className="btn btn-sm" onClick={() => setPerfReading({ reading_type: perf.vocab.reading_types[0], value_num: '', recorded_at: new Date().toISOString().slice(0, 10) })}>+ Add reading</button>
+                        )}
+                      </div>
+                      <div className="mt">
+                        {perfEvent ? (
+                          <div className="grid grid-2" style={{ rowGap: 6 }}>
+                            <div className="field"><label>Event type</label>
+                              <SearchSelect value={perfEvent.event_type} onChange={(e) => setPerfEvent({ ...perfEvent, event_type: e.target.value })}>
+                                {perf.vocab.event_types.map((x) => <option key={x} value={x}>{x}</option>)}
+                              </SearchSelect>
+                            </div>
+                            <div className="field"><label>Severity</label>
+                              <SearchSelect value={perfEvent.severity} onChange={(e) => setPerfEvent({ ...perfEvent, severity: e.target.value })}>
+                                {perf.vocab.severities.map((x) => <option key={x} value={x}>{x}</option>)}
+                              </SearchSelect>
+                            </div>
+                            <div className="field"><label>Date</label><input type="date" value={perfEvent.occurred_at} onChange={(e) => setPerfEvent({ ...perfEvent, occurred_at: e.target.value })} /></div>
+                            <div className="field"><label>Magnitude (optional)</label><input type="number" step="any" value={perfEvent.magnitude} onChange={(e) => setPerfEvent({ ...perfEvent, magnitude: e.target.value })} /></div>
+                            <div className="field">
+                              <button className="btn btn-sm btn-primary" onClick={addPerfEvent}>Save event</button>{' '}
+                              <button className="btn btn-sm" onClick={() => setPerfEvent(null)}>Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button className="btn btn-sm" onClick={() => setPerfEvent({ event_type: perf.vocab.event_types[0], severity: 'MEDIUM', occurred_at: new Date().toISOString().slice(0, 10), magnitude: '' })}>+ Add performance event</button>
+                        )}
+                      </div>
+                      <div className="mt">
+                        {perfCsv ? (
+                          <div>
+                            <textarea rows={4} style={{ width: '100%' }} placeholder="asset_code,kind,type,value,severity,occurred_at" value={perfCsv.csv} onChange={(e) => setPerfCsv({ ...perfCsv, csv: e.target.value })} />
+                            <div className="mt">
+                              <button className="btn btn-sm" onClick={() => runImport(true)}>Preview import</button>{' '}
+                              <button className="btn btn-sm btn-primary" onClick={() => runImport(false)}>Apply import</button>{' '}
+                              <button className="btn btn-sm" onClick={() => setPerfCsv(null)}>Cancel</button>
+                            </div>
+                            {perfCsv.result && (
+                              <div className="muted mt" style={{ fontSize: 12 }}>
+                                {perfCsv.result.dry_run ? 'Preview' : 'Applied'} · created {perfCsv.result.created} · errors {perfCsv.result.errors}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <button className="btn btn-sm" onClick={() => setPerfCsv({ csv: 'asset_code,kind,type,value,severity,occurred_at\n' })}>Import CSV</button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="card card-pad">
+                      <b>What-if simulator</b>
+                      <div className="mt">
+                        {SIM_FIELDS.map(([k, label, min, max, step]) => (
+                          <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                            <span className="muted" style={{ fontSize: 12, minWidth: 130 }}>{label}</span>
+                            <input type="range" min={min} max={max} step={step} value={simV[k]} onChange={(e) => setSim({ ...simV, [k]: Number(e.target.value) })} style={{ flex: 1 }} />
+                            <span style={{ fontSize: 12, minWidth: 40, textAlign: 'right' }}>{simV[k]}</span>
+                          </div>
+                        ))}
+                        <label className="muted" style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+                          <input type="checkbox" checked={simV.environment} onChange={(e) => setSim({ ...simV, environment: e.target.checked })} /> Severe corrosion / environment
+                        </label>
+                      </div>
+                      <div className="mt" style={{ border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, padding: 8 }}>
+                        {simBusy && <span className="muted" style={{ fontSize: 12 }}>Simulating…</span>}
+                        {simResult && !simBusy && (
+                          <span style={{ fontSize: 13 }}>
+                            Simulated <b>{simResult.computed.combined_rating}/10</b> · {simResult.delta_vs_current >= 0 ? '+' : ''}{simResult.delta_vs_current} vs current · {simResult.computed.recommendation_label || simResult.computed.recommendation}
+                          </span>
+                        )}
+                        {!simResult && !simBusy && <span className="muted" style={{ fontSize: 12 }}>Adjust a slider to model a what-if scenario.</span>}
+                      </div>
+                      <div className="mt">
+                        <button className="btn btn-sm btn-primary" disabled={!simResult || simBusy} onClick={acceptSimulated}>Accept simulated rating</button>{' '}
+                        <button className="btn btn-sm" disabled={!simResult || simBusy} onClick={saveScenario}>Save scenario</button>{' '}
+                        <button className="btn btn-sm" onClick={() => { setSim(null); setSimResult(null); }}>Reset</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </Modal>
       )}
 
