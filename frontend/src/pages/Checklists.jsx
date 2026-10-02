@@ -73,6 +73,7 @@ export default function Checklists() {
     } catch (e) { setError(e.message); }
   }
 
+  if (!rows && error) return <Page title="Inspection & Maintenance Checklists"><ErrorNote error={error} /></Page>;
   if (!rows) return <Page title="Inspection & Maintenance Checklists"><Loading /></Page>;
 
   const execTarget = execDetail ? describeTarget(execDetail.target) : null;

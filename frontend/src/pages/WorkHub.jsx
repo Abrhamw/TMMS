@@ -20,13 +20,17 @@ const TABS = [
 
 function WorkSummary() {
   const [summary, setSummary] = useState(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    api.get('/work/summary').then((res) => { if (alive) setSummary(res); }).catch(() => {});
+    api.get('/work/summary')
+      .then((res) => { if (alive) setSummary(res); })
+      .catch(() => { if (alive) setFailed(true); });
     return () => { alive = false; };
   }, []);
 
+  if (failed) return null;
   if (!summary) return <Loading />;
 
   const tasks = summary.tasks || {};

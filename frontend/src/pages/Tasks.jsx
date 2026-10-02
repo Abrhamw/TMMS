@@ -204,6 +204,7 @@ export default function Tasks() {
     }
   };
 
+  if (!rows && error) return <Page title={TITLE} crumbs={CRUMBS}><ErrorNote error={error} /></Page>;
   if (!rows) return <Page title={TITLE} crumbs={CRUMBS}><Loading /></Page>;
 
   return (

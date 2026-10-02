@@ -180,6 +180,7 @@ export default function Schedules() {
     } catch (e) { setError(e.message); }
   }
 
+  if (!rows && error) return <Page title={t('schedTitle')}><ErrorNote error={error} /></Page>;
   if (!rows) return <Page title={t('schedTitle')}><Loading /></Page>;
 
   return (

@@ -150,6 +150,7 @@ export default function Crews() {
     } catch (e) { setError(e.message); }
   }
 
+  if (!rows && error) return <Page title="Field Crews"><ErrorNote error={error} /></Page>;
   if (!rows) return <Page title="Field Crews"><Loading /></Page>;
 
   const available = (form ? people.filter((p) => p.active !== 0 && !form.members.some((m) => m.person_id === p.id)) : []);

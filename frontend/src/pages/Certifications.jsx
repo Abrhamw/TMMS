@@ -9,9 +9,17 @@ const STATUSES = ['VALID', 'EXPIRED'];
 
 const blank = { person_id: null, cert_type: 'FIRST_AID', issuing_body: '', issued_at: '', expires_at: '', status: 'VALID' };
 
+function daysUntil(value) {
+  if (!value) return null;
+  const t = new Date(value).getTime();
+  if (Number.isNaN(t)) return null;
+  return Math.ceil((t - Date.now()) / 864e5);
+}
+
 function certPill(c) {
   if (c.status === 'EXPIRED') return <Pill value="EXPIRED" />;
-  const days = (new Date(c.expires_at) - new Date()) / 864e5;
+  const days = daysUntil(c.expires_at);
+  if (days == null) return <Pill value="NO EXPIRY" />;
   if (days < 0) return <Pill value="EXPIRED" />;
   if (days <= 90) return <Pill value="EXPIRING" />;
   return <Pill value="VALID" />;
@@ -65,6 +73,7 @@ export default function Certifications() {
     } catch (e) { setError(e.message); }
   }
 
+  if (!rows && error) return <Page title="Certifications"><ErrorNote error={error} /></Page>;
   if (!rows) return <Page title="Certifications"><Loading /></Page>;
 
   const personName = (id) => {
@@ -102,7 +111,7 @@ export default function Certifications() {
             <thead><tr><th>Person</th><th>Certification</th><th>Issuing body</th><th>Issued</th><th>Expires</th><th>Days left</th><th>Status</th><th></th></tr></thead>
             <tbody>
               {results.map((c) => {
-                const days = Math.ceil((new Date(c.expires_at) - new Date()) / 864e5);
+                const days = daysUntil(c.expires_at);
                 return (
                   <tr key={c.id}>
                     <td>{c.person ? `${c.person.first_name} ${c.person.last_name}` : personName(c.person_id)}</td>
@@ -110,7 +119,7 @@ export default function Certifications() {
                     <td>{c.issuing_body || '—'}</td>
                     <td className="nowrap">{fmtDate(c.issued_at)}</td>
                     <td className="nowrap">{fmtDate(c.expires_at)}</td>
-                    <td className="nowrap">{days < 0 ? <b className="overdue">{days} d</b> : days <= 90 ? <b className="warn">{days} d</b> : days}</td>
+                    <td className="nowrap">{days == null ? '—' : days < 0 ? <b className="overdue">{days} d</b> : days <= 90 ? <b className="warn">{days} d</b> : days}</td>
                     <td>{certPill(c)}</td>
                     <td className="nowrap">
                       {canWrite && <button className="btn btn-sm" onClick={() => setForm({ ...c })}>Edit</button>}{' '}
