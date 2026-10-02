@@ -6,6 +6,7 @@ const { taskReadiness } = require('../readiness');
 const { maintenanceCostForRegions } = require('../maintenanceCost');
 const { computeRegionValuation, mergeValuations } = require('./register');
 const { recentRevaluationData } = require('../assetMonitor');
+const { buildRecommendations } = require('../executiveRecommendations');
 
 const router = express.Router();
 
@@ -140,17 +141,51 @@ router.get('/executive/summary', (req, res) => {
 
   const now = new Date();
   const nowIso = now.toISOString();
-  const regions = list('region');
+  const allRegions = list('region');
+  const requestedRegion = req.query.region != null && req.query.region !== '' ? Number(req.query.region) : null;
+  if (requestedRegion != null && !Number.isFinite(requestedRegion)) {
+    return res.status(400).json({ error: 'region must be numeric' });
+  }
+  const regions = requestedRegion != null ? allRegions.filter((region) => region.id === requestedRegion) : allRegions;
+  if (requestedRegion != null && !regions.length) return res.status(404).json({ error: 'Region not found' });
   const regionIds = regions.map((region) => region.id);
-  const tasks = list('task');
+  const regionSet = new Set(regionIds);
+  const isAllRegions = requestedRegion == null;
+
+  const allSubstations = list('substation');
+  const substationById = new Map(allSubstations.map((substation) => [substation.id, substation]));
+  const scopedSubstationIds = new Set(allSubstations.filter((s) => regionSet.has(s.region_id)).map((s) => s.id));
+  const allLines = list('transmission_line');
+  const lines = allLines.filter((line) => regionSet.has(line.region_id));
+  const scopedLineIds = new Set(lines.map((line) => line.id));
+  const scopedCrewIds = new Set(list('crew').filter((crew) => regionSet.has(crew.region_id)).map((crew) => crew.id));
+  const people = isAllRegions
+    ? list('person').filter((person) => person.active !== 0)
+    : (() => {
+        const ids = new Set();
+        for (const rid of regionIds) for (const pid of peopleInRegion(rid)) ids.add(pid);
+        return list('person').filter((person) => person.active !== 0 && ids.has(person.id));
+      })();
+  const scopedPeopleIds = new Set(people.map((person) => person.id));
+  const crews = list('crew').filter((crew) => regionSet.has(crew.region_id));
+  const allTasks = list('task');
+  const tasks = isAllRegions ? allTasks : allTasks.filter((task) => (task.region_id != null && regionSet.has(task.region_id))
+    || (task.crew_id != null && scopedCrewIds.has(task.crew_id))
+    || (task.line_id != null && scopedLineIds.has(task.line_id))
+    || (task.substation_id != null && scopedSubstationIds.has(task.substation_id)));
+  const schedules = list('maintenance_schedule').filter((schedule) => isAllRegions
+    || regionSet.has(schedule.region_id)
+    || (schedule.substation_id != null && scopedSubstationIds.has(schedule.substation_id))
+    || (schedule.line_id != null && scopedLineIds.has(schedule.line_id)));
+  const allCertifications = list('certification');
+  const certifications = isAllRegions ? allCertifications : allCertifications.filter((cert) => scopedPeopleIds.has(cert.person_id));
+  const assets = list('asset').filter((asset) => asset.lifecycle_status !== 'REMOVED'
+    && (isAllRegions
+      || (asset.substation_id != null && scopedSubstationIds.has(asset.substation_id))
+      || (asset.line_id != null && scopedLineIds.has(asset.line_id))));
+  const assetPkSet = new Set(assets.map((asset) => asset.id));
   const openTasks = tasks.filter((task) => OPEN.includes(task.status));
   const overdueTasks = openTasks.filter((task) => task.due_date && task.due_date < nowIso);
-  const assets = list('asset').filter((asset) => asset.lifecycle_status !== 'REMOVED');
-  const lines = list('transmission_line');
-  const crews = list('crew');
-  const people = list('person').filter((person) => person.active !== 0);
-  const schedules = list('maintenance_schedule');
-  const certifications = list('certification');
   const valuation = mergeValuations(regionIds.map((regionId) => computeRegionValuation(regionId, { global: true })));
   const cost = maintenanceCostForRegions(regionIds, {
     from: new Date(now.getTime() - 365 * 864e5).toISOString().slice(0, 10),
@@ -158,7 +193,6 @@ router.get('/executive/summary', (req, res) => {
     limit: 10,
   });
 
-  const substationById = new Map(list('substation').map((substation) => [substation.id, substation]));
   const catalogRows = db.prepare("SELECT * FROM asset_catalog WHERE family != 'TOWER_PARTS'").all();
   const catalogByKey = new Map();
   for (const row of catalogRows) {
@@ -194,6 +228,7 @@ router.get('/executive/summary', (req, res) => {
   const costStart = new Date(now.getTime() - 365 * 864e5).toISOString();
   const maintenanceCostByOwner = new Map();
   for (const event of db.prepare('SELECT asset_id, cost FROM asset_maintenance_event WHERE performed_at >= ? AND performed_at <= ?').all(costStart, nowIso)) {
+    if (!assetPkSet.has(event.asset_id)) continue;
     const owner = ownerByAssetId.get(event.asset_id) || 'Owner not recorded';
     const entry = maintenanceCostByOwner.get(owner) || { owner, events: 0, spend: 0 };
     entry.events += 1;
@@ -229,14 +264,15 @@ router.get('/executive/summary', (req, res) => {
     fair: assets.filter((asset) => asset.condition_rating >= 6 && asset.condition_rating <= 7).length,
     good: assets.filter((asset) => asset.condition_rating >= 8).length,
   };
+  const scopedTowers = list('tower').filter((tower) => isAllRegions || scopedLineIds.has(tower.line_id));
   const infrastructureCondition = {
     lines: Object.fromEntries(lines.reduce((counts, line) => counts.set(line.operational_status || 'UNKNOWN', (counts.get(line.operational_status || 'UNKNOWN') || 0) + 1), new Map())),
-    substations: Object.fromEntries(list('substation').reduce((counts, substation) => counts.set(substation.operational_status || 'UNKNOWN', (counts.get(substation.operational_status || 'UNKNOWN') || 0) + 1), new Map())),
+    substations: Object.fromEntries(allSubstations.filter((s) => isAllRegions || regionSet.has(s.region_id)).reduce((counts, substation) => counts.set(substation.operational_status || 'UNKNOWN', (counts.get(substation.operational_status || 'UNKNOWN') || 0) + 1), new Map())),
     towers: {
-      critical: list('tower').filter((tower) => tower.corrosion_rating <= 3).length,
-      poor: list('tower').filter((tower) => tower.corrosion_rating >= 4 && tower.corrosion_rating <= 5).length,
-      fair: list('tower').filter((tower) => tower.corrosion_rating >= 6 && tower.corrosion_rating <= 7).length,
-      good: list('tower').filter((tower) => tower.corrosion_rating >= 8).length,
+      critical: scopedTowers.filter((tower) => tower.corrosion_rating <= 3).length,
+      poor: scopedTowers.filter((tower) => tower.corrosion_rating >= 4 && tower.corrosion_rating <= 5).length,
+      fair: scopedTowers.filter((tower) => tower.corrosion_rating >= 6 && tower.corrosion_rating <= 7).length,
+      good: scopedTowers.filter((tower) => tower.corrosion_rating >= 8).length,
     },
   };
   const recommendations = [];
@@ -245,6 +281,133 @@ router.get('/executive/summary', (req, res) => {
   if (equipment.missed) recommendations.push(`${equipment.missed} recommended equipment item(s) are not confirmed available on open work.`);
   if (expiredCerts.length || expiringCerts.length) recommendations.push(`${expiredCerts.length} certification(s) expired and ${expiringCerts.length} expire within 90 days; review crew eligibility.`);
   if (!recommendations.length) recommendations.push('No critical portfolio exceptions were detected in the current register.');
+
+  const assetById = new Map(list('asset').map((asset) => [asset.id, asset]));
+  const regionNameSet = new Set(regions.map((region) => region.name));
+  const allChanges = recentRevaluationData({ days: 180 }).changes || [];
+  const degradationRows = allChanges
+    .filter((change) => Number(change.delta) < 0 && (isAllRegions || regionNameSet.has(change.region)))
+    .sort((a, b) => Number(a.delta) - Number(b.delta));
+  const degradationAttention = degradationRows.slice(0, 8).map((change) => ({
+    asset_id: change.asset_pk,
+    asset_code: change.asset_code,
+    asset_name: change.asset_name,
+    asset_type: change.asset_type,
+    region: change.region,
+    current_rating: change.from_rating,
+    suggested_rating: change.to_rating,
+    delta: change.delta,
+    health_index: change.health_index,
+    recommendation: change.recommendation,
+    reasons: change.reasons,
+    captured_at: change.captured_at || null,
+  }));
+  const degradationSignal = degradationRows
+    .filter((change) => isAllRegions || assetPkSet.has(change.asset_pk))
+    .map((change) => ({
+      asset_id: change.asset_pk,
+      asset_code: change.asset_code,
+      asset_name: change.asset_name,
+      delta: change.delta,
+      suggested_rating: change.to_rating,
+      recommendation: change.recommendation,
+      region: change.region,
+    }));
+
+  const loadRows = db.prepare("SELECT asset_id, COUNT(*) AS n FROM asset_reading WHERE reading_type = 'LOAD_PCT' AND value_num > 100 AND recorded_at >= ? GROUP BY asset_id").all(costStart);
+  const faultRows = db.prepare("SELECT asset_id, COUNT(*) AS n FROM asset_performance_event WHERE event_type IN ('THROUGH_FAULT','OVERLOAD') AND occurred_at >= ? GROUP BY asset_id").all(costStart);
+  const exposureMap = new Map();
+  for (const row of [...loadRows, ...faultRows]) {
+    if (!assetPkSet.has(row.asset_id)) continue;
+    const entry = exposureMap.get(row.asset_id) || { asset_id: row.asset_id, factor_count: 0, asset_code: assetById.get(row.asset_id)?.asset_id || null };
+    entry.factor_count += Number(row.n) || 0;
+    exposureMap.set(row.asset_id, entry);
+  }
+  const overloadExposure = [...exposureMap.values()].sort((a, b) => b.factor_count - a.factor_count).slice(0, 10);
+
+  const renewalRows = db.prepare(`SELECT s.asset_id, COALESCE(s.suggested_rating, s.condition_rating) AS combined_rating, s.remaining_useful_life_years, s.recommendation
+    FROM asset_health_snapshot s
+    JOIN (SELECT asset_id, MAX(captured_at) AS m FROM asset_health_snapshot GROUP BY asset_id) t
+      ON s.asset_id = t.asset_id AND s.captured_at = t.m`).all();
+  const renewalCandidates = renewalRows
+    .filter((row) => assetPkSet.has(row.asset_id) && (row.recommendation === 'REPLACE' || Number(row.combined_rating) <= 3))
+    .sort((a, b) => (Number(a.remaining_useful_life_years) || 0) - (Number(b.remaining_useful_life_years) || 0))
+    .slice(0, 10)
+    .map((row) => ({ ...row, asset_code: assetById.get(row.asset_id)?.asset_id || null }));
+
+  const costComposition = (() => {
+    const buckets = { planned: 0, unplanned: 0, emergency: 0, capital: 0 };
+    const counts = { planned: 0, unplanned: 0, emergency: 0, capital: 0 };
+    for (const row of cost.by_event_type || []) {
+      const type = String(row.event_type || '').toUpperCase();
+      let key = null;
+      if (type === 'PREVENTIVE' || type === 'INSPECTION') key = 'planned';
+      else if (type === 'CORRECTIVE' || type === 'REPAIR') key = 'unplanned';
+      else if (type === 'EMERGENCY') key = 'emergency';
+      else if (type === 'REPLACEMENT') key = 'capital';
+      if (!key) continue;
+      buckets[key] += Number(row.spend) || 0;
+      counts[key] += Number(row.count) || 0;
+    }
+    const total = Object.values(buckets).reduce((acc, value) => acc + value, 0);
+    return {
+      total,
+      buckets: [
+        { key: 'planned', label: 'Planned', spend: buckets.planned, count: counts.planned, color: '#14532d' },
+        { key: 'unplanned', label: 'Unplanned', spend: buckets.unplanned, count: counts.unplanned, color: '#d97706' },
+        { key: 'emergency', label: 'Emergency', spend: buckets.emergency, count: counts.emergency, color: '#dc2626' },
+        { key: 'capital', label: 'Capital', spend: buckets.capital, count: counts.capital, color: '#0e7490' },
+      ],
+    };
+  })();
+
+  const monthKeys = [];
+  const startMonth = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+  for (let i = 0; i < 12; i += 1) monthKeys.push(new Date(startMonth.getFullYear(), startMonth.getMonth() + i, 1).toISOString().slice(0, 7));
+  const spendByMonth = new Map((cost.monthly || []).map((row) => [row.month, Number(row.spend) || 0]));
+  const spendTrend = monthKeys.map((month) => ({ month, spend: spendByMonth.get(month) || 0 }));
+  const conditionRows = db.prepare('SELECT substr(captured_at, 1, 7) AS month, AVG(condition_rating) AS rating FROM asset_health_snapshot GROUP BY substr(captured_at, 1, 7)').all();
+  const conditionByMonth = new Map(conditionRows.map((row) => [row.month, Number(row.rating)]));
+  const conditionTrend = monthKeys.map((month) => ({ month, rating: conditionByMonth.has(month) ? Math.round(conditionByMonth.get(month) * 10) / 10 : null }));
+
+  const assessed = assets.filter((asset) => asset.condition_rating != null);
+  const meanRating = assessed.length ? assessed.reduce((acc, asset) => acc + Number(asset.condition_rating), 0) / assessed.length : null;
+  const activeCrews = crews.filter((crew) => crew.status === 'AVAILABLE' || crew.status === 'ON_TASK').length;
+  const workforceReadiness = {
+    headcount: people.length,
+    crews: crews.length,
+    active_crews: activeCrews,
+    available_crews: crews.filter((crew) => crew.status === 'AVAILABLE').length,
+    people_with_certifications: new Set(certifications.map((cert) => cert.person_id)).size,
+    valid_certifications: certifications.filter((cert) => cert.status === 'VALID' && cert.expires_at >= nowIso).length,
+    expiring_90_days: expiringCerts.length,
+    expired_certifications: expiredCerts.length,
+    certification_readiness: certifications.length ? Math.round((certifications.filter((cert) => cert.status === 'VALID' && cert.expires_at >= nowIso).length / certifications.length) * 100) : null,
+    crew_readiness: crews.length ? Math.round((activeCrews / crews.length) * 100) : null,
+  };
+
+  const structuredRecommendations = buildRecommendations({
+    overdue_tasks: overdueTasks,
+    low_condition: assets.filter((asset) => Number(asset.condition_rating) <= 5).map((asset) => ({ id: asset.id, asset_id: asset.asset_id, name: asset.name, condition_rating: asset.condition_rating })),
+    expired_certifications: expiredCerts,
+    expiring_certifications: expiringCerts,
+    equipment,
+    cost_concentration: [...maintenanceCostByOwner.values()].sort((a, b) => b.spend - a.spend),
+    total_spend: cost.totals.spend,
+    degradation: degradationSignal,
+    overload_exposure: overloadExposure,
+    renewal_candidates: renewalCandidates,
+  }, { now });
+  const recommendationText = structuredRecommendations.length ? structuredRecommendations.map((rec) => rec.title) : recommendations;
+
+  const totalSpend = cost.totals.spend;
+  const kpis = [
+    { key: 'assets', label: 'Assets in service', value: assets.length, sub: `${regions.length} region(s) · ${valuation.totals.current ?? 0} current value`, tone: 'ok', spark: [] },
+    { key: 'condition', label: 'Mean condition', value: meanRating != null ? Math.round(meanRating * 10) / 10 : '—', sub: `${assessed.length} of ${assets.length} assessed`, tone: meanRating != null && meanRating <= 5 ? 'bad' : meanRating != null && meanRating <= 7 ? 'warn' : 'ok', spark: conditionTrend.map((row) => row.rating).filter((v) => v != null) },
+    { key: 'work', label: 'Open work orders', value: openTasks.length, sub: `${overdueTasks.length} overdue`, tone: overdueTasks.length ? 'warn' : 'ok', spark: [] },
+    { key: 'spend', label: '12-month spend', value: totalSpend, sub: `${cost.currency.code} · ${cost.totals.count} events`, tone: 'ok', spark: spendTrend.map((row) => row.spend) },
+    { key: 'workforce', label: 'Crew readiness', value: workforceReadiness.crew_readiness != null ? `${workforceReadiness.crew_readiness}%` : '—', sub: `${workforceReadiness.active_crews} of ${workforceReadiness.crews} crews active`, tone: workforceReadiness.crew_readiness != null && workforceReadiness.crew_readiness < 50 ? 'warn' : 'ok', spark: [] },
+  ];
 
   const recentTasks = tasks.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at))).slice(0, 12).map((task) => ({
     id: task.id,
@@ -287,11 +450,23 @@ router.get('/executive/summary', (req, res) => {
   res.json({
     generated_at: nowIso,
     currency: cost.currency.code,
+    hero: {
+      generated_at: nowIso,
+      scope: requestedRegion != null ? (regions[0]?.name || `Region ${requestedRegion}`) : 'All regions',
+      region_id: requestedRegion,
+      regions: regions.map((region) => ({ id: region.id, name: region.name })),
+    },
+    kpis,
+    cost_composition: costComposition,
+    trends: { spend: spendTrend, condition: conditionTrend },
+    degradation_attention: degradationAttention,
+    workforce_readiness: workforceReadiness,
+    recommendation_text: recommendationText,
     portfolio: {
       regions: regions.length,
-      substations: list('substation').length,
+      substations: allSubstations.filter((s) => isAllRegions || regionSet.has(s.region_id)).length,
       lines: lines.length,
-      towers: list('tower').length,
+      towers: scopedTowers.length,
       assets: assets.length,
       crews: crews.length,
       people: people.length,
@@ -334,7 +509,7 @@ router.get('/executive/summary', (req, res) => {
       by_type: Object.values(certByType).sort((a, b) => b.total - a.total),
     },
     equipment,
-    recommendations,
+    recommendations: structuredRecommendations,
   });
 });
 
