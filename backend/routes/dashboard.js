@@ -1,7 +1,7 @@
 const express = require('express');
 const { db, list, get } = require('../util');
 const { isGlobal } = require('../auth');
-const { taskVisible, authorizedCrewIds, readCrewIds, regionWideRead, isManager } = require('../authority');
+const { taskVisible, authorizedCrewIds, readCrewIds, regionWideRead, isManager, commandScope } = require('../authority');
 const { taskReadiness } = require('../readiness');
 const { maintenanceCostForRegions } = require('../maintenanceCost');
 const { computeRegionValuation, mergeValuations } = require('./register');
@@ -11,6 +11,9 @@ const { buildRecommendations } = require('../executiveRecommendations');
 const router = express.Router();
 
 const OPEN = ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION'];
+
+const SUMMARY_TTL_MS = 20000;
+const summaryCache = new Map();
 
 // People attached to a region: directorate/station personnel plus the members
 // of every crew stationed in the region.
@@ -134,23 +137,26 @@ router.get('/summary', (req, res) => {
   });
 });
 
-router.get('/executive/summary', (req, res) => {
-  if (!['ADMIN', 'EXECUTIVE'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'Forbidden: executive summary is limited to ADMIN and EXECUTIVE accounts' });
-  }
-
+function computeSummary(req, res, opts = {}) {
+  const allowedRegionIds = opts.allowedRegionIds || null;
   const now = new Date();
   const nowIso = now.toISOString();
   const allRegions = list('region');
   const requestedRegion = req.query.region != null && req.query.region !== '' ? Number(req.query.region) : null;
   if (requestedRegion != null && !Number.isFinite(requestedRegion)) {
-    return res.status(400).json({ error: 'region must be numeric' });
+    res.status(400).json({ error: 'region must be numeric' });
+    return null;
   }
-  const regions = requestedRegion != null ? allRegions.filter((region) => region.id === requestedRegion) : allRegions;
-  if (requestedRegion != null && !regions.length) return res.status(404).json({ error: 'Region not found' });
+  const regions = requestedRegion != null
+    ? allRegions.filter((region) => region.id === requestedRegion && (!allowedRegionIds || allowedRegionIds.has(region.id)))
+    : (allowedRegionIds ? allRegions.filter((region) => allowedRegionIds.has(region.id)) : allRegions);
+  if (requestedRegion != null && !regions.length) {
+    res.status(404).json({ error: 'Region not found' });
+    return null;
+  }
   const regionIds = regions.map((region) => region.id);
   const regionSet = new Set(regionIds);
-  const isAllRegions = requestedRegion == null;
+  const isAllRegions = requestedRegion == null && !allowedRegionIds;
 
   const allSubstations = list('substation');
   const substationById = new Map(allSubstations.map((substation) => [substation.id, substation]));
@@ -447,7 +453,7 @@ router.get('/executive/summary', (req, res) => {
     certByType[cert.cert_type] = entry;
   }
 
-  res.json({
+  return {
     generated_at: nowIso,
     currency: cost.currency.code,
     hero: {
@@ -510,6 +516,65 @@ router.get('/executive/summary', (req, res) => {
     },
     equipment,
     recommendations: structuredRecommendations,
+  };
+}
+
+router.get('/executive/summary', (req, res) => {
+  if (!['ADMIN', 'EXECUTIVE'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Forbidden: executive summary is limited to ADMIN and EXECUTIVE accounts' });
+  }
+  const summary = computeSummary(req, res);
+  if (summary) res.json(summary);
+});
+
+function scopedSummary(req, res) {
+  const scope = commandScope(req.user);
+  const region = req.query.region != null && req.query.region !== '' ? String(req.query.region) : 'all';
+  const scopeKey = scope.global ? 'global' : [...(scope.regionIds || [])].sort((a, b) => a - b).join(',');
+  const key = `${scopeKey}|${region}`;
+  const nowMs = Date.now();
+  const hit = summaryCache.get(key);
+  if (hit && nowMs - hit.at < SUMMARY_TTL_MS) return { scope, summary: hit.summary };
+  const summary = computeSummary(req, res, { allowedRegionIds: scope.global ? null : scope.regionIds });
+  if (!summary) return null;
+  summaryCache.set(key, { at: nowMs, summary });
+  return { scope, summary };
+}
+
+router.get('/dashboard/summary', (req, res) => {
+  const result = scopedSummary(req, res);
+  if (!result) return;
+  res.json({ ...result.summary, scope: result.scope.global ? 'global' : 'region' });
+});
+
+router.get('/work/summary', (req, res) => {
+  const result = scopedSummary(req, res);
+  if (!result) return;
+  const { scope, summary } = result;
+  res.json({
+    generated_at: summary.generated_at,
+    scope: scope.global ? 'global' : 'region',
+    tasks: summary.tasks,
+    schedules: summary.schedules,
+    workforce: summary.workforce,
+    equipment: summary.equipment,
+    recommendations: summary.recommendations,
+  });
+});
+
+router.get('/reports/summary', (req, res) => {
+  const result = scopedSummary(req, res);
+  if (!result) return;
+  const { scope, summary } = result;
+  res.json({
+    generated_at: summary.generated_at,
+    scope: scope.global ? 'global' : 'region',
+    currency: summary.currency,
+    cost_composition: summary.cost_composition,
+    trends: summary.trends,
+    maintenance_cost: summary.maintenance_cost,
+    maintenance_cost_by_owner: summary.maintenance_cost_by_owner,
+    valuation: summary.valuation,
   });
 });
 

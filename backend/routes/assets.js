@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, list, get, parseRow, insertRow, updateRow, safeDelete, byClientRef } = require('../util');
+const { db, list, get, parseRow, insertRow, updateRow, safeDelete, byClientRef, parsePage, paginate } = require('../util');
 const { can, isGlobal, audit } = require('../auth');
 const { commandScope } = require('../authority');
 
@@ -168,8 +168,15 @@ function findAssetBrief(req) {
 
 router.get('/assets', (req, res) => {
   if (req.query.brief) return res.json(findAssetBrief(req));
+  const page = parsePage(req.query);
   const lk = buildAssetLookups();
-  const rows = findAssetId(req).map((a) => enrichAsset(a, lk));
+  let raw = findAssetId(req);
+  if (page.q) {
+    raw = raw.filter((a) => [a.asset_id, a.name, a.asset_type, a.sub_type]
+      .some((v) => String(v || '').toLowerCase().includes(page.q)));
+  }
+  const paged = paginate(raw, page);
+  const rows = (page.paginated ? paged.items : paged).map((a) => enrichAsset(a, lk));
   for (const a of rows) {
     // Compact location briefs. The full substation (boundary_json) and line
     // (route_json) were duplicated on every asset, producing an 80+ MB
@@ -185,7 +192,7 @@ router.get('/assets', (req, res) => {
       operational_status: l.operational_status, region_id: l.region_id,
     } : null;
   }
-  res.json(rows);
+  res.json(page.paginated ? { ...paged, items: rows } : rows);
 });
 
 // Register summary — population counts by class (asset_type) and category
@@ -196,6 +203,9 @@ router.get('/assets/summary', (req, res) => {
     .filter((a) => scope.global || scope.assetIds.has(a.id));
   const byClass = {};
   const byCategory = {};
+  const byRegion = {};
+  const condition = { critical: 0, poor: 0, fair: 0, good: 0 };
+  const lk = buildAssetLookups();
   let total = 0;
   for (const a of scoped) {
     total++;
@@ -206,11 +216,24 @@ router.get('/assets/summary', (req, res) => {
     const cat = a.sub_type || 'UNSPECIFIED';
     byCategory[cat] = byCategory[cat] || { category: cat, count: 0 };
     byCategory[cat].count++;
+    const rating = Number(a.condition_rating);
+    if (Number.isFinite(rating)) {
+      if (rating <= 3) condition.critical += 1;
+      else if (rating <= 5) condition.poor += 1;
+      else if (rating <= 7) condition.fair += 1;
+      else condition.good += 1;
+    }
+    const regionId = a.substation_id
+      ? lk.substations.get(a.substation_id)?.region_id
+      : (a.line_id ? lk.lines.get(a.line_id)?.region_id : null);
+    if (regionId != null) byRegion[regionId] = (byRegion[regionId] || 0) + 1;
   }
   res.json({
     total_assets: total,
     by_class: Object.values(byClass).map((x) => ({ asset_type: x.asset_type, count: x.count, avg_condition: x.count ? Math.round((x.cond_sum / x.count) * 10) / 10 : 0 })),
     by_category: Object.values(byCategory).sort((a, b) => b.count - a.count),
+    by_region: Object.entries(byRegion).map(([region_id, count]) => ({ region_id: Number(region_id), count })).sort((a, b) => b.count - a.count),
+    condition,
   });
 });
 

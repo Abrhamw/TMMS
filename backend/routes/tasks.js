@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, list, get, insertRow, updateRow, withTx, parseRow, byClientRef } = require('../util');
+const { db, list, get, insertRow, updateRow, withTx, parseRow, byClientRef, parsePage, paginate } = require('../util');
 const { haversine } = require('../geo');
 const { evaluateViolation, flag } = require('../geofence');
 const { can, isGlobal, audit, isCrewUser, isOnCrew, scopeRows } = require('../auth');
@@ -456,7 +456,13 @@ function scopedTasks(req) {
 }
 
 router.get('/tasks', (req, res) => {
-  res.json(taskDetails(scopedTasks(req)));
+  const page = parsePage(req.query);
+  let rows = taskDetails(scopedTasks(req));
+  if (page.q) {
+    rows = rows.filter((t) => [t.task_number, t.title, t.status, t.task_type, t.priority]
+      .some((v) => String(v || '').toLowerCase().includes(page.q)));
+  }
+  res.json(paginate(rows, page));
 });
 
 function csvField(v) {

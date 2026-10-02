@@ -130,4 +130,33 @@ function nextCode(prefix, table, col, pad = 3) {
   return `${prefix}-${String(n).padStart(pad, '0')}`;
 }
 
-module.exports = { db, prep, parseRow, list, get, insertRow, updateRow, safeDelete, byClientRef, withTx, nextCode };
+const PAGE_SIZE_DEFAULT = 25;
+const PAGE_SIZE_MAX = 200;
+
+function parsePage(query = {}) {
+  const paginated = query.page != null && query.page !== '';
+  const rawPage = parseInt(query.page, 10);
+  const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
+  const rawSize = parseInt(query.page_size, 10);
+  const pageSize = Number.isFinite(rawSize) && rawSize > 0 ? Math.min(rawSize, PAGE_SIZE_MAX) : PAGE_SIZE_DEFAULT;
+  return {
+    paginated,
+    page,
+    pageSize,
+    q: typeof query.q === 'string' ? query.q.trim().toLowerCase() : '',
+    sort: typeof query.sort === 'string' ? query.sort.trim() : '',
+  };
+}
+
+function paginate(items, page) {
+  if (!page.paginated) return items;
+  const start = (page.page - 1) * page.pageSize;
+  return {
+    items: items.slice(start, start + page.pageSize),
+    total: items.length,
+    page: page.page,
+    page_size: page.pageSize,
+  };
+}
+
+module.exports = { db, prep, parseRow, list, get, insertRow, updateRow, safeDelete, byClientRef, withTx, nextCode, parsePage, paginate };
