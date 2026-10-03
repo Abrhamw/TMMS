@@ -213,7 +213,7 @@ function Shell() {
       </aside>
       <div className="main-col">
         <div className="shell-topbar">
-          <GlobalSearch />
+          {!isExecutive && <GlobalSearch />}
           <LanguageSwitcher />
           <InboxChip />
           <UserMenu />
@@ -227,6 +227,21 @@ function Shell() {
 }
 
 function buildNav(isCrew, isExecutive, isAdmin) {
+  if (isExecutive) {
+    return [
+      { group: 'overviewGroup', items: [
+        { to: '/home', key: 'home', ico: '⌂' },
+        { to: '/mailbox', key: 'mailbox', ico: '✉' },
+      ]},
+      { group: 'workspaceGroup', items: [
+        { to: '/dashboard', key: 'dashboard', ico: '◫' },
+        { to: '/map', key: 'map', ico: '⌖' },
+      ]},
+      { group: 'managementGroup', items: [
+        { to: '/executive', key: 'executiveSummary', ico: '◷' },
+      ]},
+    ];
+  }
   const nav = [
     { group: 'overviewGroup', items: [
       { to: '/home', key: isCrew ? 'myDay' : 'home', ico: '⌂' },
@@ -239,7 +254,7 @@ function buildNav(isCrew, isExecutive, isAdmin) {
       { to: '/map', key: 'map', ico: '⌖' },
     ]},
   ];
-  if (isAdmin || isExecutive) {
+  if (isAdmin) {
     nav.push({ group: 'managementGroup', items: [
       { to: '/admin', key: 'admin', ico: '⚙' },
       { to: '/executive', key: 'executiveSummary', ico: '◷' },
@@ -264,10 +279,28 @@ function RequireExecutive({ children }) {
   return children;
 }
 
+function RequireAdmin({ children }) {
+  const user = getStoredUser();
+  if (!user || user.role !== 'ADMIN') {
+    return <Navigate to={user?.role === 'EXECUTIVE' ? '/executive' : '/home'} replace />;
+  }
+  return children;
+}
+
+// Executives get a briefing surface (Executive Summary, Dashboard, Map) and are
+// redirected away from the operational registers and work pages that directors,
+// managers, and crews use.
+function BlockExecutive({ children }) {
+  const user = getStoredUser();
+  if (user?.role === 'EXECUTIVE') return <Navigate to="/executive" replace />;
+  return children;
+}
+
 // Reports are a management/oversight surface. A role without `report:read`
 // (field crews) is sent home rather than shown an empty, forbidden page.
 function RequireReportAccess({ children }) {
   const user = getStoredUser();
+  if (user?.role === 'EXECUTIVE') return <Navigate to="/executive" replace />;
   if (!user || !can(user, 'report:read')) return <Navigate to="/home" replace />;
   return children;
 }
@@ -285,31 +318,31 @@ export default function App() {
           <Route path="/dashboard" element={<Suspend><Dashboard /></Suspend>} />
           <Route path="/overview" element={<Navigate to="/dashboard" replace />} />
           <Route path="/map" element={<Suspend><MapPage /></Suspend>} />
-          <Route path="/regions" element={<Navigate to="/assets?area=infrastructure&manage=regions" replace />} />
-          <Route path="/substations" element={<Navigate to="/assets?area=infrastructure&manage=substations" replace />} />
-          <Route path="/lines" element={<Navigate to="/assets?area=infrastructure&manage=lines" replace />} />
-          <Route path="/towers" element={<Navigate to="/assets?area=infrastructure&manage=towers" replace />} />
-          <Route path="/assets" element={<Suspend><AssetsHub /></Suspend>} />
-          <Route path="/work" element={<Suspend><WorkHub /></Suspend>} />
-          <Route path="/tasks" element={<Suspend><Tasks /></Suspend>} />
-          <Route path="/tasks/:id" element={<Suspend><TaskDetail /></Suspend>} />
-          <Route path="/crews" element={<Suspend><Crews /></Suspend>} />
-          <Route path="/schedules" element={<Suspend><Schedules /></Suspend>} />
-          <Route path="/checklists" element={<Suspend><Checklists /></Suspend>} />
-          <Route path="/certifications" element={<Suspend><Certifications /></Suspend>} />
-          <Route path="/admin" element={<RequireExecutive><Suspend><AdminHub /></Suspend></RequireExecutive>} />
-          <Route path="/admin/reports" element={<RequireExecutive><Suspend><Reports /></Suspend></RequireExecutive>} />
-          <Route path="/admin/value" element={<RequireExecutive><Suspend><Value /></Suspend></RequireExecutive>} />
-          <Route path="/admin/organization" element={<RequireExecutive><Suspend><Organization /></Suspend></RequireExecutive>} />
-          <Route path="/admin/settings" element={<RequireExecutive><Suspend><Settings /></Suspend></RequireExecutive>} />
-          <Route path="/admin/tools" element={<RequireExecutive><Suspend><OperatingModel /></Suspend></RequireExecutive>} />
-          <Route path="/gps" element={<Suspend><Gps /></Suspend>} />
+          <Route path="/regions" element={<BlockExecutive><Navigate to="/assets?area=infrastructure&manage=regions" replace /></BlockExecutive>} />
+          <Route path="/substations" element={<BlockExecutive><Navigate to="/assets?area=infrastructure&manage=substations" replace /></BlockExecutive>} />
+          <Route path="/lines" element={<BlockExecutive><Navigate to="/assets?area=infrastructure&manage=lines" replace /></BlockExecutive>} />
+          <Route path="/towers" element={<BlockExecutive><Navigate to="/assets?area=infrastructure&manage=towers" replace /></BlockExecutive>} />
+          <Route path="/assets" element={<BlockExecutive><Suspend><AssetsHub /></Suspend></BlockExecutive>} />
+          <Route path="/work" element={<BlockExecutive><Suspend><WorkHub /></Suspend></BlockExecutive>} />
+          <Route path="/tasks" element={<BlockExecutive><Suspend><Tasks /></Suspend></BlockExecutive>} />
+          <Route path="/tasks/:id" element={<BlockExecutive><Suspend><TaskDetail /></Suspend></BlockExecutive>} />
+          <Route path="/crews" element={<BlockExecutive><Suspend><Crews /></Suspend></BlockExecutive>} />
+          <Route path="/schedules" element={<BlockExecutive><Suspend><Schedules /></Suspend></BlockExecutive>} />
+          <Route path="/checklists" element={<BlockExecutive><Suspend><Checklists /></Suspend></BlockExecutive>} />
+          <Route path="/certifications" element={<BlockExecutive><Suspend><Certifications /></Suspend></BlockExecutive>} />
+          <Route path="/admin" element={<RequireAdmin><Suspend><AdminHub /></Suspend></RequireAdmin>} />
+          <Route path="/admin/reports" element={<RequireAdmin><Suspend><Reports /></Suspend></RequireAdmin>} />
+          <Route path="/admin/value" element={<RequireAdmin><Suspend><Value /></Suspend></RequireAdmin>} />
+          <Route path="/admin/organization" element={<RequireAdmin><Suspend><Organization /></Suspend></RequireAdmin>} />
+          <Route path="/admin/settings" element={<RequireAdmin><Suspend><Settings /></Suspend></RequireAdmin>} />
+          <Route path="/admin/tools" element={<RequireAdmin><Suspend><OperatingModel /></Suspend></RequireAdmin>} />
+          <Route path="/gps" element={<BlockExecutive><Suspend><Gps /></Suspend></BlockExecutive>} />
           <Route path="/reports" element={<RequireReportAccess><Suspend><Reports /></Suspend></RequireReportAccess>} />
-          <Route path="/value" element={<RequireExecutive><Suspend><Value /></Suspend></RequireExecutive>} />
-          <Route path="/settings" element={<Suspend><Settings /></Suspend>} />
-          <Route path="/organization" element={<Suspend><Organization /></Suspend>} />
-          <Route path="/model" element={<Suspend><OperatingModel /></Suspend>} />
-          <Route path="/infrastructure" element={<Suspend><Infrastructure /></Suspend>} />
+          <Route path="/value" element={<RequireAdmin><Suspend><Value /></Suspend></RequireAdmin>} />
+          <Route path="/settings" element={<BlockExecutive><Suspend><Settings /></Suspend></BlockExecutive>} />
+          <Route path="/organization" element={<BlockExecutive><Suspend><Organization /></Suspend></BlockExecutive>} />
+          <Route path="/model" element={<BlockExecutive><Suspend><OperatingModel /></Suspend></BlockExecutive>} />
+          <Route path="/infrastructure" element={<BlockExecutive><Suspend><Infrastructure /></Suspend></BlockExecutive>} />
           <Route path="*" element={<Navigate to="/home" replace />} />
         </Route>
       </Routes>

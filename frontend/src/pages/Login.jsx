@@ -50,8 +50,8 @@ export default function Login() {
     setError('');
     setBusy(true);
     try {
-      await login(u, p);
-      nav('/home', { replace: true });
+      const user = await login(u, p);
+      nav(user?.role === 'EXECUTIVE' ? '/executive' : '/home', { replace: true });
     } catch (err) {
       setError(t('loginFailed'));
     } finally {
