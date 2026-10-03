@@ -1437,3 +1437,64 @@ table th { color: var(--muted); text-transform: uppercase; font-size: var(--text
 .bar-fill { border-radius: 999px; }
 .donut-hole { background: var(--surface-1); }
 
+
+/* Executive briefing: a single-screen briefing, not the register. */
+.exec-briefing { flex: 1; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 8px; overflow: hidden; font-size: 13px; }
+.exec-briefing-meta { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; color: var(--muted); font-size: 11px; }
+.exec-briefing-scope { font-weight: 700; color: var(--primary); }
+.exec-briefing-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.exec-briefing .ktile { padding: 8px 10px; }
+.exec-briefing .ktile .ktile-label { font-size: 10px; }
+.exec-briefing .ktile .ktile-value { font-size: clamp(0.95rem, 1.6vw, 1.35rem); line-height: 1.15; }
+.exec-briefing .ktile .ktile-sub { font-size: 10px; }
+.exec-briefing .ktile-spark { display: none; }
+.exec-briefing-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 8px; min-height: 0; }
+.exec-briefing .section-card { display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 10px 12px; }
+.exec-briefing .section-card-head { margin-bottom: 6px; }
+.exec-briefing .section-card-head h3 { font-size: 12px; margin: 0; }
+.exec-briefing .section-card-head .muted { font-size: 10px; }
+.exec-briefing .viz-legend, .exec-briefing .viz-stacked-legend { font-size: 10px; gap: 4px 8px; }
+.exec-briefing .viz-trend-labels { overflow: hidden; }
+.exec-briefing-rings { display: flex; gap: 16px; align-items: center; }
+.exec-ring { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 10px; color: var(--muted); }
+.exec-briefing-mini { display: flex; gap: 12px; margin-top: auto; padding-top: 6px; font-size: 11px; color: var(--muted); }
+.exec-briefing-mini b { color: var(--text); }
+.exec-briefing-attention { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.exec-attention-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border); color: inherit; text-decoration: none; }
+.exec-attention-item:last-child { border-bottom: 0; }
+.exec-attention-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.exec-attention-main b { font-size: 11px; }
+.exec-attention-main .muted { font-size: 10px; }
+.exec-attention-delta { font-weight: 700; color: #b91c1c; font-size: 12px; }
+.exec-briefing-recs { display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--border); padding-top: 6px; }
+.exec-briefing-recs-head { display: flex; justify-content: space-between; align-items: baseline; }
+.exec-briefing-recs-head h3 { margin: 0; font-size: 12px; }
+.exec-briefing-recs-head .link { font-size: 11px; }
+.exec-briefing-recs-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 14px; overflow: auto; min-height: 0; }
+.exec-rec { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; }
+.exec-rec-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.exec-rec-main b { font-size: 11px; }
+.exec-rec-main .muted { font-size: 10px; }
+.exec-rec .link { font-size: 11px; }
+
+@media (max-width: 1024px) {
+  .exec-briefing-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .exec-briefing-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 720px) {
+  .content-fill:has(.exec-briefing) { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 12px; }
+  .exec-briefing { gap: 6px; font-size: 12px; }
+  .exec-briefing-kpis { display: flex; overflow-x: auto; gap: 6px; padding-bottom: 2px; }
+  .exec-briefing-kpis .ktile { flex: 0 0 148px; }
+  .exec-briefing-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .exec-briefing .viz-stacked-legend, .exec-briefing .viz-legend { display: none; }
+  .exec-briefing-recs-list { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media print {
+  .exec-briefing { display: block; overflow: visible; height: auto; }
+  .exec-briefing-grid { display: block; }
+  .exec-briefing .section-card { break-inside: avoid; margin-bottom: 12px; }
+  .exec-briefing-recs-list { overflow: visible; }
+}
