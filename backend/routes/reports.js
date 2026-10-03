@@ -1017,7 +1017,12 @@ router.get('/report-templates', (req, res) => {
 
 router.get('/reports', (req, res) => {
   if (!can(req, 'report:read')) return res.status(403).json({ error: 'Forbidden: requires report:read' });
-  const rows = list('report').filter((r) => isGlobal(req.user) || !r.scope_region_id || r.scope_region_id === req.user.region_id);
+  // List view only needs metadata; each report's `parameters` blob can be many
+  // KB and made the whole library multi-megabyte. The reader loads full detail
+  // from /reports/:id.
+  const rows = list('report')
+    .filter((r) => isGlobal(req.user) || !r.scope_region_id || r.scope_region_id === req.user.region_id)
+    .map(({ parameters, ...rest }) => rest);
   res.json(rows);
 });
 

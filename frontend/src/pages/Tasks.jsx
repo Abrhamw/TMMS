@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, fmtDate, STATUS_COLORS } from '../api';
 import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, Progress, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser, getStoredToken } from '../auth';
@@ -108,17 +108,24 @@ export default function Tasks() {
     loadKpi();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter, typeFilter, overdueOnly, regionF, lineF, towerF, assetF, subF, crewF]);
-  // Static picker lookups load once, not on every filter change. Towers/assets
-  // use the compact brief projection so this page is not pulling 18 MB.
+  // Static picker lookups load once, not on every filter change. The full
+  // tower and asset projections feed only the filters and the task form, so
+  // they are deferred until either is actually used.
   useEffect(() => {
     api.get('/regions').then(setRegions).catch(() => {});
     api.get('/crews').then(setCrews).catch(() => {});
     api.get('/checklists').then(setChecklists).catch(() => {});
     api.get('/substations').then(setSubs).catch(() => {});
     api.get('/lines').then(setLines).catch(() => {});
+  }, []);
+  const lookupsLoaded = useRef(false);
+  const loadLookups = () => {
+    if (lookupsLoaded.current) return;
+    lookupsLoaded.current = true;
     api.get('/towers?brief=1').then(setTowers).catch(() => {});
     api.get('/assets?brief=1').then(setAssets).catch(() => {});
-  }, []);
+  };
+  useEffect(() => { if (form) loadLookups(); }, [form]);
 
   // Deep links from the Home task buckets: ?task_type=EMERGENCY pre-filters and
   // opens the raise form for users allowed to create work.
@@ -253,11 +260,11 @@ export default function Tasks() {
           <option value="">All lines</option>
           {filterLines.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
         </SearchSelect>
-        <SearchSelect value={towerF} onChange={(e) => { setTowerF(e.target.value); if (e.target.value) { const tw = towers.find((x) => x.id === Number(e.target.value)); if (tw && tw.line_id) setLineF(String(tw.line_id)); } }}>
+        <SearchSelect value={towerF} onFocus={loadLookups} onChange={(e) => { setTowerF(e.target.value); if (e.target.value) { const tw = towers.find((x) => x.id === Number(e.target.value)); if (tw && tw.line_id) setLineF(String(tw.line_id)); } }}>
           <option value="">All towers</option>
           {(filterTowers).map((tw) => <option key={tw.id} value={tw.id}>{tw.tower_id}</option>)}
         </SearchSelect>
-        <SearchSelect value={assetF} onChange={(e) => setAssetF(e.target.value)}>
+        <SearchSelect value={assetF} onFocus={loadLookups} onChange={(e) => setAssetF(e.target.value)}>
           <option value="">All assets</option>
           {filterAssets.map((a) => <option key={a.id} value={a.id}>{a.name || a.asset_id}</option>)}
         </SearchSelect>

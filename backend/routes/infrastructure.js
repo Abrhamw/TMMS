@@ -53,7 +53,7 @@ function bands(rows) {
   return { bands: out, avg: rows.length ? sum / rows.length : 0 };
 }
 
-function buildScope(regionIds, scope) {
+function buildScope(regionIds, scope, opts = {}) {
   if (!regionIds.length) return { regions: [], substations: [], lines: [], towers: [] };
   const scoped = !!scope && !scope.global;
   const regionList = db.prepare(`SELECT * FROM region WHERE id IN (${ph(regionIds.length)}) ORDER BY code`).all(...regionIds);
@@ -217,7 +217,7 @@ function buildScope(regionIds, scope) {
     component_count: towerComponentCounts.get(t.id) || 0,
   }));
 
-  return { regions: regionOut, substations: subOut, lines: lineOut, towers: towerOut };
+  return { regions: regionOut, substations: subOut, lines: lineOut, towers: opts.includeTowers ? towerOut : [] };
 }
 
 function currencyCode() {
@@ -236,7 +236,7 @@ router.get('/infrastructure', (req, res) => {
     : scope.global
       ? db.prepare('SELECT id FROM region ORDER BY code').all().map((r) => r.id)
       : [...scope.regionIds];
-  res.json({ currency: { code: currencyCode() }, ...buildScope(regionIds, scope) });
+  res.json({ currency: { code: currencyCode() }, ...buildScope(regionIds, scope, { includeTowers: req.query.towers === '1' }) });
 });
 
 router.get('/infrastructure/validation', (req, res) => {

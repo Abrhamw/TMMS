@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, fmtDate } from '../api';
 import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, SearchField, useSearchFilter } from '../components';
 import { can, getStoredUser } from '../auth';
@@ -110,12 +110,20 @@ export default function Schedules() {
     load();
     api.get('/checklists').then(setChecklists).catch(() => {});
     api.get('/crews').then(setCrews).catch(() => {});
-    api.get('/assets?brief=1').then(setAssets).catch(() => {});
     api.get('/lines').then(setLines).catch(() => {});
     api.get('/substations').then(setSubs).catch(() => {});
     api.get('/regions').then(setRegions).catch(() => {});
-    api.get('/towers?brief=1').then(setTowers).catch(() => {});
   }, []);
+  // Asset and tower projections feed only the schedule form, so they load when
+  // a schedule is opened rather than on tab entry.
+  const lookupsLoaded = useRef(false);
+  const loadLookups = () => {
+    if (lookupsLoaded.current) return;
+    lookupsLoaded.current = true;
+    api.get('/assets?brief=1').then(setAssets).catch(() => {});
+    api.get('/towers?brief=1').then(setTowers).catch(() => {});
+  };
+  useEffect(() => { if (form) loadLookups(); }, [form]);
   useEffect(() => { if (tab === 'upcoming') loadUpcoming(); /* eslint-disable-next-line */ }, [tab, upDays]);
   useEffect(() => { if (tab === 'adherence') loadAdherence(); /* eslint-disable-next-line */ }, [tab, adhDays]);
 

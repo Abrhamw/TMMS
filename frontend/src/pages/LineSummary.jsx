@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+import { api } from '../api';
 import { KpiTile, BarRow } from '../components/InfraVisuals';
 import Comments from '../components/Comments';
 
@@ -13,13 +15,24 @@ function conductorLabel(c) {
   return c ? c : 'Not recorded';
 }
 
-export default function LineSummary({ lines, towersByLine, focusId, onPick }) {
+export default function LineSummary({ lines, focusId, onPick }) {
   const focused = lines.find((l) => l.id === Number(focusId));
+  // Towers for a single line are fetched only when a line is opened, instead
+  // of shipping the whole national tower list with the infrastructure summary.
+  const [towers, setTowers] = useState([]);
+  const focusedId = focused ? focused.id : null;
+  useEffect(() => {
+    if (focusedId == null) { setTowers([]); return undefined; }
+    let alive = true;
+    api.get(`/towers?line_id=${focusedId}`)
+      .then((r) => { if (alive) setTowers(Array.isArray(r) ? r : (r.items || [])); })
+      .catch(() => { if (alive) setTowers([]); });
+    return () => { alive = false; };
+  }, [focusedId]);
 
   if (focused) {
     const types = sortedTypes(focused.asset_types);
     const max = types.length ? Math.max(...types.map(([, n]) => n)) : 1;
-    const towers = towersByLine[focused.id] || [];
     const route = `${focused.from_sub ? focused.from_sub.name : '—'} ⇄ ${focused.to_sub ? focused.to_sub.name : '—'}`;
     return (
       <div>

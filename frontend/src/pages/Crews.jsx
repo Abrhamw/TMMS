@@ -36,6 +36,14 @@ export default function Crews() {
   const { query, setQuery, results } = useSearchFilter(rows);
 
   const load = () => api.get('/crews').then(setRows).catch((e) => setError(e.message));
+  // The full task list is only needed to pick a specific task in the dispatch
+  // check, so it loads on first focus instead of when the roster opens.
+  const [tasksLoaded, setTasksLoaded] = useState(false);
+  const loadTasks = () => {
+    if (tasksLoaded) return;
+    setTasksLoaded(true);
+    api.get('/tasks').then(setTasks).catch(() => {});
+  };
   useEffect(() => {
     load();
     api.get('/regions').then(setRegions).catch(() => {});
@@ -43,7 +51,6 @@ export default function Crews() {
     api.get('/people').then(setPeople).catch(() => {});
     api.get('/certifications').then(setCerts).catch(() => {});
     api.get('/checklists').then(setChecklists).catch(() => {});
-    api.get('/tasks').then(setTasks).catch(() => {});
   }, []);
 
   async function checkEligibility(regionId, taskType, checklistId, taskId) {
@@ -211,7 +218,7 @@ export default function Crews() {
                 <option value="">No checklist (task type only)</option>
                 {checklists.filter((c) => c.status === 'ACTIVE').map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
               </SearchSelect>
-              <SearchSelect value={eligTask} onChange={(e) => setEligTask(e.target.value)}>
+              <SearchSelect value={eligTask} onFocus={loadTasks} onChange={(e) => setEligTask(e.target.value)}>
                 <option value="">No specific task</option>
                 {tasks.filter((t) => ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD'].includes(t.status) && (!eligRegionId || String(t.region_id) === String(eligRegionId))).map((t) => (
                   <option key={t.id} value={t.id}>{t.task_number} · {t.title}</option>

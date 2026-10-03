@@ -68,6 +68,7 @@ export default function Reports() {
   const [view, setView] = useState(null);
   const [busy, setBusy] = useState(false);
   const [entityLists, setEntityLists] = useState({ tasks: [], lines: [], assets: [], crews: [], people: [], regions: [], subs: [] });
+  const entityListsLoaded = useRef(false);
   const canPerf = canGenerate;
   const [perfScope, setPerfScope] = useState('crew');
   const [perf, setPerf] = useState(null);
@@ -161,7 +162,21 @@ export default function Reports() {
     setDocuments([]);
     api.get(`/reports/${id}`).then(setView).catch((e) => setError(e.message));
   };
+  // The entity pickers need whole collections, so they are loaded only when a
+  // document report is actually being generated rather than on page open.
+  const loadEntityLists = () => {
+    if (entityListsLoaded.current) return;
+    entityListsLoaded.current = true;
+    api.get('/tasks').then((r) => setEntityLists((e) => ({ ...e, tasks: r }))).catch(() => {});
+    api.get('/lines').then((r) => setEntityLists((e) => ({ ...e, lines: r }))).catch(() => {});
+    api.get('/assets?brief=1').then((r) => setEntityLists((e) => ({ ...e, assets: r }))).catch(() => {});
+    api.get('/crews').then((r) => setEntityLists((e) => ({ ...e, crews: r }))).catch(() => {});
+    api.get('/people').then((r) => setEntityLists((e) => ({ ...e, people: r }))).catch(() => {});
+    api.get('/regions').then((r) => setEntityLists((e) => ({ ...e, regions: r }))).catch(() => {});
+    api.get('/substations').then((r) => setEntityLists((e) => ({ ...e, subs: r }))).catch(() => {});
+  };
   const startReport = (report_type) => {
+    loadEntityLists();
     const r = fiscalPeriodRange(period);
     setGenForm({
       report_type,
@@ -195,13 +210,6 @@ export default function Reports() {
   useEffect(() => {
     load();
     api.get('/regions').then(setRegions).catch(() => {});
-    api.get('/tasks').then((r) => setEntityLists((e) => ({ ...e, tasks: r }))).catch(() => {});
-    api.get('/lines').then((r) => setEntityLists((e) => ({ ...e, lines: r }))).catch(() => {});
-    api.get('/assets?brief=1').then((r) => setEntityLists((e) => ({ ...e, assets: r }))).catch(() => {});
-    api.get('/crews').then((r) => setEntityLists((e) => ({ ...e, crews: r }))).catch(() => {});
-    api.get('/people').then((r) => setEntityLists((e) => ({ ...e, people: r }))).catch(() => {});
-    api.get('/regions').then((r) => setEntityLists((e) => ({ ...e, regions: r }))).catch(() => {});
-    api.get('/substations').then((r) => setEntityLists((e) => ({ ...e, subs: r }))).catch(() => {});
   }, []);
 
   useEffect(() => {

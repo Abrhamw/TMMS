@@ -45,11 +45,6 @@ export default function Infrastructure() {
 
   const subById = useMemo(() => new Map((data?.substations || []).map((s) => [s.id, s])), [data]);
   const lineById = useMemo(() => new Map((data?.lines || []).map((l) => [l.id, l])), [data]);
-  const towersByLine = useMemo(() => {
-    const m = {};
-    for (const t of data?.towers || []) (m[t.line_id] = m[t.line_id] || []).push(t);
-    return m;
-  }, [data]);
 
   const clearScope = () => patch({ region: null, substation: null, line: null, tab: 'region' });
   const goAll = () => patch({ region: null, substation: null, line: null, tab: null, manage: null });
@@ -76,7 +71,7 @@ export default function Infrastructure() {
   }
   function focusLine() {
     const rows = data.lines.filter((l) => (rid ? l.region_id === rid : true));
-    return <LineSummary lines={rows} towersByLine={towersByLine} focusId={lid} onPick={(id) => (id === null ? patch({ line: null }) : pick({ kind: 'line', id }))} />;
+    return <LineSummary lines={rows} focusId={lid} onPick={(id) => (id === null ? patch({ line: null }) : pick({ kind: 'line', id }))} />;
   }
 
   const region = rid ? data?.regions.find((r) => r.id === rid) : null;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, fmtDate, asArray } from '../api';
 import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, StatCard, ConfirmButton, SearchField, useSearchFilter } from '../components';
 import { can, isGlobal, getStoredUser } from '../auth';
@@ -83,13 +83,23 @@ export default function Gps() {
   };
   useEffect(() => {
     load();
-    api.get('/substations').then(setSubs).catch(() => {});
-    api.get('/assets?brief=1').then(setAssets).catch(() => {});
-    api.get('/lines').then(setLines).catch(() => {});
-    api.get('/towers?brief=1').then(setTowers).catch(() => {});
-    api.get('/regions').then(setRegions).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter, vFilter]);
+
+  // Reference lists are loaded once. The full asset and tower projections are
+  // large and only feed the target pickers, so they wait until a form opens.
+  useEffect(() => {
+    api.get('/substations').then(setSubs).catch(() => {});
+    api.get('/lines').then(setLines).catch(() => {});
+    api.get('/regions').then(setRegions).catch(() => {});
+  }, []);
+  const heavyLoaded = useRef(false);
+  useEffect(() => {
+    if ((!form && !fenceForm) || heavyLoaded.current) return;
+    heavyLoaded.current = true;
+    api.get('/assets?brief=1').then(setAssets).catch(() => {});
+    api.get('/towers?brief=1').then(setTowers).catch(() => {});
+  }, [form, fenceForm]);
 
   // Live, server-side feedback for the capture form (identical logic to save).
   useEffect(() => {

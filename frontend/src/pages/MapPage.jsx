@@ -17,8 +17,8 @@ const LAYERS = [
   { key: 'regions', labelKey: 'layerRegions', color: '#2563eb', count: (d) => d.regions?.length ?? 0 },
   { key: 'substations', labelKey: 'layerSubstations', color: '#22c55e', count: (d) => d.substations?.length ?? 0 },
   { key: 'lines', labelKey: 'layerLines', color: '#f59e0b', count: (d) => d.lines?.length ?? 0 },
-  { key: 'towers', labelKey: 'layerTowers', color: '#94a3b8', count: (d) => d.towers?.length ?? 0 },
-  { key: 'assets', labelKey: 'layerAssets', color: '#a855f7', count: (d) => d.assets?.length ?? 0 },
+  { key: 'towers', labelKey: 'layerTowers', color: '#94a3b8', count: (d) => d.towers?.length || d.counts?.towers || 0 },
+  { key: 'assets', labelKey: 'layerAssets', color: '#a855f7', count: (d) => d.assets?.length || d.counts?.assets || 0 },
   { key: 'geofences', labelKey: 'layerGeofences', color: '#7c3aed', count: (d) => d.geofences?.length ?? 0 },
   { key: 'alerts', labelKey: 'layerAlerts', color: '#dc2626', count: (d) => d.validation_alerts?.length ?? 0 },
   { key: 'tasks', labelKey: 'layerTasks', color: '#0ea5e9', count: (d) => d.open_tasks?.length ?? 0 },
@@ -184,6 +184,7 @@ export default function MapPage() {
   // register; start them hidden so the map opens light and only materialise
   // them when the user turns the layer on.
   const [hidden, setHidden] = useState({ towers: true, assets: true });
+  const [heavyLoaded, setHeavyLoaded] = useState({ towers: false, assets: false });
   const [lastClick, setLastClick] = useState(null);
   const [copied, setCopied] = useState(false);
   const [locating, setLocating] = useState(false);
@@ -199,6 +200,19 @@ export default function MapPage() {
   useEffect(() => {
     api.get('/map/data').then(setData).catch((e) => setError(e.message));
   }, []);
+
+  // Tower and asset collections are fetched only when their layer is switched
+  // on, so the map never pays for points the viewer is not looking at.
+  useEffect(() => {
+    const pending = ['towers', 'assets'].filter((k) => !hidden[k] && !heavyLoaded[k]);
+    if (!pending.length) return;
+    setHeavyLoaded((s) => ({ ...s, ...Object.fromEntries(pending.map((k) => [k, true])) }));
+    for (const k of pending) {
+      api.get(`/map/data?with=${k}`)
+        .then((res) => setData((d) => (d ? { ...d, [k]: res[k] || [] } : d)))
+        .catch((e) => setError(e.message));
+    }
+  }, [hidden, heavyLoaded]);
 
   useEffect(() => {
     if (!mapEl.current || mapRef.current) return;
@@ -697,6 +711,7 @@ export default function MapPage() {
   async function refresh() {
     setError(null);
     setData(null);
+    setHeavyLoaded({ towers: false, assets: false });
     try {
       setData(await api.get('/map/data'));
     } catch (e) {

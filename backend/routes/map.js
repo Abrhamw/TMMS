@@ -26,6 +26,10 @@ function briefSub(s) {
 
 router.get('/map/data', (req, res) => {
   const scope = commandScope(req.user);
+  // Tower and asset layers carry every point on the register, so the map opens
+  // without them and the client requests them on demand via `?with=towers` /
+  // `?with=assets`. Counts are always returned so the layer toggles stay honest.
+  const withParam = new Set(String(req.query.with || '').split(',').map((s) => s.trim()).filter(Boolean));
   const allow = (set, id) => scope.global || (set && set.has(id));
   // The map is always geographically bound to the viewer's home region: crews,
   // department managers and functional (OT) managers alike only ever plot their
@@ -235,8 +239,9 @@ router.get('/map/data', (req, res) => {
     regions,
     substations,
     lines,
-    towers,
-    assets,
+    towers: withParam.has('towers') ? towers : [],
+    assets: withParam.has('assets') ? assets : [],
+    counts: { towers: towers.length, assets: assets.length },
     geofences,
     validation_alerts: validationAlerts,
     open_tasks: openTasks,
