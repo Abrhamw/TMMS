@@ -419,9 +419,9 @@ export default function Tasks() {
                 {formAssets.map((a) => <option key={a.id} value={a.id}>{a.name} {a.default_crew_name ? `(${a.default_crew_name})` : ''}</option>)}
               </SearchSelect></div>
             <div className="field"><label>Checklist templates</label>
-              <div style={{ maxHeight: 140, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 6, padding: '6px 8px' }}>
+              <div className="checklist-tpl-list">
                 {checklists.filter((c) => c.status === 'ACTIVE').map((c) => (
-                  <label key={c.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, padding: '2px 0' }}>
+                  <label key={c.id} className="checklist-tpl-row">
                     <input
                       type="checkbox"
                       checked={(form.checklist_template_ids || []).includes(c.id)}

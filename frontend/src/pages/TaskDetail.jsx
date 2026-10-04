@@ -698,9 +698,9 @@ export default function TaskDetail() {
                 </SearchSelect>
               </div>
               <div className="field"><label>Checklist templates</label>
-                <div style={{ maxHeight: 140, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 6, padding: '6px 8px' }}>
+                <div className="checklist-tpl-list">
                   {checklists.filter((c) => c.status === 'ACTIVE').map((c) => (
-                    <label key={c.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, padding: '2px 0' }}>
+                    <label key={c.id} className="checklist-tpl-row">
                       <input
                         type="checkbox"
                         checked={editChecklistIds.includes(c.id)}

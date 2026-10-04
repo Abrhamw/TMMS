@@ -1763,6 +1763,20 @@ table th { color: var(--muted); text-transform: uppercase; font-size: var(--text
   background: var(--surface-2); color: var(--text); border-color: var(--border);
 }
 
+.field input[type="checkbox"] {
+  width: auto; padding: 0; border: 0; border-radius: 0;
+  background: none; accent-color: var(--primary); flex: none;
+}
+.field .checklist-tpl-list {
+  max-height: 140px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+}
+.field .checklist-tpl-row {
+  display: flex; gap: 8px; align-items: center;
+  font-size: 13px; font-weight: 400; color: var(--text);
+  margin-bottom: 0; padding: 3px 0;
+}
+
 .dark .btn:not(.btn-primary):not(.btn-danger):not(.btn-ghost) { background: var(--surface-2); }
 .dark .btn:not(.btn-primary):not(.btn-danger):not(.btn-ghost):hover { background: var(--surface-3); }
 .dark .btn-ghost:hover { background: var(--surface-2); }
