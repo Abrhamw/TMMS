@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AnimatePresence, motion } from 'motion/react';
 import { Star, Trash2, Inbox, ShieldAlert, RotateCcw } from 'lucide-react';
 import { api, fmtDateTime, fmtDate } from '../api';
 import { ErrorNote, Loading, Modal, Page, Pill, PrintButton, SearchField, SearchSelect } from '../components';
@@ -8,6 +9,12 @@ import { ExecutionDetailBody } from '../components/ExecutionDetail';
 import { t } from '../i18n';
 import { can, getStoredUser } from '../auth';
 import { ReportView } from './Reports';
+import useMailKeyboard from './mailbox/useMailKeyboard';
+import useSwipe from './mailbox/useSwipe';
+
+function reducedMotion() {
+  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+}
 
 // Folders, in the order they appear. The first five are real directed mail
 // (authored messages); the remainder are the read-time task/report activity
@@ -141,6 +148,7 @@ export default function Mailbox() {
   const [selectedForBulk, setSelectedForBulk] = useState(() => new Set());
   const [undo, setUndo] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
+  const [shortcutHelp, setShortcutHelp] = useState(false);
 
   function pushUndo(label, undoFn) {
     const entry = { id: Date.now(), label, undoFn };
@@ -448,8 +456,8 @@ export default function Mailbox() {
     try {
       await api.put(`/mailbox/messages/${id}/junk`, { junk });
       patchMessage(id, { junked: junk, junk_reason: junk ? 'MANUAL' : null });
-      await load();
       pushUndo(junk ? t('mailboxMovedToJunk') : t('mailboxMovedToInbox'), () => setJunk(id, !junk));
+      await load();
     } catch (e) { setError(e.message); }
   }
 
@@ -457,8 +465,8 @@ export default function Mailbox() {
     try {
       await api.put(`/mailbox/messages/${id}/trash`, { trash });
       patchMessage(id, { trashed: trash });
-      await load();
       pushUndo(trash ? t('mailboxMovedToTrash') : t('mailboxRestored'), () => setTrash(id, !trash));
+      await load();
     } catch (e) { setError(e.message); }
   }
 
@@ -506,6 +514,92 @@ export default function Mailbox() {
     });
   }
 
+  // ---- Keyboard / swipe navigation ----
+  function openRow(row) {
+    setCompose(null);
+    if (isMessageFolder(folder) || labelView) { setSelectedId(null); setSelectedMessageKey(row.key); }
+    else { setSelectedMessageKey(null); setSelectedId(row.id); }
+  }
+
+  function currentRow() {
+    if (selectedMessageKey) return visibleRows.find((r) => r.key === selectedMessageKey) || null;
+    if (selectedId) return visibleRows.find((r) => r.id === selectedId && r.key == null) || null;
+    return null;
+  }
+
+  function moveSelection(delta) {
+    if (!visibleRows.length) return;
+    let idx = visibleRows.findIndex((r) => (selectedMessageKey ? r.key === selectedMessageKey : selectedId ? (r.id === selectedId && r.key == null) : false));
+    if (idx === -1) idx = delta > 0 ? -1 : visibleRows.length;
+    const next = visibleRows[Math.min(visibleRows.length - 1, Math.max(0, idx + delta))];
+    if (next) openRow(next);
+  }
+
+  async function archiveMessage(id) {
+    try {
+      await api.put(`/mailbox/messages/${id}/archive`, {});
+      patchMessage(id, { archived: true });
+      pushUndo(t('mailboxMovedToArchive'), () => unarchiveMessage(id));
+      await load();
+    } catch (e) { setError(e.message); }
+  }
+
+  async function unarchiveMessage(id) {
+    try {
+      await api.put(`/mailbox/messages/${id}/unarchive`, {});
+      patchMessage(id, { archived: false });
+      await load();
+    } catch (e) { setError(e.message); }
+  }
+
+  useMailKeyboard({
+    j: () => moveSelection(1),
+    k: () => moveSelection(-1),
+    Enter: () => { const row = currentRow(); if (row) openRow(row); },
+    e: () => { if (mailMessage) archiveMessage(mailMessage.id); },
+    '#': () => { if (mailMessage) { if (mailMessage.trashed) confirmDelete(mailMessage.id); else setTrash(mailMessage.id, true); } },
+    '!': () => { if (mailMessage) setJunk(mailMessage.id, !mailMessage.junked); },
+    s: () => { if (mailMessage) toggleStar(mailMessage.id, !mailMessage.starred); },
+    r: () => { if (mailMessage) startCompose(replyCompose(mailMessage, false)); },
+    a: () => { if (mailMessage) startCompose(replyCompose(mailMessage, true)); },
+    f: () => { if (mailMessage) startForward(mailMessage); },
+    '/': () => { document.querySelector('.mail-list-head input')?.focus(); },
+    x: () => { const row = currentRow(); if (row && row.id) toggleBulk(row.id); },
+    Escape: () => {
+      if (shortcutHelp) setShortcutHelp(false);
+      else if (confirmState) setConfirmState(null);
+      else if (compose) setCompose(null);
+      else if (selectedForBulk.size) setSelectedForBulk(new Set());
+      else { setSelectedMessageKey(null); setSelectedId(null); }
+    },
+    '?': () => setShortcutHelp((v) => !v),
+  }, !compose);
+
+  const swipe = useSwipe({
+    resolve: ({ direction, target }) => {
+      const row = target?.closest?.('.mail-thread-wrap');
+      if (!row) return;
+      const id = Number(row.dataset.mailId);
+      if (!id) return;
+      const trashed = row.dataset.mailTrashed === '1';
+      const junked = row.dataset.mailJunked === '1';
+      if (direction === 'right') {
+        if (trashed) confirmDelete(id); else setTrash(id, true);
+      } else if (trashed) {
+        setTrash(id, false);
+      } else if (junked) {
+        setJunk(id, false);
+      } else {
+        archiveMessage(id);
+      }
+    },
+  });
+
+  useEffect(() => {
+    const node = document.querySelector('.mail-thread-wrap.active .mail-thread, .mail-thread.active');
+    node?.scrollIntoView({ block: 'nearest' });
+  }, [selectedMessageKey, selectedId]);
+
   function applySearch(s) {
     setCompose(null);
     setSelectedId(null);
@@ -544,6 +638,9 @@ export default function Mailbox() {
           <aside className="mailbox-nav">
             <button type="button" className="btn btn-primary mailbox-compose-btn" onClick={() => startCompose()}>
               {t('mailboxCompose')}
+            </button>
+            <button type="button" className="mail-shortcuts-btn" title={t('mailboxShortcuts')} onClick={() => setShortcutHelp(true)}>
+              {t('mailboxShortcuts')}
             </button>
             <div className="mailbox-unread-total"><b>{data.unread_count || 0}</b> {t('mailboxUnreadTotal')}</div>
             <div className="mailbox-folders" role="tablist" aria-label="Mailbox folders">
@@ -633,14 +730,15 @@ export default function Mailbox() {
                 <button type="button" className="btn btn-sm" onClick={() => setSelectedForBulk(new Set())}>{t('mailboxClearSelection')}</button>
               </div>
             )}
-            <div className="mail-thread-list">
+            <div className="mail-thread-list" {...swipe.bind}>
               {visibleRows.map((item) => isMessageFolder(folder) || labelView ? (
-                <div key={item.key} className={'mail-thread-wrap' + (selectedMessageKey === item.key && !compose ? ' active' : '')}>
+                <div key={item.key} className={'mail-thread-wrap' + (selectedMessageKey === item.key && !compose ? ' active' : '')}
+                  data-mail-id={item.id} data-mail-trashed={item.trashed ? '1' : '0'} data-mail-junked={item.junked ? '1' : '0'}>
                   <label className="mail-thread-check" title={t('mailboxSelectMessage')}>
                     <input type="checkbox" checked={selectedForBulk.has(item.id)} onChange={() => toggleBulk(item.id)} />
                   </label>
                   <button className={'mail-thread' + (selectedMessageKey === item.key && !compose ? ' active' : '')}
-                    onClick={() => { setCompose(null); setSelectedId(null); setSelectedMessageKey(item.key); }}>
+                    onClick={() => { if (swipe.consumeClick()) return; setCompose(null); setSelectedId(null); setSelectedMessageKey(item.key); }}>
                     <div className="spread">
                       <b>{item.kind === 'MAIL' ? (item.outgoing ? `${t('mailboxTo')}: ${item.recipient}` : item.actor) : item.kind === 'REPORT' ? item.report_code : item.task_number}</b>
                       <div className="mail-thread-flags">
@@ -797,27 +895,73 @@ export default function Mailbox() {
           onOpenTask={(tid) => { setPreview(null); nav(`/tasks/${tid}`); }}
         />
       )}
-      {undo && (
-        <div className="mail-undo-toast" role="status">
-          <span>{undo.label}</span>
-          <button type="button" className="btn btn-sm" onClick={() => { const fn = undo.undoFn; setUndo(null); fn(); }}>{t('mailboxUndo')}</button>
-          <button type="button" className="mail-undo-x" aria-label={t('close')} onClick={() => setUndo(null)}>{'×'}</button>
-        </div>
-      )}
-      {confirmState && (
-        <div className="mail-confirm-overlay" role="dialog" aria-modal="true">
-          <div className="mail-confirm">
-            <h3>{confirmState.title}</h3>
-            <p className="muted">{confirmState.body}</p>
-            <div className="mail-confirm-actions">
-              <button type="button" className="btn btn-sm" onClick={() => setConfirmState(null)}>{t('cancel')}</button>
-              <button type="button" className={'btn btn-sm' + (confirmState.danger ? ' btn-danger' : '')} onClick={confirmState.onConfirm}>
-                {confirmState.confirmLabel || t('confirm')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <AnimatePresence>
+        {undo && (
+          <motion.div className="mail-undo-toast" role="status"
+            initial={reducedMotion() ? false : { opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 12 }}
+            transition={{ duration: reducedMotion() ? 0 : 0.18 }}>
+            <span>{undo.label}</span>
+            <button type="button" className="btn btn-sm" onClick={() => { const fn = undo.undoFn; setUndo(null); fn(); }}>{t('mailboxUndo')}</button>
+            <button type="button" className="mail-undo-x" aria-label={t('close')} onClick={() => setUndo(null)}>{'×'}</button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {confirmState && (
+          <motion.div className="mail-confirm-overlay" role="dialog" aria-modal="true"
+            initial={reducedMotion() ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: reducedMotion() ? 0 : 0.15 }}>
+            <motion.div className="mail-confirm"
+              initial={reducedMotion() ? false : { scale: 0.96, y: 8 }} animate={{ scale: 1, y: 0 }}
+              transition={{ duration: reducedMotion() ? 0 : 0.16 }}>
+              <h3>{confirmState.title}</h3>
+              <p className="muted">{confirmState.body}</p>
+              <div className="mail-confirm-actions">
+                <button type="button" className="btn btn-sm" onClick={() => setConfirmState(null)}>{t('cancel')}</button>
+                <button type="button" className={'btn btn-sm' + (confirmState.danger ? ' btn-danger' : '')} onClick={confirmState.onConfirm}>
+                  {confirmState.confirmLabel || t('confirm')}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {shortcutHelp && (
+          <motion.div className="mail-confirm-overlay" role="dialog" aria-modal="true"
+            initial={reducedMotion() ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: reducedMotion() ? 0 : 0.15 }}
+            onClick={() => setShortcutHelp(false)}>
+            <motion.div className="mail-confirm mail-shortcuts" onClick={(e) => e.stopPropagation()}
+              initial={reducedMotion() ? false : { scale: 0.96, y: 8 }} animate={{ scale: 1, y: 0 }}
+              transition={{ duration: reducedMotion() ? 0 : 0.16 }}>
+              <h3>{t('mailboxShortcuts')}</h3>
+              <div className="mail-shortcuts-grid">
+                {[
+                  ['j / k', t('mailboxShortcutMove')],
+                  ['Enter', t('mailboxShortcutOpen')],
+                  ['e', t('mailboxShortcutArchive')],
+                  ['#', t('mailboxShortcutDelete')],
+                  ['!', t('mailboxShortcutJunk')],
+                  ['s', t('mailboxShortcutStar')],
+                  ['r / a / f', t('mailboxShortcutReply')],
+                  ['/', t('mailboxShortcutSearch')],
+                  ['x', t('mailboxShortcutSelect')],
+                  ['Esc', t('mailboxShortcutClose')],
+                  ['?', t('mailboxShortcuts')],
+                ].map(([keys, label]) => (
+                  <div key={keys} className="mail-shortcut-row"><kbd>{keys}</kbd><span>{label}</span></div>
+                ))}
+              </div>
+              <div className="mail-confirm-actions">
+                <button type="button" className="btn btn-sm" onClick={() => setShortcutHelp(false)}>{t('close')}</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </Page>
   );
 }
