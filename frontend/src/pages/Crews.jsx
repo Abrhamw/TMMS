@@ -227,7 +227,7 @@ export default function Crews() {
               <button className="btn btn-primary" onClick={() => checkEligibility(eligRegion || regions[0]?.id, eligType, eligChecklist, eligTask)}>Check</button>
             </div>
             {eligibility && eligibility[0]?.dispatch_requirements && (
-              <div className="card" style={{ padding: 10, marginBottom: 10, background: '#f8fafc' }}>
+              <div className="card tone-info" style={{ padding: 10, marginBottom: 10 }}>
                 <b>{eligibility[0].dispatch_requirements.template_name}</b>
                 {eligibility[0].resolved_via && (
                   <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>

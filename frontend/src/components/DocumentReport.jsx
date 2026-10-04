@@ -283,7 +283,7 @@ function DocumentSections({ document, onOpenEntity, sid }) {
 function Warnings({ items }) {
   if (!items || !items.length) return null;
   return (
-    <div className="alert mt" style={{ fontSize: 12, background: '#fffbeb' }}>
+    <div className="alert mt tone-warn" style={{ fontSize: 12 }}>
       {items.map((w, i) => <div key={i}>{w}</div>)}
     </div>
   );

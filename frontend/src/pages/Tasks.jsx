@@ -222,7 +222,7 @@ export default function Tasks() {
       </>}>
       {error && <ErrorNote error={error} />}
       {dispatchNote && (
-        <div className="card card-pad" style={{ background: '#fffbeb', borderColor: '#f59e0b', marginBottom: 12 }}>
+        <div className="card card-pad tone-warn" style={{ marginBottom: 12 }}>
           <button className="btn btn-sm" style={{ float: 'right' }} onClick={() => setDispatchNote(null)}>Dismiss</button>
           <b>Dispatch advisory (non-blocking)</b>
           <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, marginTop: 4 }}>{dispatchNote}</div>
@@ -275,7 +275,7 @@ export default function Tasks() {
       </div>
       <div className="card">
         {canBulk && checked.length > 0 && (
-          <div className="bulkbar" style={{ padding: '10px 14px', borderBottom: '1px solid #e5e7eb', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', background: '#f0f9ff' }}>
+          <div className="bulkbar tone-info" style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <b>{checked.length} selected</b>
             <SearchSelect value={bulkMode} onChange={(e) => { setBulkMode(e.target.value); setBulkVal(''); setBulkErr(null); }}>
               <option value="">Bulk action…</option>

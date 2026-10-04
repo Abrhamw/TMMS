@@ -21,7 +21,7 @@ export default function ReadinessNotes({ taskId }) {
   ];
   if (!gaps.length) return null;
   return (
-    <div className="box mt" style={{ background: '#fffbeb', borderColor: '#fde68a', fontSize: 12 }}>
+    <div className="box mt tone-warn" style={{ fontSize: 12 }}>
       <b>{audit.template?.name || 'Dispatch readiness'}</b>
       {gaps.map((g, i) => <div key={i}>{g}</div>)}
     </div>

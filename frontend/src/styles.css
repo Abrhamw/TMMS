@@ -661,7 +661,7 @@ a.patch-chip:hover { border-color: var(--primary); color: var(--primary); }
 
 /* ---- Infrastructure hub ---- */
 .hub { display: flex; align-items: flex-start; gap: 16px; }
-.hub-tabs-bar { padding: 14px 28px 0; border-bottom: 1px solid var(--border); background: var(--surface, #fff); }
+.hub-tabs-bar { padding: 14px 28px 0; border-bottom: 1px solid var(--border); background: var(--surface-1); }
 .data-list-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .data-list-count { margin-left: auto; font-size: 12px; }
 .data-list-table tr.clickable { cursor: pointer; }
@@ -715,9 +715,15 @@ a.patch-chip:hover { border-color: var(--primary); color: var(--primary); }
 .bad { color: var(--danger-text); }
 .warn { color: var(--warn); }
 .overdue { color: var(--danger-text); font-weight: 700; }
-.link { color: var(--accent); cursor: pointer; text-decoration: none; }
+.link { color: var(--accent); cursor: pointer; text-decoration: none; background: none; border: 0; padding: 0; font: inherit; }
 .link:hover { color: var(--accent-hover); text-decoration: underline; }
 .box { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.tone-info { background: #f8fafc; }
+.tone-warn { background: #fffbeb; border-color: #fde68a; }
+.tone-danger { background: #fef2f2; border-color: #fecaca; }
+.pill-soft { background: #f1f5f9; color: #475569; }
+.pill-soft.bad { color: var(--danger-text); }
+.pill-soft.warn { color: var(--warn); }
 .big-num { font-size: 18px; font-weight: 700; line-height: 1.2; }
 .big-num-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
 .actions { display: flex; align-items: center; gap: 8px; }
@@ -1804,6 +1810,10 @@ table th { color: var(--muted); text-transform: uppercase; font-size: var(--text
 
 .dark .alert-error { background: rgba(220, 38, 38, 0.16); color: #fca5a5; border-color: #7f1d1d; }
 .dark .alert-success { background: rgba(22, 163, 74, 0.16); color: #86efac; border-color: #14532d; }
+.dark .tone-info { background: var(--surface-2); border-color: var(--border); }
+.dark .tone-warn { background: rgba(180, 83, 9, 0.16); border-color: #b45309; }
+.dark .tone-danger { background: rgba(220, 38, 38, 0.16); border-color: #7f1d1d; }
+.dark .pill-soft { background: var(--surface-3); color: var(--text); }
 
 /* Overlays, controls and mailbox surfaces still hardcoding light backgrounds. */
 .dark .global-search-panel, .dark .mail-recipient-menu {
@@ -1820,6 +1830,9 @@ table th { color: var(--muted); text-transform: uppercase; font-size: var(--text
   background: var(--surface-3);
 }
 .dark .bucket-group, .dark .bucket-task { background: var(--surface-1); border-color: var(--border); }
+.dark .bucket-group-head { background: var(--surface-2); }
+.dark .bucket-group-head:hover { background: var(--surface-3); }
+.dark .bucket-group-count { background: color-mix(in srgb, var(--bucket-accent, var(--primary)) 22%, var(--surface-1)); }
 .dark .bucket-chip { color: var(--text); }
 .dark .bucket-chip.active {
   background: color-mix(in srgb, var(--bucket-accent, var(--primary)) 22%, var(--surface-1));

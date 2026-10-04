@@ -526,7 +526,7 @@ export default function TaskDetail() {
             </>}
           </div>
           {dispatch && (
-            <div className="box mt" style={{ background: dispatch.mine && !dispatch.mine.eligible ? '#fffbeb' : '#f8fafc' }}>
+            <div className={'box mt ' + (dispatch.mine && !dispatch.mine.eligible ? 'tone-warn' : 'tone-info')}>
               <div className="muted" style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4 }}>DISPATCH ADVISORY (NON-BLOCKING)</div>
               <div style={{ fontSize: 12 }}>
                 Team: {dispatch.reqs.team.join('; ') || '—'} · Skills: {dispatch.reqs.skills.join(', ') || '—'}
@@ -612,7 +612,7 @@ export default function TaskDetail() {
             {t.status === 'ON_HOLD' && canSubmit && <button className="btn btn-primary" onClick={() => act('resume')}>Resume work</button>}
             {t.status === 'PENDING_VERIFICATION' && (canVerify || canSubmit) && <>
               {(t.gps_validations || []).length > 0 && (
-                <div className="box" style={{ background: '#f8fafc' }}>
+                <div className="box tone-info">
                   <div className="muted" style={{ fontSize: 11, fontWeight: 700, marginBottom: 4, letterSpacing: 0.4 }}>GPS EVIDENCE (APP CAPTURE)</div>
                   {t.gps_validations.map((g, i) => (
                     <div key={i} className="spread" style={{ fontSize: 12, padding: '2px 0', flexWrap: 'wrap', gap: '4px 10px' }}>
@@ -766,7 +766,7 @@ export default function TaskDetail() {
       )}
 
       {t.status === 'CANCELLED' && (
-        <div className="card card-pad mt" style={{ background: '#fef2f2', borderColor: '#fecaca' }}>
+        <div className="card card-pad mt tone-danger">
           <h3 className="section-title">Cancellation (read-only)</h3>
           <div className="muted" style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4 }}>CANCELLATION</div>
           <div style={{ fontSize: 13, marginTop: 4 }}>{t.cancel_reason || t.completion_summary || '—'}</div>
@@ -794,7 +794,7 @@ export default function TaskDetail() {
             <div key={it.id} className="card card-pad mb" style={{ padding: 12 }}>
               <div className="spread">
                 <b>{it.sequence}. {it.instruction}</b>
-                <span className="pill" style={{ background: '#f1f5f9', color: '#475569' }}>{it.response_type}{it.required ? ' *' : ''}</span>
+                <span className="pill pill-soft">{it.response_type}{it.required ? ' *' : ''}</span>
               </div>
               <div className="muted" style={{ fontSize: 12 }}>{it.section || '—'}{it.test_equipment ? ` · Equipment: ${it.test_equipment}` : ''}</div>
               <div className="mt">
@@ -819,7 +819,7 @@ export default function TaskDetail() {
             <div key={f.id} className="box" style={{ marginTop: 8 }}>
               <div className="spread">
                 <b>{f.title}</b>
-                <span className={'pill' + (f.severity === 'CRITICAL' || f.severity === 'HIGH' ? ' bad' : f.severity === 'MEDIUM' ? ' warn' : '')} style={{ background: '#f1f5f9', fontWeight: 700 }}>{f.severity}</span>
+                <span className={'pill pill-soft' + (f.severity === 'CRITICAL' || f.severity === 'HIGH' ? ' bad' : f.severity === 'MEDIUM' ? ' warn' : '')} style={{ fontWeight: 700 }}>{f.severity}</span>
               </div>
               {f.detail && <p className="muted" style={{ fontSize: 12, margin: '4px 0 0' }}>{f.detail}</p>}
               <div className="finding-links">
@@ -903,7 +903,7 @@ export default function TaskDetail() {
             </div>
           ) : (
             <>
-              <div className="box" style={{ background: '#fef2f2', borderColor: '#fecaca' }}>
+              <div className="box tone-danger">
                 <b>Confirm cancellation</b> <span className="mono">{t.task_number}</span>
                 <div style={{ marginTop: 6, fontSize: 13 }}><span className="muted">Comment:</span> {cancelFlow.reason}</div>
               </div>

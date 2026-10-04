@@ -248,7 +248,7 @@ export default function ImportDialog({ title, endpoint, templatePath, templateNa
                   </thead>
                   <tbody>
                     {preview.candidates.map((row) => (
-                      <tr key={row.index} style={row.will_skip ? { background: '#fef2f2' } : undefined}>
+                      <tr key={row.index} className={row.will_skip ? 'tone-danger' : undefined}>
                         {columns.map((c) => (
                           <td key={c.key} className={c.mono ? 'mono' : undefined}>
                             {editable[c.key] ? (

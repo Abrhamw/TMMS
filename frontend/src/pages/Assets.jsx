@@ -598,7 +598,7 @@ export default function Assets() {
                 <span className="k">Last maint</span><span>{fmtDate(detail.last_maintenance_at)}</span>
               </div>
               {canEvaluate && evalState?.suggestion && (
-                <div className="box mt" style={{ background: '#f8fafc' }}>
+                <div className="box mt tone-info">
                   <div className="muted" style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4 }}>CONDITION EVALUATION (EVIDENCE-BASED)</div>
                   <div style={{ fontSize: 13, marginTop: 4 }}>
                     Suggested rating <b>{evalState.suggestion.suggested_rating}/10</b>

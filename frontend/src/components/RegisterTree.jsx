@@ -174,7 +174,7 @@ export default function RegisterTree({ canWrite, regionId, onChangeRegion, onSel
         </div>
       )}
       {val && (
-        <div className="card card-pad mb" style={{ background: '#f8fafc', border: '1px solid #e2e8f0' }}>
+        <div className="card card-pad mb tone-info">
           <div className="spread">
             <div><div className="muted" style={{ fontSize: 12 }}>Estimated register value (RCN)</div><div style={{ fontSize: 20, fontWeight: 700 }}>{fmtMoney(val.totals.rcn, val.currency?.code)}</div></div>
             <div><div className="muted" style={{ fontSize: 12 }}>Condition-adjusted</div><div style={{ fontSize: 20, fontWeight: 700 }}>{fmtMoney(val.totals.current, val.currency?.code)}</div></div>
