@@ -1,7 +1,7 @@
 # Frontend Structural Redesign - Design
 
 Date: 2026-10-04
-Status: Approved (design), pending implementation plan
+Status: Implemented (R0-R3)
 
 ## 1. Summary
 

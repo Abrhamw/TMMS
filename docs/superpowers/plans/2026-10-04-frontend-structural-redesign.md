@@ -110,10 +110,10 @@
 
 ### Task R3.1: Apply the hover/motion language
 
-- [ ] Step 1: Apply card lift, row tint, dialog/sheet motion, and stagger consistently across migrated surfaces, all reduced-motion gated.
-- [ ] Step 2: Finish dark mapping of any remaining legacy surfaces.
+- [x] Step 1: Apply card lift, row tint, dialog/sheet motion, and stagger consistently across migrated surfaces, all reduced-motion gated.
+- [x] Step 2: Finish dark mapping of any remaining legacy surfaces.
 
 ### Task R3.2: Final verification
 
-- [ ] Step 1: Playwright matrix across all roles/viewports/themes; reduced-motion and keyboard checks.
-- [ ] Step 2: `npm run build`; update this plan and the spec status; commit explicit paths and push.
+- [x] Step 1: Playwright matrix across all roles/viewports/themes; reduced-motion and keyboard checks.
+- [x] Step 2: `npm run build`; update this plan and the spec status; commit explicit paths and push.
