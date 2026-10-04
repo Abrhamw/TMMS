@@ -7,6 +7,8 @@ const { maintenanceCostForRegions } = require('../maintenanceCost');
 const { computeRegionValuation, mergeValuations } = require('./register');
 const { recentRevaluationData } = require('../assetMonitor');
 const { buildRecommendations } = require('../executiveRecommendations');
+const { buildRegionLoad, buildInterventions } = require('../summary');
+const { substationBayCounts } = require('../integrity');
 
 const router = express.Router();
 
@@ -341,6 +343,97 @@ function computeSummary(req, res, opts = {}) {
     .slice(0, 10)
     .map((row) => ({ ...row, asset_code: assetById.get(row.asset_id)?.asset_id || null }));
 
+  const substationRegion = new Map(allSubstations.map((sub) => [sub.id, sub.region_id]));
+  const lineRegion = new Map(allLines.map((line) => [line.id, line.region_id]));
+  const crewRegion = new Map(list('crew').map((crew) => [crew.id, crew.region_id]));
+  const regionNameById = new Map(allRegions.map((region) => [region.id, region.name]));
+  const assetRegionId = new Map();
+  for (const asset of assets) {
+    const rid = asset.substation_id != null ? substationRegion.get(asset.substation_id)
+      : (asset.line_id != null ? lineRegion.get(asset.line_id) : null);
+    assetRegionId.set(asset.id, rid ?? null);
+  }
+  const taskRegionId = (task) => {
+    if (task.region_id != null) return task.region_id;
+    if (task.crew_id != null) return crewRegion.get(task.crew_id) ?? null;
+    if (task.line_id != null) return lineRegion.get(task.line_id) ?? null;
+    if (task.substation_id != null) return substationRegion.get(task.substation_id) ?? null;
+    return null;
+  };
+  const bayCountBySubstation = substationBayCounts();
+  const regionLoad = buildRegionLoad(regions, {
+    substationsFor: (rid) => allSubstations.filter((sub) => sub.region_id === rid),
+    linesFor: (rid) => lines.filter((line) => line.region_id === rid),
+    assetsFor: (rid) => assets.filter((asset) => assetRegionId.get(asset.id) === rid),
+    tasksFor: (rid) => tasks.filter((task) => taskRegionId(task) === rid),
+    bayCountOf: (id) => bayCountBySubstation.get(id) || 0,
+  });
+
+  const interventionCandidates = [];
+  for (const row of renewalCandidates) {
+    const asset = assetById.get(row.asset_id);
+    interventionCandidates.push({
+      asset_id: row.asset_id,
+      asset_code: row.asset_code || asset?.asset_id || null,
+      asset_name: asset?.name || null,
+      asset_type: asset?.asset_type || null,
+      region: regionNameById.get(assetRegionId.get(row.asset_id)) || null,
+      current_rating: asset?.condition_rating ?? null,
+      suggested_rating: row.combined_rating ?? null,
+      remaining_useful_life_years: row.remaining_useful_life_years ?? null,
+      action: 'REPLACE',
+      reason: 'Renewal or replacement recommended',
+    });
+  }
+  for (const row of degradationAttention) {
+    const code = String(row.recommendation || '').toUpperCase();
+    const suggested = Number(row.suggested_rating);
+    let action = null;
+    if (code === 'REPLACE') action = 'REPLACE';
+    else if (code === 'REPAIR') action = 'REPAIR';
+    else if (Number.isFinite(suggested) && suggested <= 5) action = 'UPGRADE';
+    if (!action) continue;
+    interventionCandidates.push({
+      asset_id: row.asset_id,
+      asset_code: row.asset_code,
+      asset_name: row.asset_name,
+      asset_type: row.asset_type,
+      region: row.region,
+      current_rating: row.current_rating,
+      suggested_rating: row.suggested_rating,
+      delta: row.delta,
+      health_index: row.health_index,
+      action,
+      reason: (Array.isArray(row.reasons) && row.reasons.length ? row.reasons.join('; ') : 'Condition is degrading'),
+    });
+  }
+  for (const row of overloadExposure) {
+    const asset = assetById.get(row.asset_id);
+    interventionCandidates.push({
+      asset_id: row.asset_id,
+      asset_code: row.asset_code || asset?.asset_id || null,
+      asset_name: asset?.name || null,
+      asset_type: asset?.asset_type || null,
+      region: regionNameById.get(assetRegionId.get(row.asset_id)) || null,
+      current_rating: asset?.condition_rating ?? null,
+      action: 'UPGRADE',
+      reason: `${row.factor_count} overload or through-fault event(s) in 12 months`,
+    });
+  }
+  for (const asset of assets.filter((item) => Number(item.condition_rating) <= 5)) {
+    interventionCandidates.push({
+      asset_id: asset.id,
+      asset_code: asset.asset_id,
+      asset_name: asset.name,
+      asset_type: asset.asset_type,
+      region: regionNameById.get(assetRegionId.get(asset.id)) || null,
+      current_rating: asset.condition_rating,
+      action: 'REPAIR',
+      reason: Number(asset.condition_rating) <= 3 ? 'Critical condition' : 'Poor condition',
+    });
+  }
+  const interventions = buildInterventions(interventionCandidates);
+
   const costComposition = (() => {
     const buckets = { planned: 0, unplanned: 0, emergency: 0, capital: 0 };
     const counts = { planned: 0, unplanned: 0, emergency: 0, capital: 0 };
@@ -490,6 +583,8 @@ function computeSummary(req, res, opts = {}) {
     },
     condition,
     infrastructure_condition: infrastructureCondition,
+    region_load: regionLoad,
+    interventions,
     asset_mix: [...typeMix].map(([asset_type, count]) => ({ asset_type, count })).sort((a, b) => b.count - a.count),
     owner_mix: [...ownerMix.values()].sort((a, b) => a.owner.localeCompare(b.owner) || a.asset_type.localeCompare(b.asset_type)),
     maintenance_cost_by_owner: [...maintenanceCostByOwner.values()].sort((a, b) => b.spend - a.spend),

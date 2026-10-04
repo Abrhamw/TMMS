@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
-import { Activity, Boxes, RefreshCw, TrendingDown, Users, Wallet, Wrench, ChevronRight } from 'lucide-react';
+import { Activity, Boxes, ChevronRight, CircleDollarSign, RefreshCw, ShieldCheck, TrendingDown, Users, Wallet, Wrench } from 'lucide-react';
 import { api, fmtMoney, fmtDateTime } from '../api';
 import { ErrorNote, Page, PageSkeleton } from '../components';
 import { Sparkline, StackedBar, TrendLine } from '../components/viz';
@@ -18,6 +17,15 @@ const CONDITION = [
 
 const STATUS_PALETTE = ['#0e7490', '#4338ca', '#2563eb', '#7c3aed', '#d97706', '#16a34a', '#dc2626', '#64748b'];
 
+const ACTIONS = [
+  { key: 'ALL', label: 'All' },
+  { key: 'UPGRADE', label: 'Upgrade' },
+  { key: 'REPLACE', label: 'Replace' },
+  { key: 'REPAIR', label: 'Repair' },
+];
+
+const ACTION_TONE = { REPLACE: 'danger', UPGRADE: 'warn', REPAIR: 'info' };
+
 function reduced() {
   return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 }
@@ -25,6 +33,10 @@ function reduced() {
 function monthLabel(month) {
   const d = new Date(`${month}-01T00:00:00Z`);
   return Number.isNaN(d.getTime()) ? month : d.toLocaleDateString(undefined, { month: 'short', timeZone: 'UTC' });
+}
+
+function fmtNum(value) {
+  return Number.isFinite(Number(value)) ? Number(value).toLocaleString() : '—';
 }
 
 function CountUp({ value, format }) {
@@ -48,72 +60,78 @@ function CountUp({ value, format }) {
   return format ? format(display) : Math.round(display).toLocaleString();
 }
 
-function Panel({ title, sub, onOpen, children, className, delay = 0 }) {
+function Section({ title, sub, action, children, className }) {
   return (
-    <motion.section
-      initial={reduced() ? false : { opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: reduced() ? 0 : 0.4, delay: reduced() ? 0 : delay, ease: [0.22, 1, 0.36, 1] }}
-      onClick={onOpen}
-      onKeyDown={onOpen ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } } : undefined}
-      role={onOpen ? 'button' : undefined}
-      tabIndex={onOpen ? 0 : undefined}
-      className={cn(
-        'group flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 shadow-sm outline-none transition-shadow hover:shadow-md focus-visible:ring-2 focus-visible:ring-accent/40 dark:border-slate-800 dark:bg-slate-900',
-        onOpen && 'cursor-pointer',
-        className
-      )}
-    >
-      <header className="mb-2 flex items-start justify-between gap-2">
-        <h3 className="text-xs font-semibold text-slate-900 dark:text-slate-100">{title}</h3>
-        <span className="flex items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400">
-          {sub}
-          {onOpen && <ChevronRight size={12} className="opacity-0 transition-opacity group-hover:opacity-100" />}
-        </span>
-      </header>
-      <div className="flex min-h-0 flex-1 flex-col">{children}</div>
-    </motion.section>
+    <section className={cn('exec-section', className)}>
+      <div className="exec-section-head">
+        <div>
+          <h2>{title}</h2>
+          {sub ? <span className="muted">{sub}</span> : null}
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
   );
 }
 
-function Kpi({ icon, label, value, numeric, format, sub, tone, spark, onOpen, delay }) {
+function Card({ title, sub, onOpen, children, className }) {
+  const interactive = !!onOpen;
+  return (
+    <div
+      className={cn('exec-card', interactive && 'exec-card--click', className)}
+      onClick={onOpen}
+      onKeyDown={interactive ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } } : undefined}
+      role={interactive ? 'button' : undefined}
+      tabIndex={interactive ? 0 : undefined}
+    >
+      {(title || sub) ? (
+        <header className="exec-card-head">
+          <h3>{title}</h3>
+          <span className="muted">
+            {sub}
+            {interactive ? <ChevronRight size={12} className="exec-card-chevron" /> : null}
+          </span>
+        </header>
+      ) : null}
+      <div className="exec-card-body">{children}</div>
+    </div>
+  );
+}
+
+function Kpi({ icon, label, value, format, sub, tone, spark, onOpen, delay }) {
   const toneAccent = tone === 'bad' ? 'bg-red-500' : tone === 'warn' ? 'bg-amber-500' : 'bg-brand';
   return (
-    <motion.button
+    <button
       type="button"
       onClick={onOpen}
-      initial={reduced() ? false : { opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: reduced() ? 0 : 0.4, delay: reduced() ? 0 : delay, ease: [0.22, 1, 0.36, 1] }}
-      className={cn(
-        'group relative flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white p-2.5 text-left shadow-sm outline-none transition-transform hover:-translate-y-0.5 hover:shadow-md focus-visible:ring-2 focus-visible:ring-accent/40 dark:border-slate-800 dark:bg-slate-900'
-      )}
+      style={reduced() ? undefined : { animationDelay: `${delay}s` }}
+      className="exec-kpi"
     >
       <span className={cn('absolute inset-y-0 left-0 w-1', toneAccent)} />
-      <span className="flex items-center gap-1.5 pl-1.5 text-[10px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+      <span className="exec-kpi-label">
         {icon}
         {label}
       </span>
-      <span className="pl-1.5 text-[clamp(1.05rem,1.7vw,1.5rem)] font-bold leading-tight text-slate-900 dark:text-slate-50">
+      <span className="exec-kpi-value">
         <CountUp value={value} format={format} />
-        {numeric ? null : null}
       </span>
-      {sub ? <span className="pl-1.5 text-[10px] text-slate-500 dark:text-slate-400">{sub}</span> : null}
-      {Array.isArray(spark) && spark.length > 1 ? <span className="mt-1 pl-1.5"><Sparkline values={spark} width={150} height={22} color={tone === 'bad' ? '#dc2626' : '#4338ca'} /></span> : null}
-    </motion.button>
+      {sub ? <span className="exec-kpi-sub">{sub}</span> : null}
+      {Array.isArray(spark) && spark.length > 1 ? <span className="exec-kpi-spark"><Sparkline values={spark} width={150} height={22} color={tone === 'bad' ? '#dc2626' : '#4338ca'} /></span> : null}
+    </button>
   );
 }
 
 function Bar({ label, value, max, color }) {
   const pct = max > 0 ? Math.max(2, Math.min(100, Math.round((value / max) * 100))) : 0;
   return (
-    <div className="py-1">
-      <div className="mb-1 flex items-center justify-between text-xs">
-        <span className="text-slate-600 dark:text-slate-300">{label}</span>
-        <b className="text-slate-900 dark:text-slate-100">{value.toLocaleString()}</b>
+    <div className="exec-bar">
+      <div className="exec-bar-head">
+        <span>{label}</span>
+        <b>{value.toLocaleString()}</b>
       </div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
+      <div className="exec-bar-track">
+        <div className="exec-bar-fill" style={{ width: `${pct}%`, background: color }} />
       </div>
     </div>
   );
@@ -121,11 +139,68 @@ function Bar({ label, value, max, color }) {
 
 function Row({ left, right, tone }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-slate-100 py-1.5 text-xs last:border-0 dark:border-slate-800">
-      <span className="min-w-0 text-slate-600 dark:text-slate-300">{left}</span>
-      <span className="shrink-0 font-semibold text-slate-900 dark:text-slate-100">{right}</span>
+    <div className="exec-row">
+      <span className="exec-row-left">{left}</span>
+      <span className="exec-row-right">{right}</span>
       {tone}
     </div>
+  );
+}
+
+function EffBar({ label, value }) {
+  const v = value == null ? null : Math.max(0, Math.min(100, Number(value)));
+  return (
+    <div className="exec-eff">
+      <span className="muted">{label}</span>
+      <div className="exec-eff-track">
+        <div className="exec-eff-fill" style={{ width: `${v ?? 0}%` }} />
+      </div>
+      <b>{v == null ? '—' : `${v}%`}</b>
+    </div>
+  );
+}
+
+function RegionCard({ region }) {
+  const eff = region.effectiveness || {};
+  const lineVolts = Object.entries(region.lines?.by_voltage || {})
+    .sort((a, b) => Number.parseFloat(b[0]) - Number.parseFloat(a[0])).slice(0, 3);
+  return (
+    <article className="exec-region">
+      <header className="exec-region-head">
+        <div className="exec-region-title">
+          <b>{region.name}</b>
+          <span className="muted">{region.code}</span>
+        </div>
+        <Ring value={eff.index ?? 0} label="Effectiveness" size={56} />
+      </header>
+      <div className="exec-region-metrics">
+        <div>
+          <span className="muted">Substations</span>
+          <b>{fmtNum(region.substations?.count)}</b>
+          <span className="muted">{fmtNum(region.substations?.total_bays)} bays · {region.substations?.avg_bays ?? 0} avg</span>
+        </div>
+        <div>
+          <span className="muted">Lines</span>
+          <b>{fmtNum(region.lines?.count)}</b>
+          <span className="muted">{fmtNum(region.lines?.circuit_km)} ckt-km</span>
+        </div>
+        <div>
+          <span className="muted">Assets</span>
+          <b>{fmtNum(region.assets?.count)}</b>
+          <span className="muted">{fmtNum((region.assets?.condition?.critical || 0) + (region.assets?.condition?.poor || 0))} at risk</span>
+        </div>
+      </div>
+      <div className="exec-region-bars">
+        <EffBar label="Availability" value={eff.availability} />
+        <EffBar label="Delivery" value={eff.delivery} />
+        <EffBar label="Condition" value={eff.condition} />
+      </div>
+      {lineVolts.length ? (
+        <div className="exec-region-chips">
+          {lineVolts.map(([label, entry]) => <span className="exec-chip" key={label}>{label} · {entry.count}</span>)}
+        </div>
+      ) : null}
+    </article>
   );
 }
 
@@ -136,6 +211,7 @@ export default function ExecutiveSummary() {
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [drawer, setDrawer] = useState(null);
+  const [intFilter, setIntFilter] = useState('ALL');
   const user = getStoredUser();
   const linksEnabled = !!user && user.role === 'ADMIN';
   const alive = useRef(true);
@@ -188,7 +264,7 @@ export default function ExecutiveSummary() {
   if (error) return <Page title="Executive Command Center" crumbs="TMMS / Executive" actions={controls}><ErrorNote error={error} /></Page>;
   if (!summary) return <Page title="Executive Command Center" crumbs="TMMS / Executive" actions={controls} fill><PageSkeleton /></Page>;
 
-  const portfolio = summary.portfolio;
+  const portfolio = summary.portfolio || {};
   const currency = summary.currency;
   const kpis = summary.kpis || [];
   const trends = summary.trends || { spend: [], condition: [] };
@@ -196,46 +272,51 @@ export default function ExecutiveSummary() {
   const degradation = summary.degradation_attention || [];
   const composition = summary.cost_composition || { total: 0, buckets: [] };
   const readiness = summary.workforce_readiness || {};
+  const workforce = summary.workforce || {};
   const equipment = summary.equipment || {};
+  const condition = summary.condition || {};
+  const infra = summary.infrastructure_condition || {};
+  const valuation = summary.valuation || {};
+  const regionLoad = summary.region_load || [];
+  const interventions = summary.interventions || [];
   const byStatus = summary.tasks?.by_status || {};
 
   const meanCondition = (() => {
     const kpi = kpis.find((k) => k.key === 'condition');
     if (kpi && typeof kpi.value === 'number') return kpi.value;
-    return summary.valuation?.avg_condition != null ? Number(summary.valuation.avg_condition) : null;
+    return valuation.avg_condition != null ? Number(valuation.avg_condition) : null;
   })();
   const spendPoints = trends.spend.map((row) => ({ label: monthLabel(row.month), value: row.spend }));
+  const conditionPoints = (trends.condition || []).filter((row) => row.rating != null).map((row) => ({ label: monthLabel(row.month), value: row.rating }));
   const statusSegments = Object.entries(byStatus).map(([status, count], i) => ({ label: status.replace(/_/g, ' ').toLowerCase(), value: count, color: STATUS_PALETTE[i % STATUS_PALETTE.length] }));
-
-  const kpiMeta = {
-    assets: { icon: <Boxes size={13} />, open: 'assets' },
-    condition: { icon: <Activity size={13} />, open: 'condition' },
-    work: { icon: <Wrench size={13} />, open: 'work' },
-    spend: { icon: <Wallet size={13} />, open: 'spend' },
-    workforce: { icon: <Users size={13} />, open: 'readiness' },
-  };
+  const lineSegments = Object.entries(infra.lines || {}).map(([status, count], i) => ({ label: status.replace(/_/g, ' ').toLowerCase(), value: count, color: STATUS_PALETTE[i % STATUS_PALETTE.length] }));
+  const subSegments = Object.entries(infra.substations || {}).map(([status, count], i) => ({ label: status.replace(/_/g, ' ').toLowerCase(), value: count, color: STATUS_PALETTE[i % STATUS_PALETTE.length] }));
+  const roleRows = Object.entries(workforce.by_role || {}).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const certRows = (workforce.by_type || []).slice(0, 6);
+  const filteredInterventions = intFilter === 'ALL' ? interventions : interventions.filter((row) => row.action === intFilter);
 
   const kpiFormat = (kpi) => (n) => {
-    if (kpi.key === 'spend') return fmtMoney(n, currency);
+    if (kpi.key === 'spend' || kpi.key === 'capital') return fmtMoney(n, currency);
     if (kpi.key === 'condition') return Number(n).toFixed(1);
     return Math.round(n).toLocaleString();
   };
 
-  const fallback = [
-    { key: 'assets', label: 'Asset population', value: portfolio.assets, sub: `${portfolio.lines} lines · ${portfolio.towers} towers` },
-    { key: 'condition', label: 'Mean condition', value: meanCondition ?? '—', sub: `${summary.condition?.assessed ?? 0} assessed` },
-    { key: 'work', label: 'Open work orders', value: portfolio.open_tasks, sub: `${portfolio.overdue_tasks} overdue`, tone: portfolio.overdue_tasks ? 'bad' : undefined },
-    { key: 'spend', label: '12-month spend', value: summary.maintenance_cost?.totals?.spend ?? 0, sub: `${summary.maintenance_cost?.totals?.count ?? 0} events` },
+  const tiles = [
+    { key: 'assets', icon: <Boxes size={13} />, label: 'Assets in service', value: portfolio.assets ?? 0, sub: `${portfolio.regions ?? 0} regions · ${portfolio.lines ?? 0} lines`, open: 'assets' },
+    { key: 'condition', icon: <Activity size={13} />, label: 'Mean condition', value: meanCondition ?? '—', sub: `${condition.assessed ?? 0} assessed`, tone: meanCondition != null && meanCondition <= 5 ? 'bad' : meanCondition != null && meanCondition <= 7 ? 'warn' : undefined, spark: conditionPoints.map((p) => p.value), open: 'condition' },
+    { key: 'capital', icon: <CircleDollarSign size={13} />, label: 'Capital value', value: valuation.current ?? 0, sub: `RCN ${fmtMoney(valuation.rcn ?? 0, currency)}`, open: 'assets' },
+    { key: 'spend', icon: <Wallet size={13} />, label: '12-month spend', value: summary.maintenance_cost?.totals?.spend ?? 0, sub: `${summary.maintenance_cost?.totals?.count ?? 0} events`, spark: spendPoints.map((p) => p.value), open: 'spend' },
+    { key: 'workforce', icon: <Users size={13} />, label: 'Crew readiness', value: readiness.crew_readiness != null ? `${readiness.crew_readiness}%` : '—', sub: `${readiness.active_crews ?? 0} of ${readiness.crews ?? 0} active`, tone: readiness.crew_readiness != null && readiness.crew_readiness < 50 ? 'warn' : undefined, open: 'readiness' },
+    { key: 'cert', icon: <ShieldCheck size={13} />, label: 'Certification readiness', value: readiness.certification_readiness != null ? `${readiness.certification_readiness}%` : '—', sub: `${workforce.valid_certifications ?? 0} valid · ${workforce.expiring_90_days ?? 0} expiring`, tone: readiness.certification_readiness != null && readiness.certification_readiness < 60 ? 'warn' : undefined, open: 'readiness' },
   ];
 
-  const tiles = kpis.length ? kpis : fallback;
   const drawerTitle = {
     condition: 'Condition detail', assets: 'Asset portfolio', spend: 'Maintenance spend', work: 'Work status',
     readiness: 'Workforce readiness', composition: 'Cost composition', degradation: 'Degradation attention', recs: 'Executive recommendations',
   };
 
   return (
-    <Page title="Executive Command Center" crumbs="TMMS / Executive" actions={controls} fill>
+    <Page title="Executive Command Center" crumbs="TMMS / Executive" actions={controls}>
       <div className="exec-briefing">
         <div className="exec-briefing-meta">
           <span>Generated {fmtDateTime(summary.hero?.generated_at || summary.generated_at)}</span>
@@ -243,82 +324,148 @@ export default function ExecutiveSummary() {
         </div>
 
         <div className="exec-briefing-kpis">
-          {tiles.map((kpi, i) => {
-            const meta = kpiMeta[kpi.key] || {};
-            const numeric = typeof kpi.value === 'number';
-            return (
-              <Kpi
-                key={kpi.key}
-                icon={meta.icon}
-                label={kpi.label}
-                value={kpi.value}
-                numeric={numeric}
-                format={numeric ? kpiFormat(kpi) : undefined}
-                sub={kpi.sub}
-                tone={kpi.tone}
-                spark={kpi.spark}
-                delay={i * 0.06}
-                onOpen={() => setDrawer(meta.open || 'assets')}
-              />
-            );
-          })}
+          {tiles.map((kpi, i) => (
+            <Kpi
+              key={kpi.key}
+              icon={kpi.icon}
+              label={kpi.label}
+              value={kpi.value}
+              format={typeof kpi.value === 'number' ? kpiFormat(kpi) : undefined}
+              sub={kpi.sub}
+              tone={kpi.tone}
+              spark={kpi.spark}
+              delay={i * 0.05}
+              onOpen={() => setDrawer(kpi.open)}
+            />
+          ))}
         </div>
 
-        <div className="exec-briefing-grid">
-          <Panel title="Condition" sub={`${portfolio.assets.toLocaleString()} assets`} delay={0.05} onOpen={() => setDrawer('condition')}>
-            <div className="flex min-h-0 flex-1 items-center justify-center">
-              <DonutMini condition={summary.condition || {}} total={portfolio.assets} mean={meanCondition} />
-            </div>
-          </Panel>
+        <Section title="Human capital & readiness" sub={`${readiness.headcount ?? portfolio.people ?? 0} people · ${readiness.crews ?? 0} crews`}>
+          <div className="exec-grid exec-grid--3">
+            <Card title="Readiness" sub="crews and certifications" onOpen={() => setDrawer('readiness')}>
+              <div className="exec-rings">
+                <Ring value={readiness.certification_readiness ?? 0} label="Certification" size={72} />
+                <Ring value={readiness.crew_readiness ?? 0} label="Crew" size={72} />
+              </div>
+              <div className="exec-mini">
+                <span>Valid <b>{fmtNum(workforce.valid_certifications)}</b></span>
+                <span>Expiring <b>{fmtNum(workforce.expiring_90_days)}</b></span>
+                <span>Expired <b>{fmtNum(workforce.expired_certifications)}</b></span>
+              </div>
+            </Card>
 
-          <Panel title="Maintenance spend" sub="12 months" delay={0.1} onOpen={() => setDrawer('spend')}>
-            <div className="min-h-0 flex-1">
-              {spendPoints.length ? <TrendLine data={spendPoints} height={112} valueFormat={(v) => fmtMoney(v, currency)} /> : <div className="grid h-full place-items-center text-xs text-slate-400">No spend recorded</div>}
-            </div>
-          </Panel>
+            <Card title="Workforce by role" sub={`${roleRows.length} roles`}>
+              {roleRows.length ? roleRows.map(([role, count]) => <Bar key={role} label={role} value={count} max={roleRows[0]?.[1] || 1} color="#2563eb" />) : <div className="exec-empty">No personnel recorded</div>}
+            </Card>
 
-          <Panel title="Work status" sub={`${portfolio.open_tasks} open · ${portfolio.overdue_tasks} overdue`} delay={0.15} onOpen={() => setDrawer('work')}>
-            {statusSegments.length ? <StackedBar segments={statusSegments} height={12} /> : <div className="text-xs text-slate-400">No tasks recorded</div>}
-          </Panel>
+            <Card title="Certifications by type" sub={`${workforce.certifications ?? 0} records`}>
+              {certRows.length ? certRows.map((cert) => (
+                <div className="exec-cert" key={cert.cert_type}>
+                  <span className="exec-cert-name">{String(cert.cert_type || '').replace(/_/g, ' ')}</span>
+                  <span className="exec-cert-counts">
+                    <b>{cert.valid}</b> valid · <b>{cert.expiring}</b> expiring · <span className={cert.expired ? 'exec-cert-bad' : undefined}>{cert.expired}</span> expired
+                  </span>
+                </div>
+              )) : <div className="exec-empty">No certifications recorded</div>}
+              <div className="exec-mini">
+                <span>Equipment missed <b>{fmtNum(equipment.missed)}</b></span>
+                <span>Tasks w/ gaps <b>{fmtNum(equipment.tasks_with_gaps)}</b></span>
+              </div>
+            </Card>
+          </div>
+        </Section>
 
-          <Panel title="Readiness" sub={`${readiness.active_crews ?? 0}/${readiness.crews ?? 0} crews active`} delay={0.2} onOpen={() => setDrawer('readiness')}>
-            <div className="flex items-center gap-4">
-              <Ring value={readiness.certification_readiness ?? 0} label="Cert" />
-              <Ring value={readiness.crew_readiness ?? 0} label="Crew" />
-            </div>
-            <div className="mt-auto flex gap-3 pt-2 text-[11px] text-slate-500 dark:text-slate-400">
-              <span>Equipment gaps <b className="text-slate-900 dark:text-slate-100">{equipment.missed ?? 0}</b></span>
-              <span>Tasks w/ gaps <b className="text-slate-900 dark:text-slate-100">{equipment.tasks_with_gaps ?? 0}</b></span>
-            </div>
-          </Panel>
-
-          <Panel title="Cost composition" sub={fmtMoney(composition.total, currency)} delay={0.25} onOpen={() => setDrawer('composition')}>
-            <StackedBar segments={composition.buckets.map((b) => ({ label: b.label, value: b.spend, color: b.color }))} height={12} />
-          </Panel>
-
-          <Panel title="Degradation attention" sub={`Top ${degradation.length}`} delay={0.3} onOpen={() => setDrawer('degradation')}>
-            {degradation.length ? (
-              <div className="min-h-0 overflow-hidden">
-                {degradation.slice(0, 3).map((row) => (
-                  <div className="flex items-center gap-2 border-b border-slate-100 py-1 text-xs last:border-0 dark:border-slate-800" key={row.asset_id}>
-                    <Badge tone={row.delta <= -3 ? 'danger' : row.delta <= -1.5 ? 'warn' : 'info'}>{row.delta <= -3 ? 'High' : row.delta <= -1.5 ? 'Med' : 'Low'}</Badge>
-                    <span className="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-200">{row.asset_code || row.asset_name}</span>
-                    <b className="text-red-600 dark:text-red-400">{row.delta}</b>
-                  </div>
+        <Section title="Capital & cost of operation" sub={`${currency} · last 12 months`}>
+          <div className="exec-grid exec-grid--3">
+            <Card title="Cost composition" sub={fmtMoney(composition.total, currency)} onOpen={() => setDrawer('composition')}>
+              <StackedBar segments={composition.buckets.map((b) => ({ label: b.label, value: b.spend, color: b.color }))} height={14} />
+              <div className="exec-legend">
+                {composition.buckets.map((b) => (
+                  <span key={b.key}><i style={{ background: b.color }} />{b.label} <b>{fmtMoney(b.spend, currency)}</b></span>
                 ))}
               </div>
-            ) : <div className="text-xs text-slate-400">No degradation signals</div>}
-          </Panel>
-        </div>
+            </Card>
 
-        <div className="exec-briefing-recs">
-          <div className="exec-briefing-recs-head">
-            <h3>Executive recommendations</h3>
-            <button type="button" className="text-[11px] font-semibold text-accent hover:underline" onClick={() => setDrawer('recs')}>View all</button>
+            <Card title="Maintenance spend" sub="12 months" onOpen={() => setDrawer('spend')}>
+              {spendPoints.length ? <TrendLine data={spendPoints} height={130} valueFormat={(v) => fmtMoney(v, currency)} /> : <div className="exec-empty">No spend recorded</div>}
+            </Card>
+
+            <Card title="Valuation" sub="condition-adjusted" onOpen={() => setDrawer('assets')}>
+              <Row left="Replacement cost (RCN)" right={fmtMoney(valuation.rcn, currency)} />
+              <Row left="Current value" right={fmtMoney(valuation.current, currency)} />
+              <Row left="Avg condition" right={valuation.avg_condition != null ? `${Number(valuation.avg_condition).toFixed(1)}/10` : '—'} />
+            </Card>
           </div>
+        </Section>
+
+        <Section title="Network condition & degradation" sub={`${fmtNum(portfolio.assets)} assets`}>
+          <div className="exec-grid exec-grid--3">
+            <Card title="Condition" sub={`mean ${meanCondition != null ? Number(meanCondition).toFixed(1) : '—'}`} onOpen={() => setDrawer('condition')}>
+              <div className="exec-center">
+                <DonutMini condition={condition} total={portfolio.assets || 0} mean={meanCondition} />
+              </div>
+            </Card>
+
+            <Card title="Infrastructure status" sub={`${fmtNum(portfolio.substations)} substations · ${fmtNum(portfolio.lines)} lines`}>
+              <span className="exec-subhead">Lines</span>
+              {lineSegments.length ? <StackedBar segments={lineSegments} height={12} /> : <div className="exec-empty">No lines recorded</div>}
+              <span className="exec-subhead">Substations</span>
+              {subSegments.length ? <StackedBar segments={subSegments} height={12} /> : <div className="exec-empty">No substations recorded</div>}
+              {conditionPoints.length ? <div className="exec-trend"><span className="exec-subhead">Condition trend</span><TrendLine data={conditionPoints} height={70} valueFormat={(v) => Number(v).toFixed(1)} /></div> : null}
+            </Card>
+
+            <Card title="Degradation attention" sub={`Top ${degradation.length}`} onOpen={() => setDrawer('degradation')}>
+              {degradation.length ? degradation.slice(0, 5).map((row) => (
+                <div className="exec-attention" key={row.asset_id}>
+                  <Badge tone={row.delta <= -3 ? 'danger' : row.delta <= -1.5 ? 'warn' : 'info'}>{row.delta <= -3 ? 'High' : row.delta <= -1.5 ? 'Med' : 'Low'}</Badge>
+                  <span className="exec-attention-name">{row.asset_code || row.asset_name}</span>
+                  <b className="exec-attention-delta">{row.delta}</b>
+                </div>
+              )) : <div className="exec-empty">No degradation signals</div>}
+            </Card>
+          </div>
+        </Section>
+
+        <Section title="Regional load & effectiveness" sub={`${regionLoad.length} regions · substations, circuits and delivery`}>
+          {regionLoad.length ? (
+            <div className="exec-region-grid">
+              {regionLoad.map((r) => <RegionCard key={r.id} region={r} />)}
+            </div>
+          ) : <div className="exec-empty">No regions in scope</div>}
+        </Section>
+
+        <Section
+          title="Assets needing intervention"
+          sub={`${interventions.length} flagged`}
+          action={(
+            <div className="exec-int-tabs">
+              {ACTIONS.map((a) => (
+                <button key={a.key} type="button" className={cn('exec-int-tab', intFilter === a.key && 'is-active')} onClick={() => setIntFilter(a.key)}>{a.label}</button>
+              ))}
+            </div>
+          )}
+        >
+          {filteredInterventions.length ? (
+            <div className="exec-int-list">
+              {filteredInterventions.map((row) => (
+                <div className="exec-int-row" key={row.asset_id}>
+                  <Badge tone={ACTION_TONE[row.action] || 'neutral'}>{row.action}</Badge>
+                  <div className="exec-int-main">
+                    <b>{row.asset_code || row.asset_name}</b>
+                    <span className="muted">{row.asset_name || '—'} · {row.region || '—'}</span>
+                  </div>
+                  <span className="exec-int-rating">{row.current_rating != null ? `${row.current_rating}/10` : '—'}{row.suggested_rating != null ? ` → ${row.suggested_rating}/10` : ''}</span>
+                  <Badge tone={row.urgency === 'high' ? 'danger' : row.urgency === 'medium' ? 'warn' : 'neutral'}>{row.urgency}</Badge>
+                </div>
+              ))}
+            </div>
+          ) : <div className="exec-empty">Nothing flagged for the selected action</div>}
+        </Section>
+
+        <Section title="Executive recommendations" sub={`${recommendations.length} items`} action={<button type="button" className="exec-link" onClick={() => setDrawer('recs')}>View all</button>}>
           {recommendations.length ? (
             <div className="exec-briefing-recs-list">
-              {recommendations.slice(0, 4).map((rec) => (
+              {recommendations.slice(0, 6).map((rec) => (
                 <div className="exec-rec" key={rec.id}>
                   <Badge tone={rec.severity === 'high' || rec.severity === 'critical' ? 'danger' : rec.severity === 'medium' ? 'warn' : 'info'}>{rec.severity || 'low'}</Badge>
                   <div className="exec-rec-main">
@@ -328,8 +475,8 @@ export default function ExecutiveSummary() {
                 </div>
               ))}
             </div>
-          ) : <div className="text-xs text-slate-400">No exceptions detected</div>}
-        </div>
+          ) : <div className="exec-empty">No exceptions detected</div>}
+        </Section>
       </div>
 
       <Sheet open={!!drawer} onClose={() => setDrawer(null)} title={drawerTitle[drawer] || 'Detail'} description={summary.hero?.scope || 'All regions'}>
@@ -339,21 +486,21 @@ export default function ExecutiveSummary() {
               {CONDITION.map((c) => (
                 <div key={c.key} className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
                   <div className="text-[11px] text-slate-500 dark:text-slate-400">{c.label}</div>
-                  <div className="text-lg font-bold" style={{ color: c.color }}>{(summary.condition?.[c.key] || 0).toLocaleString()}</div>
+                  <div className="text-lg font-bold" style={{ color: c.color }}>{(condition[c.key] || 0).toLocaleString()}</div>
                 </div>
               ))}
             </div>
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Mean condition</h4>
               <div className="text-2xl font-bold text-slate-900 dark:text-slate-50">{meanCondition != null ? `${Number(meanCondition).toFixed(1)}/10` : '—'}</div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">{summary.condition?.assessed ?? 0} of {portfolio.assets.toLocaleString()} assets assessed</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{condition.assessed ?? 0} of {fmtNum(portfolio.assets)} assets assessed</p>
             </div>
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Top degradation</h4>
               {degradation.slice(0, 8).map((row) => (
                 <Row key={row.asset_id} left={<><b>{row.asset_code}</b> · {row.region || '—'}</>} right={`${row.suggested_rating}/10 (${row.delta})`} />
               ))}
-              {!degradation.length && <div className="text-xs text-slate-400">No negative movement recorded.</div>}
+              {!degradation.length && <div className="exec-empty">No negative movement recorded.</div>}
             </div>
           </div>
         )}
@@ -361,20 +508,20 @@ export default function ExecutiveSummary() {
         {drawer === 'assets' && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-2 text-center">
-              <Stat label="Assets" value={portfolio.assets.toLocaleString()} />
-              <Stat label="Lines" value={portfolio.lines.toLocaleString()} />
-              <Stat label="Towers" value={portfolio.towers.toLocaleString()} />
-              <Stat label="Substations" value={portfolio.substations.toLocaleString()} />
+              <Stat label="Assets" value={fmtNum(portfolio.assets)} />
+              <Stat label="Lines" value={fmtNum(portfolio.lines)} />
+              <Stat label="Towers" value={fmtNum(portfolio.towers)} />
+              <Stat label="Substations" value={fmtNum(portfolio.substations)} />
             </div>
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Condition mix</h4>
-              {CONDITION.map((c) => <Bar key={c.key} label={c.label} value={summary.condition?.[c.key] || 0} max={portfolio.assets} color={c.color} />)}
+              {CONDITION.map((c) => <Bar key={c.key} label={c.label} value={condition[c.key] || 0} max={portfolio.assets || 1} color={c.color} />)}
             </div>
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Condition-adjusted value</h4>
-              <Row left="Replacement cost" right={fmtMoney(summary.valuation?.rcn, currency)} />
-              <Row left="Current value" right={fmtMoney(summary.valuation?.current, currency)} />
-              <Row left="Avg condition" right={summary.valuation?.avg_condition != null ? `${Number(summary.valuation.avg_condition).toFixed(1)}/10` : '—'} />
+              <Row left="Replacement cost" right={fmtMoney(valuation.rcn, currency)} />
+              <Row left="Current value" right={fmtMoney(valuation.current, currency)} />
+              <Row left="Avg condition" right={valuation.avg_condition != null ? `${Number(valuation.avg_condition).toFixed(1)}/10` : '—'} />
             </div>
           </div>
         )}
@@ -405,7 +552,7 @@ export default function ExecutiveSummary() {
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">By status</h4>
               {Object.entries(byStatus).map(([status, count]) => <Row key={status} left={status.replace(/_/g, ' ')} right={count} />)}
-              {!Object.keys(byStatus).length && <div className="text-xs text-slate-400">No tasks recorded.</div>}
+              {!Object.keys(byStatus).length && <div className="exec-empty">No tasks recorded.</div>}
             </div>
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Recent work orders</h4>
@@ -423,9 +570,9 @@ export default function ExecutiveSummary() {
               <BigRing value={readiness.crew_readiness ?? 0} label="Crew" />
             </div>
             <Row left="Crews active" right={`${readiness.active_crews ?? 0}/${readiness.crews ?? 0}`} />
-            <Row left="Valid certifications" right={summary.workforce?.valid_certifications ?? 0} />
-            <Row left="Expired certifications" right={summary.workforce?.expired_certifications ?? 0} />
-            <Row left="Expiring within 90 days" right={summary.workforce?.expiring_90_days ?? 0} />
+            <Row left="Valid certifications" right={workforce.valid_certifications ?? 0} />
+            <Row left="Expired certifications" right={workforce.expired_certifications ?? 0} />
+            <Row left="Expiring within 90 days" right={workforce.expiring_90_days ?? 0} />
             <Row left="Recommended equipment used" right={equipment.used ?? 0} />
             <Row left="Recommended equipment missed" right={equipment.missed ?? 0} />
             <Row left="Tasks with equipment gaps" right={equipment.tasks_with_gaps ?? 0} />
@@ -453,7 +600,7 @@ export default function ExecutiveSummary() {
                 <Badge tone="danger">{row.delta}</Badge>
               </div>
             ))}
-            {!degradation.length && <div className="text-xs text-slate-400">No degradation signals.</div>}
+            {!degradation.length && <div className="exec-empty">No degradation signals.</div>}
           </div>
         )}
 
@@ -517,22 +664,21 @@ function DonutMini({ condition, total, mean }) {
   );
 }
 
-function Ring({ value, label }) {
-  const size = 52;
+function Ring({ value, label, size = 52 }) {
   const thickness = 6;
   const r = (size - thickness) / 2;
   const circ = 2 * Math.PI * r;
   const v = Math.max(0, Math.min(100, Number(value) || 0));
   return (
-    <div className="flex flex-col items-center gap-1">
+    <div className="exec-ring">
       <span className="relative" style={{ width: size, height: size }}>
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e2e8f0" strokeWidth={thickness} className="text-slate-200 dark:text-slate-700" />
-          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#14532d" strokeWidth={thickness} strokeLinecap="round" strokeDasharray={`${(v / 100) * circ} ${circ}`} transform={`rotate(-90 ${size / 2} ${size / 2})`} />
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" className="text-slate-200 dark:text-slate-700" strokeWidth={thickness} />
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" className="text-brand" strokeWidth={thickness} strokeLinecap="round" strokeDasharray={`${(v / 100) * circ} ${circ}`} transform={`rotate(-90 ${size / 2} ${size / 2})`} />
         </svg>
-        <span className="absolute inset-0 grid place-items-center text-[11px] font-bold text-slate-900 dark:text-slate-50">{Math.round(v)}%</span>
+        <span className="exec-ring-value">{Math.round(v)}%</span>
       </span>
-      <span className="text-[10px] text-slate-500 dark:text-slate-400">{label}</span>
+      {label ? <span className="exec-ring-label">{label}</span> : null}
     </div>
   );
 }
@@ -540,7 +686,7 @@ function Ring({ value, label }) {
 function BigRing({ value, label }) {
   return (
     <div className="flex flex-col items-center gap-2">
-      <Ring value={value} label="" />
+      <Ring value={value} label="" size={72} />
       <span className="text-xs font-medium text-slate-600 dark:text-slate-300">{label}</span>
     </div>
   );
