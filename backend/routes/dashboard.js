@@ -523,8 +523,9 @@ router.get('/executive/summary', (req, res) => {
   if (!['ADMIN', 'EXECUTIVE'].includes(req.user.role)) {
     return res.status(403).json({ error: 'Forbidden: executive summary is limited to ADMIN and EXECUTIVE accounts' });
   }
-  const summary = computeSummary(req, res);
-  if (summary) res.json(summary);
+  const result = scopedSummary(req, res);
+  if (!result) return;
+  res.json(result.summary);
 });
 
 function scopedSummary(req, res) {
