@@ -20,6 +20,7 @@
   --surface-1: #0f172a;
   --surface-2: #111c30;
   --surface-3: #1e293b;
+  --surface-overlay: #111c30;
   --border: #243349;
   --text: #e2e8f0;
   --muted: #94a3b8;
@@ -29,9 +30,11 @@
   --accent-soft: #1e1b4b;
   --accent-hover: #a5b4fc;
   --accent-border: #3730a3;
+  --hover-tint: rgba(255, 255, 255, 0.06);
   --hero-gradient: linear-gradient(135deg, #04160c 0%, #0b3b22 55%, #0e4a5e 100%);
   --elev-1: 0 1px 3px rgba(0, 0, 0, 0.5);
   --elev-2: 0 8px 24px rgba(0, 0, 0, 0.55);
+  --elev-3: 0 20px 48px rgba(0, 0, 0, 0.65);
 }
 
 .dark body { background: var(--bg); color: var(--text); }

@@ -34,39 +34,39 @@
 
 ### Task R0.1: Type, color, spacing tokens
 
-- [ ] Step 1: In `styles.css` `:root`, replace the type scale with xs 12 / sm 13 / base 15 / lg 18 / xl 22 / 2xl 30 / display 38; set `body` font-size to the base.
-- [ ] Step 2: Add brand and neutral ramps with named steps (`--brand-*`, `--gray-*`) and semantic aliases (surface/base/raised/overlay, border, text, muted, hover, active, focus), re-pointing existing names (`--bg`, `--panel`, `--text`, `--muted`, `--border`, `--primary`, `--accent`, `--surface-1..3`, `--elev-*`) at the ramps.
-- [ ] Step 3: Formalize the 4px spacing scale; keep existing `--space-*` names.
-- [ ] Step 4: Update the `.dark` mapping to the dark side of the same ramps.
-- [ ] Step 5: `npm run build`; spot-check pages in light and dark for contrast regressions.
+- [x] Step 1: In `styles.css` `:root`, replace the type scale with xs 12 / sm 13 / base 15 / lg 18 / xl 22 / 2xl 30 / display 38; set `body` font-size to the base.
+- [x] Step 2: Add brand and neutral ramps with named steps (`--brand-*`, `--gray-*`) and semantic aliases (surface/base/raised/overlay, border, text, muted, hover, active, focus), re-pointing existing names (`--bg`, `--panel`, `--text`, `--muted`, `--border`, `--primary`, `--accent`, `--surface-1..3`, `--elev-*`) at the ramps.
+- [x] Step 3: Formalize the 4px spacing scale; keep existing `--space-*` names.
+- [x] Step 4: Update the `.dark` mapping to the dark side of the same ramps.
+- [x] Step 5: `npm run build`; spot-check pages in light and dark for contrast regressions.
 
 ### Task R0.2: Hover and motion tokens
 
-- [ ] Step 1: Add `--dur-fast` 120ms, `--dur` 180ms, `--dur-slow` 240ms, `--ease-standard`.
-- [ ] Step 2: Apply to `.btn`, `.nav-link`, `.card`, `table tr`, links, and inputs: hover background/tint, `:active` press, `:focus-visible` ring.
-- [ ] Step 3: Add a reusable card-lift hover (translate + elevation) used by interactive cards.
-- [ ] Step 4: Wrap all new transitions in `@media (prefers-reduced-motion: reduce)` opt-out.
+- [x] Step 1: Add `--dur-fast` 120ms, `--dur` 180ms, `--dur-slow` 240ms, `--ease-standard`.
+- [x] Step 2: Apply to `.btn`, `.nav-link`, `.card`, `table tr`, links, and inputs: hover background/tint, `:active` press, `:focus-visible` ring.
+- [x] Step 3: Add a reusable card-lift hover (translate + elevation) used by interactive cards.
+- [x] Step 4: Wrap all new transitions in `@media (prefers-reduced-motion: reduce)` opt-out.
 
 ### Task R0.3: Navigation rail, bottom bar, drawer
 
-- [ ] Step 1: Add collapsed/expanded state to the rail in `App.jsx`, persisted per device (`localStorage`), 64px collapsed with icon-only items and tooltips.
-- [ ] Step 2: Add the shell-owned rail toggle button and keep grouped nav, role-driven items, and active pill/accent-bar styling.
-- [ ] Step 3: Below 768px, render a bottom tab bar (first four role destinations plus More) and a slide-in drawer exposing the full grouped nav; close on navigate and Escape.
-- [ ] Step 4: Ensure keyboard traversal and `:focus-visible` on all nav controls.
-- [ ] Step 5: `npm run build`; Playwright admin/executive/crew at 1440x900, 1024x768, 390x844.
+- [x] Step 1: Add collapsed/expanded state to the rail in `App.jsx`, persisted per device (`localStorage`), 64px collapsed with icon-only items and tooltips.
+- [x] Step 2: Add the shell-owned rail toggle button and keep grouped nav, role-driven items, and active pill/accent-bar styling.
+- [x] Step 3: Below 768px, render a bottom tab bar (first four role destinations plus More) and a slide-in drawer exposing the full grouped nav; close on navigate and Escape.
+- [x] Step 4: Ensure keyboard traversal and `:focus-visible` on all nav controls.
+- [x] Step 5: `npm run build`; Playwright admin/executive/crew at 1440x900, 1024x768, 390x844.
 
 ### Task R0.4: Shell header slot and content container
 
-- [ ] Step 1: Create `components/PageHeader.jsx` (title, crumbs, actions) rendered by the shell.
-- [ ] Step 2: Adapt `components.jsx` `Page` to pass its `title`/`crumbs`/`actions` to a shell header context instead of rendering its own `.topbar`; keep `fill` behavior for full-bleed pages.
-- [ ] Step 3: Add the content max-width container (`--content-max` ~1280px) with full-bleed opt-out for map/mailbox.
-- [ ] Step 4: Verify every page still shows the correct title/actions for its role.
+- [x] Step 1: Create `components/PageHeader.jsx` (title, crumbs, actions) rendered by the shell.
+- [x] Step 2: Adapt `components.jsx` `Page` to pass its `title`/`crumbs`/`actions` to a shell header context instead of rendering its own `.topbar`; keep `fill` behavior for full-bleed pages.
+- [x] Step 3: Add the content max-width container (`--content-max` ~1280px) with full-bleed opt-out for map/mailbox.
+- [x] Step 4: Verify every page still shows the correct title/actions for its role.
 
 ### Task R0.5: Verify and commit R0
 
-- [ ] Step 1: `npm run build` succeeds.
-- [ ] Step 2: Playwright matrix: zero console errors, no overflow, active nav and header correct in light and dark.
-- [ ] Step 3: Commit explicit paths and push.
+- [x] Step 1: `npm run build` succeeds.
+- [x] Step 2: Playwright matrix: zero console errors, no overflow, active nav and header correct in light and dark.
+- [x] Step 3: Commit explicit paths and push.
 
 ## Phase R1 - Data layer and perceived speed
 

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { STATUS_COLORS } from './api';
 import { codeLabel } from './labels';
+import { useHeaderSlot } from './components/PageHeader';
 
 export function Pill({ value, children }) {
   const text = children ?? codeLabel(value);
@@ -54,17 +56,21 @@ export function Modal({ title, onClose, children, footer, wide, printable, hideH
 }
 
 export function Page({ title, crumbs, actions, children, fill }) {
-  return (
-    <div className="main">
-      <div className="topbar">
-        <div>
-          {crumbs && <div className="crumbs">{crumbs}</div>}
-          <h2>{title}</h2>
-        </div>
-        {actions && <div className="actions">{actions}</div>}
+  const slot = useHeaderSlot();
+  const header = (title || crumbs || actions) ? (
+    <div className="topbar shell-page-header">
+      <div>
+        {crumbs && <div className="crumbs">{crumbs}</div>}
+        {title && <h2>{title}</h2>}
       </div>
-      <div className={'content' + (fill ? ' content-fill' : '')}>{children}</div>
+      {actions && <div className="actions">{actions}</div>}
     </div>
+  ) : null;
+  return (
+    <>
+      {header && (slot ? createPortal(header, slot) : header)}
+      <div className={'content' + (fill ? ' content-fill' : '')}>{children}</div>
+    </>
   );
 }
 

@@ -1,10 +1,11 @@
 import { SearchSelect } from './components';
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Outlet, Navigate, useNavigate, useLocation } from 'react-router-dom';
-import { Moon, Sun, Home as HomeIcon, Mail, LayoutDashboard, Boxes, Wrench, Map as MapIcon, Settings as SettingsIcon, Gauge, ClipboardList, Search as SearchIcon } from 'lucide-react';
+import { Moon, Sun, Home as HomeIcon, Mail, LayoutDashboard, Boxes, Wrench, Map as MapIcon, Settings as SettingsIcon, Gauge, ClipboardList, Search as SearchIcon, Menu, PanelLeftClose, PanelLeftOpen, X, MoreHorizontal } from 'lucide-react';
 import { useTheme } from './theme';
 import { CommandPalette } from './ui/Command';
 import { Tooltip } from './ui/Tooltip';
+import { HeaderSlotProvider } from './components/PageHeader';
 import Landing from './pages/Landing';
 import Home from './pages/Home';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -198,6 +199,31 @@ function UserMenu() {
   );
 }
 
+function NavGroups({ navItems, onNavigate }) {
+  return (
+    <>
+      {navItems.map((g) => (
+        <div className="nav-group" key={g.group}>
+          <div className="g-label">{t(g.group)}</div>
+          {g.items.map((it) => (
+            <NavLink
+              key={it.to}
+              to={it.to}
+              end={it.to === '/'}
+              title={t(it.key)}
+              aria-label={t(it.key)}
+              onClick={onNavigate}
+              className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')}
+            >
+              <span className="ico">{it.icon}</span><span className="nav-text">{t(it.key)}</span>
+            </NavLink>
+          ))}
+        </div>
+      ))}
+    </>
+  );
+}
+
 function Shell() {
   const [lang, setLang] = useI18n();
   const user = getStoredUser();
@@ -208,6 +234,25 @@ function Shell() {
   const location = useLocation();
   const navigate = useNavigate();
   const [cmdOpen, setCmdOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+  const [headerSlot, setHeaderSlot] = useState(null);
+  const [railCollapsed, setRailCollapsed] = useState(() => {
+    try { return localStorage.getItem('tmms_rail') === 'collapsed'; } catch { return false; }
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem('tmms_rail', railCollapsed ? 'collapsed' : 'expanded'); } catch { /* storage unavailable */ }
+  }, [railCollapsed]);
+
+  useEffect(() => { setNavOpen(false); }, [location.pathname]);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    document.body.classList.add('nav-drawer-open');
+    const onKey = (e) => { if (e.key === 'Escape') setNavOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => { document.body.classList.remove('nav-drawer-open'); window.removeEventListener('keydown', onKey); };
+  }, [navOpen]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -225,42 +270,80 @@ function Shell() {
     [navItems, navigate]
   );
 
+  const flatNav = useMemo(() => navItems.flatMap((g) => g.items), [navItems]);
+  const bottomItems = flatNav.slice(0, 4);
+  const hasMore = flatNav.length > bottomItems.length;
+
   return (
-    <div className="app-shell">
+    <div className={'app-shell' + (railCollapsed ? ' rail-collapsed' : '')}>
       <aside className="sidebar">
         <div className="brand">
           <div className="logo"><em>T</em></div>
-          <div><h1>TMMS</h1><small>Transmission Asset Mgt</small></div>
+          <div className="brand-text"><h1>TMMS</h1><small>Transmission Asset Mgt</small></div>
         </div>
-        {navItems.map((g) => (
-          <div className="nav-group" key={g.group}>
-            <div className="g-label">{t(g.group)}</div>
-            {g.items.map((it) => (
-              <NavLink key={it.to} to={it.to} end={it.to === '/'} title={t(it.key)} aria-label={t(it.key)} className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')}>
-                <span className="ico">{it.icon}</span><span>{t(it.key)}</span>
-              </NavLink>
-            ))}
-          </div>
-        ))}
+        <button type="button" className="rail-toggle" onClick={() => setRailCollapsed((v) => !v)}
+          title={railCollapsed ? t('expandNav') : t('collapseNav')}
+          aria-label={railCollapsed ? t('expandNav') : t('collapseNav')}>
+          {railCollapsed ? <PanelLeftOpen {...ICON} /> : <PanelLeftClose {...ICON} />}
+        </button>
+        <nav className="nav-scroll" aria-label="Main navigation">
+          <NavGroups navItems={navItems} />
+        </nav>
       </aside>
-      <div className="main-col">
-        <div className="shell-topbar">
-          {!isExecutive && <GlobalSearch />}
-          <Tooltip label="Search · Ctrl K">
-            <button type="button" className="theme-toggle" onClick={() => setCmdOpen(true)} aria-label="Open command palette">
-              <SearchIcon size={17} strokeWidth={1.9} />
+      <HeaderSlotProvider slot={headerSlot}>
+        <div className="main-col">
+          <div className="shell-topbar">
+            <button type="button" className="mobile-menu-btn" onClick={() => setNavOpen(true)} aria-label={t('openNav')} title={t('openNav')}>
+              <Menu {...ICON} />
             </button>
-          </Tooltip>
-          <ThemeToggle />
-          <LanguageSwitcher />
-          <InboxChip />
-          <UserMenu />
+            {!isExecutive && <GlobalSearch />}
+            <Tooltip label="Search · Ctrl K">
+              <button type="button" className="theme-toggle" onClick={() => setCmdOpen(true)} aria-label="Open command palette">
+                <SearchIcon size={17} strokeWidth={1.9} />
+              </button>
+            </Tooltip>
+            <ThemeToggle />
+            <LanguageSwitcher />
+            <InboxChip />
+            <UserMenu />
+          </div>
+          <div className="shell-page-header-slot" ref={setHeaderSlot} />
+          <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} commands={commands} searchable={!isExecutive} />
+          <ErrorBoundary resetKey={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </div>
-        <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} commands={commands} searchable={!isExecutive} />
-        <ErrorBoundary resetKey={location.pathname}>
-          <Outlet />
-        </ErrorBoundary>
-      </div>
+      </HeaderSlotProvider>
+
+      <div className={'nav-drawer-scrim' + (navOpen ? ' open' : '')} onClick={() => setNavOpen(false)} />
+      <aside className={'nav-drawer' + (navOpen ? ' open' : '')} role="dialog" aria-modal="true" aria-label="Navigation" aria-hidden={!navOpen}>
+        <div className="nav-drawer-head">
+          <div className="brand">
+            <div className="logo"><em>T</em></div>
+            <div className="brand-text"><h1>TMMS</h1><small>Transmission Asset Mgt</small></div>
+          </div>
+          <button type="button" className="nav-drawer-close" onClick={() => setNavOpen(false)} aria-label={t('closeNav')}>
+            <X {...ICON} />
+          </button>
+        </div>
+        <nav className="nav-scroll" aria-label="Main navigation">
+          <NavGroups navItems={navItems} onNavigate={() => setNavOpen(false)} />
+        </nav>
+      </aside>
+
+      <nav className="mobile-nav" aria-label="Primary navigation">
+        {bottomItems.map((it) => (
+          <NavLink key={it.to} to={it.to} end={it.to === '/'} title={t(it.key)} aria-label={t(it.key)}
+            className={({ isActive }) => 'mobile-nav-link' + (isActive ? ' active' : '')}>
+            <span className="ico">{it.icon}</span><span className="mobile-nav-text">{t(it.key)}</span>
+          </NavLink>
+        ))}
+        {hasMore && (
+          <button type="button" className="mobile-nav-link" onClick={() => setNavOpen(true)} aria-label={t('more')} title={t('more')}>
+            <span className="ico"><MoreHorizontal {...ICON} /></span><span className="mobile-nav-text">{t('more')}</span>
+          </button>
+        )}
+      </nav>
     </div>
   );
 }
