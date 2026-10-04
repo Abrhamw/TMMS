@@ -30,6 +30,7 @@
   --text: var(--gray-900);
   --muted: var(--gray-500);
   --primary: #14532d;
+  --primary-text: #14532d;
   --primary-dark: #052e16;
   --sidebar: #052e16;
   --sidebar-text: #cbd5e1;
@@ -1669,6 +1670,21 @@ table th { color: var(--muted); text-transform: uppercase; font-size: var(--text
 .dark .myday-row:hover, .dark .org-row:hover, .dark .map-result:hover,
 .dark .data-list-table tr.clickable:hover { background: var(--surface-2); }
 
+.dark .ss-trigger, .dark .ss-search input {
+  background: var(--surface-2); color: var(--text); border-color: var(--border);
+}
+.dark .ss-pop { background: var(--surface-overlay); border-color: var(--border); }
+.dark .ss-option { color: var(--text); }
+.dark .ss-option:hover { background: var(--surface-3); }
+.dark .ss-option.is-active { background: var(--surface-3); color: var(--primary); }
+.dark .map-panel, .dark .map-mini-search .map-searchbox, .dark .map-mini-legend-body {
+  background: var(--surface-1); border-color: var(--border);
+}
+.dark .map-mini-controls select, .dark .map-mini-controls button,
+.dark .map-mini-legend-toggle, .dark .map-picker-readout {
+  background: var(--surface-2); color: var(--text); border-color: var(--border);
+}
+
 .dark .progress, .dark .line-progress-track { background: var(--surface-3); }
 
 .dark .note, .dark .gps-preview-wait, .dark .review-ACKNOWLEDGED {
@@ -1678,6 +1694,49 @@ table th { color: var(--muted); text-transform: uppercase; font-size: var(--text
 
 .dark .alert-error { background: rgba(220, 38, 38, 0.16); color: #fca5a5; border-color: #7f1d1d; }
 .dark .alert-success { background: rgba(22, 163, 74, 0.16); color: #86efac; border-color: #14532d; }
+
+/* Overlays, controls and mailbox surfaces still hardcoding light backgrounds. */
+.dark .global-search-panel, .dark .mail-recipient-menu {
+  background: var(--surface-overlay); border-color: var(--border);
+}
+.dark .search-field, .dark .chip:not(.chip-on), .dark .seg:not(.on),
+.dark .seg button:not(.on), .dark .inbox-chip, .dark .mail-attach-chip-btn,
+.dark .mail-recipient-box, .dark .mail-label-create input, .dark .mail-label-rename,
+.dark .inline-edit, .dark .doc-toc-link {
+  background: var(--surface-2); color: var(--text); border-color: var(--border);
+}
+.dark .chip:not(.chip-on):hover, .dark .seg button:not(.on):hover,
+.dark .demo-chip:hover, .dark .um-item:hover, .dark .map-result.is-active {
+  background: var(--surface-3);
+}
+.dark .bucket-group, .dark .bucket-task { background: var(--surface-1); border-color: var(--border); }
+.dark .bucket-chip { color: var(--text); }
+.dark .bucket-chip.active {
+  background: color-mix(in srgb, var(--bucket-accent, var(--primary)) 22%, var(--surface-1));
+  border-color: color-mix(in srgb, var(--bucket-accent, var(--primary)) 45%, var(--surface-1));
+}
+.dark .mail-message, .dark .mail-preview-frame { background: var(--surface-1); border-color: var(--border); }
+.dark .mail-message.workflow { background: var(--surface-2); }
+.dark .mail-folder.active, .dark .mail-thread:hover, .dark .mail-thread.active,
+.dark .mail-thread-wrap.active, .dark .mail-label:hover, .dark .mail-label.active,
+.dark .mail-attach-option:hover:not(:disabled),
+.dark .mail-recipient-menu .mail-recipient:hover,
+.dark .mail-search-apply:hover, .dark .mail-conversation-item.current,
+.dark .mail-bulk-bar, .dark .mail-action-banner.done { background: var(--surface-2); }
+.dark .mailbox-unread-total { background: var(--surface-2); color: var(--text); }
+.dark .login-persona { background: var(--surface-2); border-color: var(--border); color: var(--text); }
+.dark .gps-preview-ok, .dark .review-RESOLVED {
+  background: rgba(22, 163, 74, 0.16); border-color: #14532d; color: #86efac;
+}
+
+/* Brand green is a fill colour; text usages need the lighter dark-mode tone. */
+.dark .btn-ghost, .dark .map-link, .dark .tab.active, .dark .um-tag, .dark .um-add,
+.dark .search-field:focus-within, .dark .ss-option.is-active,
+.dark .mail-folder.active, .dark .mail-folder-unread, .dark .mail-attach-chip-btn:hover,
+.dark .mail-attach-chip-kind, .dark .mail-label.active, .dark .executive-tab.active,
+.dark .ui-tab.active, .dark .exec-briefing-scope, .dark .inbox-chip:hover {
+  color: var(--primary-text);
+}
 
 /* ---- Interaction states and reduced motion -------------------------------- */
 a, button, input, select, textarea, [role="button"], summary {
