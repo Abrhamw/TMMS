@@ -1,0 +1,50 @@
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --color-brand: #14532d;
+  --color-brand-dark: #052e16;
+  --color-brand-light: #166534;
+  --color-brand-soft: #f0fdf4;
+  --color-accent: #4338ca;
+  --color-accent-soft: #eef2ff;
+  --radius-card: 14px;
+}
+
+.dark {
+  --bg: #0b1220;
+  --panel: #0f172a;
+  --surface-1: #0f172a;
+  --surface-2: #111c30;
+  --surface-3: #1e293b;
+  --border: #243349;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --sidebar: #04160c;
+  --sidebar-text: #cbd5e1;
+  --accent: #818cf8;
+  --accent-soft: #1e1b4b;
+  --accent-hover: #a5b4fc;
+  --accent-border: #3730a3;
+  --hero-gradient: linear-gradient(135deg, #04160c 0%, #0b3b22 55%, #0e4a5e 100%);
+  --elev-1: 0 1px 3px rgba(0, 0, 0, 0.5);
+  --elev-2: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+
+.dark body { background: var(--bg); color: var(--text); }
+.dark .shell-topbar { background: var(--surface-1); border-bottom-color: var(--border); }
+.dark .global-search-input,
+.dark .lang-select,
+.dark .topbar select,
+.dark .topbar input { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+.dark .section-card,
+.dark .card,
+.dark .exec-panel { background: var(--surface-1); border-color: var(--border); }
+
+.theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text); cursor: pointer; transition: background .15s ease, color .15s ease, transform .15s ease; }
+.theme-toggle:hover { background: var(--surface-2); transform: translateY(-1px); }
+.theme-toggle:active { transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) { .theme-toggle { transition: none; } }

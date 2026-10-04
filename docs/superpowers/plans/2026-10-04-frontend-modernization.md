@@ -39,29 +39,29 @@
 
 ### Task P0.1: Install the stack
 
-- [ ] Step 1: Install `tailwindcss @tailwindcss/vite motion lucide-react clsx tailwind-merge class-variance-authority` as project dependencies.
-- [ ] Step 2: Add `@tailwindcss/vite` to `vite.config.js` plugins.
-- [ ] Step 3: Add a `@` -> `./src` resolve alias in `vite.config.js`.
+- [x] Step 1: Install `tailwindcss @tailwindcss/vite motion lucide-react clsx tailwind-merge class-variance-authority` as project dependencies.
+- [x] Step 2: Add `@tailwindcss/vite` to `vite.config.js` plugins.
+- [x] Step 3: Add a `@` -> `./src` resolve alias in `vite.config.js`.
 
 ### Task P0.2: Tailwind theme (no preflight)
 
-- [ ] Step 1: Create `src/tailwind.css` importing `tailwindcss/theme.css` and `tailwindcss/utilities.css` only.
-- [ ] Step 2: Define `@theme` tokens bound to the TMMS brand (green, teal, indigo, severity, chart, dark palette).
-- [ ] Step 3: Add the class-based dark variant.
-- [ ] Step 4: Import `tailwind.css` in `src/main.jsx` after `styles.css`.
+- [x] Step 1: Create `src/tailwind.css` importing `tailwindcss/theme.css` and `tailwindcss/utilities.css` only.
+- [x] Step 2: Define `@theme` tokens bound to the TMMS brand (green, teal, indigo, severity, chart, dark palette).
+- [x] Step 3: Add the class-based dark variant.
+- [x] Step 4: Import `tailwind.css` in `src/main.jsx` after `styles.css`.
 
 ### Task P0.3: Theme provider and toggle
 
-- [ ] Step 1: Create `src/theme.jsx` with a provider that reads/writes the theme and toggles `.dark` on `document.documentElement`.
-- [ ] Step 2: Add an inline bootstrap in `index.html` to apply the stored theme before paint.
-- [ ] Step 3: Add a theme toggle to the shell top bar (`App.jsx`) using `lucide-react`.
-- [ ] Step 4: Add token-based dark overrides to the shell so it themes without touching unmigrated page internals.
+- [x] Step 1: Create `src/theme.jsx` with a provider that reads/writes the theme and toggles `.dark` on `document.documentElement`.
+- [x] Step 2: Add an inline bootstrap in `index.html` to apply the stored theme before paint.
+- [x] Step 3: Add a theme toggle to the shell top bar (`App.jsx`) using `lucide-react`.
+- [x] Step 4: Add token-based dark overrides to the shell so it themes without touching unmigrated page internals.
 
 ### Task P0.4: Verify P0
 
-- [ ] Step 1: `npm run build` succeeds.
-- [ ] Step 2: Headless screenshots at 1440x900, 1024x768, 390x844; confirm no visual regression on existing pages and zero console errors.
-- [ ] Step 3: Commit explicit paths and push.
+- [x] Step 1: `npm run build` succeeds.
+- [x] Step 2: Headless screenshots at 1440x900, 1024x768, 390x844; confirm no visual regression on existing pages and zero console errors.
+- [x] Step 3: Commit explicit paths and push.
 
 ## Phase P1 - UI kit and shell
 

@@ -1,6 +1,8 @@
 import { SearchSelect } from './components';
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Outlet, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { Moon, Sun } from 'lucide-react';
+import { useTheme } from './theme';
 import Landing from './pages/Landing';
 import Home from './pages/Home';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -58,6 +60,15 @@ function useI18n() {
     setApiLocale(getLocale());
   }, [lang]);
   return [lang, setLangState];
+}
+
+function ThemeToggle() {
+  const { theme, toggle } = useTheme();
+  return (
+    <button type="button" className="theme-toggle" onClick={toggle} title={theme === 'dark' ? 'Light mode' : 'Dark mode'} aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+      {theme === 'dark' ? <Sun size={17} strokeWidth={1.9} /> : <Moon size={17} strokeWidth={1.9} />}
+    </button>
+  );
 }
 
 function LanguageSwitcher() {
@@ -214,6 +225,7 @@ function Shell() {
       <div className="main-col">
         <div className="shell-topbar">
           {!isExecutive && <GlobalSearch />}
+          <ThemeToggle />
           <LanguageSwitcher />
           <InboxChip />
           <UserMenu />
