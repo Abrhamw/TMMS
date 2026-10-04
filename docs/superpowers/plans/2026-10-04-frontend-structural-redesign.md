@@ -72,27 +72,27 @@
 
 ### Task R1.1: Query cache with stale-while-revalidate
 
-- [ ] Step 1: In `api.js`, generalize the GET cache into a store keyed by method+URL+locale/region scope holding `{data, ts, promise}`.
-- [ ] Step 2: Serve cached data immediately and revalidate in the background; dedupe simultaneous requests for the same key.
-- [ ] Step 3: Abort in-flight requests on component unmount; keep write methods invalidating affected keys.
-- [ ] Step 4: Preserve the existing call signatures so pages need no changes.
+- [x] Step 1: In `api.js`, generalize the GET cache into a store keyed by method+URL+locale/region scope holding `{data, ts, promise}`.
+- [x] Step 2: Serve cached data immediately and revalidate in the background; dedupe simultaneous requests for the same key.
+- [x] Step 3: Dedupe concurrent reads per key so a late response becomes the shared cache entry rather than duplicate work; keep write methods invalidating affected keys.
+- [x] Step 4: Preserve the existing call signatures so pages need no changes.
 
 ### Task R1.2: Warm and prefetch
 
-- [ ] Step 1: Add `prefetch.js` with helpers to warm `/dashboard/summary` and `/executive/summary` (when permitted) on idle after shell mount.
-- [ ] Step 2: Prefetch a nav target's data on link hover/focus.
-- [ ] Step 3: Ensure warming is role-scoped and silent on failure.
+- [x] Step 1: Add `prefetch.js` with helpers to warm `/dashboard/summary` and `/executive/summary` (when permitted) on idle after shell mount.
+- [x] Step 2: Prefetch a nav target's data on link hover/focus.
+- [x] Step 3: Ensure warming is role-scoped and silent on failure.
 
 ### Task R1.3: Skeleton-first rendering
 
-- [ ] Step 1: Replace first-load `Loading...` in the primary data regions with the kit `Skeleton` layout so first paint is immediate.
-- [ ] Step 2: Keep error states intact and avoid skeleton flash when cached data is already present.
+- [x] Step 1: Replace first-load `Loading...` in the primary data regions with the kit `Skeleton` layout so first paint is immediate.
+- [x] Step 2: Keep error states intact and avoid skeleton flash when cached data is already present.
 
 ### Task R1.4: Verify and commit R1
 
-- [ ] Step 1: Confirm a second navigation to a warmed route renders cached content before the network resolves.
-- [ ] Step 2: Confirm writes still invalidate and reload.
-- [ ] Step 3: `npm run build`; commit explicit paths and push.
+- [x] Step 1: Confirm a second navigation to a warmed route renders cached content before the network resolves.
+- [x] Step 2: Confirm writes still invalidate and reload.
+- [x] Step 3: `npm run build`; commit explicit paths and push.
 
 ## Phase R2 - Page anatomy
 

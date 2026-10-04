@@ -87,6 +87,19 @@ export function Loading() {
   return <div className="empty">Loading…</div>;
 }
 
+export function PageSkeleton() {
+  return (
+    <div className="skeleton-page" role="status" aria-live="polite" aria-label="Loading">
+      <div className="skeleton-bar" style={{ width: '30%' }} />
+      <div className="grid grid-4" style={{ marginTop: 18 }}>
+        {[0, 1, 2, 3].map((i) => <div key={i} className="skeleton-card" />)}
+      </div>
+      <div className="skeleton-block" style={{ marginTop: 18 }} />
+      <div className="skeleton-block" style={{ marginTop: 12 }} />
+    </div>
+  );
+}
+
 export function ConfirmButton({ label, onConfirm, title, confirmLabel = 'Delete' }) {
   const [open, setOpen] = useState(false);
   return (

@@ -13,12 +13,16 @@ function getToken() {
   return getSessionToken();
 }
 
-// GET responses are shared for a few seconds. This keeps page changes fast:
+// GET responses are cached with stale-while-revalidate. This keeps page changes
+// fast:
 // - React.StrictMode mounts every page twice in dev, so without dedup each
 //   list endpoint (some are 5-12 MB) is fetched twice on every navigation.
-// - Re-visiting a page inside the TTL renders from cache instantly.
+// - Re-visiting a page inside the fresh window renders from cache instantly.
+// - Between the fresh and stale windows a cached response is served immediately
+//   while a background request refreshes it for the next visit.
 // Any write clears the whole cache, so mutations are never masked.
-const GET_TTL_MS = 5000;
+const GET_TTL_MS = 5000; // serve without revalidating
+const GET_STALE_MS = 300000; // serve immediately, revalidate in the background
 const getCache = new Map();
 
 function invalidateGetCache() {
@@ -31,6 +35,71 @@ function handle401() {
   if (!window.location.pathname.startsWith('/login')) {
     window.location.href = '/login';
   }
+}
+
+function fetchGet(path, options, headers) {
+  return fetch(`${BASE}${path}`, { headers, ...options }).then(async (res) => {
+    if (res.status === 401) {
+      handle401();
+      throw new Error('Session expired. Please sign in again.');
+    }
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try {
+        const data = await res.json();
+        if (data.error) msg = data.error;
+      } catch (_) {
+        /* ignore */
+      }
+      throw new Error(msg);
+    }
+    return res.json();
+  });
+}
+
+function getCached(path, options, headers) {
+  const hit = getCache.get(path);
+  const now = Date.now();
+
+  if (hit) {
+    // A request is already in flight for this key: no duplicate fetch.
+    if (hit.promise) return hit.promise;
+    if (hit.data !== undefined) {
+      if (now - hit.ts < GET_TTL_MS) return Promise.resolve(hit.data);
+      if (now - hit.ts < GET_STALE_MS) {
+        // Serve stale immediately, refresh in the background, and keep the
+        // stale value if the refresh fails.
+        const stale = hit.data;
+        const staleTs = hit.ts;
+        const revalidate = fetchGet(path, options, headers)
+          .then((data) => {
+            getCache.set(path, { data, ts: Date.now(), promise: null });
+            return data;
+          })
+          .catch((error) => {
+            const cur = getCache.get(path);
+            if (cur && cur.promise === revalidate) getCache.set(path, { data: stale, ts: staleTs, promise: null });
+            throw error;
+          });
+        getCache.set(path, { data: stale, ts: staleTs, promise: revalidate });
+        return Promise.resolve(stale);
+      }
+    }
+  }
+
+  const promise = fetchGet(path, options, headers)
+    .then((data) => {
+      getCache.set(path, { data, ts: Date.now(), promise: null });
+      return data;
+    })
+    .catch((error) => {
+      // Never cache a failed read, so a retry actually re-fetches.
+      const cur = getCache.get(path);
+      if (cur && cur.promise === promise) getCache.delete(path);
+      throw error;
+    });
+  getCache.set(path, { data: undefined, ts: now, promise });
+  return promise;
 }
 
 async function request(path, options = {}, { skipInvalidate = false } = {}) {
@@ -72,32 +141,7 @@ async function request(path, options = {}, { skipInvalidate = false } = {}) {
     }
   }
 
-  const hit = getCache.get(path);
-  if (hit && Date.now() - hit.at < GET_TTL_MS) return hit.promise;
-  const promise = fetch(`${BASE}${path}`, { headers, ...options }).then(async (res) => {
-    if (res.status === 401 && !isLogin) {
-      handle401();
-      throw new Error('Session expired. Please sign in again.');
-    }
-    if (!res.ok) {
-      let msg = `HTTP ${res.status}`;
-      try {
-        const data = await res.json();
-        if (data.error) msg = data.error;
-      } catch (_) {
-        /* ignore */
-      }
-      throw new Error(msg);
-    }
-    return res.json();
-  });
-  getCache.set(path, { at: Date.now(), promise });
-  // Never cache a failed read, so a retry actually re-fetches.
-  promise.catch(() => {
-    const cur = getCache.get(path);
-    if (cur && cur.promise === promise) getCache.delete(path);
-  });
-  return promise;
+  return getCached(path, options, headers);
 }
 
 export const api = {
@@ -109,6 +153,11 @@ export const api = {
   patch: (path, body) => request(path, { method: 'PATCH', body: JSON.stringify(body ?? {}) }),
   del: (path) => request(path, { method: 'DELETE' }),
   invalidate: () => invalidateGetCache(),
+  // Warm the read cache for a path without a caller awaiting it.
+  prefetch: (path) => {
+    request(path).catch(() => {});
+    return undefined;
+  },
   // Authenticated file download (templates). Triggers a browser save.
   download: async (path, filename) => {
     const token = getToken();

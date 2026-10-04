@@ -109,7 +109,8 @@ values without being rewritten. Dark mode maps the same ramp to dark values.
 - **Shared query cache.** Generalize the current 5s GET cache into a small
   stale-while-revalidate store keyed by method+URL (plus the existing locale/region
   scope): serve cached data immediately, revalidate in the background, dedupe
-  simultaneous requests for the same key, and abort in-flight requests on unmount.
+  simultaneous requests for the same key, and reuse a late response as the shared
+  cache entry instead of duplicating work.
 - **Warm and prefetch.** After the shell mounts, warm the summary endpoints during idle
   time - `/dashboard/summary`, and `/executive/summary` when the role permits - so the
   first visit to those pages is already cached. Navigation links prefetch their target

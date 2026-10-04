@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, fmtMoney, fmtDateTime } from '../api';
-import { ErrorNote, Loading, Page } from '../components';
+import { ErrorNote, Page, PageSkeleton } from '../components';
 import { KpiTile } from '../components/InfraVisuals';
 import { Donut, TrendLine, SeverityBadge, SectionCard, EmptyState } from '../components/viz';
 import { Sheet } from '../ui/Sheet';
@@ -38,7 +38,7 @@ export default function Dashboard() {
   }, [region]);
 
   if (error) return <Page title="Dashboard" crumbs="TMMS / Dashboard"><ErrorNote error={error} /></Page>;
-  if (!summary) return <Page title="Dashboard" crumbs="TMMS / Dashboard"><Loading /></Page>;
+  if (!summary) return <Page title="Dashboard" crumbs="TMMS / Dashboard"><PageSkeleton /></Page>;
 
   const portfolio = summary.portfolio || {};
   const currency = summary.currency;

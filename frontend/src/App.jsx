@@ -1,4 +1,4 @@
-import { SearchSelect } from './components';
+import { SearchSelect, PageSkeleton } from './components';
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Outlet, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { Moon, Sun, Home as HomeIcon, Mail, LayoutDashboard, Boxes, Wrench, Map as MapIcon, Settings as SettingsIcon, Gauge, ClipboardList, Search as SearchIcon, Menu, PanelLeftClose, PanelLeftOpen, X, MoreHorizontal } from 'lucide-react';
@@ -6,6 +6,7 @@ import { useTheme } from './theme';
 import { CommandPalette } from './ui/Command';
 import { Tooltip } from './ui/Tooltip';
 import { HeaderSlotProvider } from './components/PageHeader';
+import { prefetchRoute, warmData } from './prefetch';
 import Landing from './pages/Landing';
 import Home from './pages/Home';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -40,7 +41,7 @@ const Organization = lazy(() => import('./pages/Organization'));
 const OperatingModel = lazy(() => import('./pages/OperatingModel'));
 
 function RouteFallback() {
-  return <div className="empty" role="status" aria-live="polite">{t('loading')}</div>;
+  return <div className="content"><PageSkeleton /></div>;
 }
 
 function Suspend({ children }) {
@@ -199,7 +200,7 @@ function UserMenu() {
   );
 }
 
-function NavGroups({ navItems, onNavigate }) {
+function NavGroups({ navItems, onNavigate, onPrefetch }) {
   return (
     <>
       {navItems.map((g) => (
@@ -213,6 +214,8 @@ function NavGroups({ navItems, onNavigate }) {
               title={t(it.key)}
               aria-label={t(it.key)}
               onClick={onNavigate}
+              onMouseEnter={onPrefetch ? () => onPrefetch(it.to) : undefined}
+              onFocus={onPrefetch ? () => onPrefetch(it.to) : undefined}
               className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')}
             >
               <span className="ico">{it.icon}</span><span className="nav-text">{t(it.key)}</span>
@@ -265,6 +268,8 @@ function Shell() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  useEffect(() => { warmData({ executive: isExecutive || isAdmin }); }, [isExecutive, isAdmin]);
+
   const commands = useMemo(
     () => navItems.flatMap((g) => g.items.map((it) => ({ label: t(it.key), sub: t(g.group), run: () => navigate(it.to) }))),
     [navItems, navigate]
@@ -287,7 +292,7 @@ function Shell() {
           {railCollapsed ? <PanelLeftOpen {...ICON} /> : <PanelLeftClose {...ICON} />}
         </button>
         <nav className="nav-scroll" aria-label="Main navigation">
-          <NavGroups navItems={navItems} />
+          <NavGroups navItems={navItems} onPrefetch={prefetchRoute} />
         </nav>
       </aside>
       <HeaderSlotProvider slot={headerSlot}>

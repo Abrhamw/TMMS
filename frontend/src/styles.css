@@ -1695,3 +1695,17 @@ a:focus-visible, button:focus-visible, [role="button"]:focus-visible, summary:fo
     scroll-behavior: auto !important;
   }
 }
+
+/* ---- Skeleton-first loading ----------------------------------------------- */
+.skeleton-page { max-width: var(--content-max); margin: 0 auto; }
+.skeleton-bar, .skeleton-card, .skeleton-block {
+  border-radius: 10px; background: var(--surface-3);
+  animation: skeleton-pulse 1.4s var(--ease-standard) infinite;
+}
+.skeleton-bar { height: 26px; }
+.skeleton-card { height: 96px; }
+.skeleton-block { height: 180px; }
+@keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-bar, .skeleton-card, .skeleton-block { animation: none; }
+}

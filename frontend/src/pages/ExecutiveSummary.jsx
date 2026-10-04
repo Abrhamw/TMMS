@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Activity, Boxes, RefreshCw, TrendingDown, Users, Wallet, Wrench, ChevronRight } from 'lucide-react';
 import { api, fmtMoney, fmtDateTime } from '../api';
-import { ErrorNote, Loading, Page } from '../components';
+import { ErrorNote, Page, PageSkeleton } from '../components';
 import { Sparkline, StackedBar, TrendLine } from '../components/viz';
 import { Sheet } from '../ui/Sheet';
 import { Badge } from '../ui/Badge';
@@ -186,7 +186,7 @@ export default function ExecutiveSummary() {
   );
 
   if (error) return <Page title="Executive Command Center" crumbs="TMMS / Executive" actions={controls}><ErrorNote error={error} /></Page>;
-  if (!summary) return <Page title="Executive Command Center" crumbs="TMMS / Executive" actions={controls} fill><Loading /></Page>;
+  if (!summary) return <Page title="Executive Command Center" crumbs="TMMS / Executive" actions={controls} fill><PageSkeleton /></Page>;
 
   const portfolio = summary.portfolio;
   const currency = summary.currency;
