@@ -81,10 +81,11 @@
 
 ### Task P2.1: Interactive briefing
 
-- [ ] Step 1: Reimplement the briefing with the UI kit and Tailwind, in light and dark themes.
-- [ ] Step 2: Animate KPI counters and chart draw-in with `motion`, honoring reduced motion.
-- [ ] Step 3: Wire KPI/chart drill-down to a `Sheet` drawer showing aggregate and exception detail (counts, trend, top rows).
-- [ ] Step 4: Add live refresh and hover detail on charts.
+- [x] Step 1: Reimplement the briefing with the UI kit and Tailwind, in light and dark themes.
+- [x] Step 2: Animate KPI counters and chart draw-in with `motion`, honoring reduced motion.
+- [x] Step 3: Wire KPI/chart drill-down to a `Sheet` drawer showing aggregate and exception detail (counts, trend, top rows).
+- [x] Step 4: Add live refresh and hover detail on charts.
+- [x] Step 5: Route `/executive/summary` through the shared summary cache so repeat loads are instant (was bypassing `scopedSummary`).
 
 ## Phase P3 - Worker field experience
 
