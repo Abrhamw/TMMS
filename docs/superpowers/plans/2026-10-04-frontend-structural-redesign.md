@@ -98,13 +98,13 @@
 
 ### Task R2.1: Adopt the shell header and tokens
 
-- [ ] Step 1: Migrate hubs and registers to the header slot, spacing, and layered surfaces area by area, keeping routes and guards unchanged.
-- [ ] Step 2: Rebalance table/body density for the larger base type.
+- [x] Step 1: Migrate hubs and registers to the header slot, spacing, and layered surfaces area by area, keeping routes and guards unchanged.
+- [x] Step 2: Rebalance table/body density for the larger base type.
 
 ### Task R2.2: Verify and commit R2
 
-- [ ] Step 1: Playwright role x viewport pass; zero errors, no overflow.
-- [ ] Step 2: `npm run build`; commit explicit paths and push.
+- [x] Step 1: Playwright role x viewport pass; zero errors, no overflow.
+- [x] Step 2: `npm run build`; commit explicit paths and push.
 
 ## Phase R3 - Motion polish
 

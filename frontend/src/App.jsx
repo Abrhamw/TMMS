@@ -321,7 +321,7 @@ function Shell() {
       </HeaderSlotProvider>
 
       <div className={'nav-drawer-scrim' + (navOpen ? ' open' : '')} onClick={() => setNavOpen(false)} />
-      <aside className={'nav-drawer' + (navOpen ? ' open' : '')} role="dialog" aria-modal="true" aria-label="Navigation" aria-hidden={!navOpen}>
+      <aside className={'nav-drawer' + (navOpen ? ' open' : '')} role={navOpen ? 'dialog' : undefined} aria-modal={navOpen ? 'true' : undefined} aria-label="Navigation" aria-hidden={!navOpen}>
         <div className="nav-drawer-head">
           <div className="brand">
             <div className="logo"><em>T</em></div>
