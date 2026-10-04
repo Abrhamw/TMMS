@@ -1,8 +1,10 @@
 import { SearchSelect } from './components';
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Outlet, Navigate, useNavigate, useLocation } from 'react-router-dom';
-import { Moon, Sun } from 'lucide-react';
+import { Moon, Sun, Home as HomeIcon, Mail, LayoutDashboard, Boxes, Wrench, Map as MapIcon, Settings as SettingsIcon, Gauge, ClipboardList, Search as SearchIcon } from 'lucide-react';
 import { useTheme } from './theme';
+import { CommandPalette } from './ui/Command';
+import { Tooltip } from './ui/Tooltip';
 import Landing from './pages/Landing';
 import Home from './pages/Home';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -204,6 +206,25 @@ function Shell() {
   const isAdmin = !!user && user.role === 'ADMIN';
   const navItems = useMemo(() => buildNav(isCrew, isExecutive, isAdmin), [lang, isCrew, isExecutive, isAdmin]);
   const location = useLocation();
+  const navigate = useNavigate();
+  const [cmdOpen, setCmdOpen] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setCmdOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const commands = useMemo(
+    () => navItems.flatMap((g) => g.items.map((it) => ({ label: t(it.key), sub: t(g.group), run: () => navigate(it.to) }))),
+    [navItems, navigate]
+  );
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -216,7 +237,7 @@ function Shell() {
             <div className="g-label">{t(g.group)}</div>
             {g.items.map((it) => (
               <NavLink key={it.to} to={it.to} end={it.to === '/'} title={t(it.key)} aria-label={t(it.key)} className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')}>
-                <span className="ico">{it.ico}</span><span>{t(it.key)}</span>
+                <span className="ico">{it.icon}</span><span>{t(it.key)}</span>
               </NavLink>
             ))}
           </div>
@@ -225,11 +246,17 @@ function Shell() {
       <div className="main-col">
         <div className="shell-topbar">
           {!isExecutive && <GlobalSearch />}
+          <Tooltip label="Search · Ctrl K">
+            <button type="button" className="theme-toggle" onClick={() => setCmdOpen(true)} aria-label="Open command palette">
+              <SearchIcon size={17} strokeWidth={1.9} />
+            </button>
+          </Tooltip>
           <ThemeToggle />
           <LanguageSwitcher />
           <InboxChip />
           <UserMenu />
         </div>
+        <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} commands={commands} searchable={!isExecutive} />
         <ErrorBoundary resetKey={location.pathname}>
           <Outlet />
         </ErrorBoundary>
@@ -238,38 +265,52 @@ function Shell() {
   );
 }
 
+const ICON = { size: 17, strokeWidth: 1.9 };
+
+function navIcon(type) {
+  if (type === 'mailbox') return <Mail {...ICON} />;
+  if (type === 'myDay') return <ClipboardList {...ICON} />;
+  if (type === 'dashboard') return <LayoutDashboard {...ICON} />;
+  if (type === 'assets') return <Boxes {...ICON} />;
+  if (type === 'work') return <Wrench {...ICON} />;
+  if (type === 'map') return <MapIcon {...ICON} />;
+  if (type === 'admin') return <SettingsIcon {...ICON} />;
+  if (type === 'executiveSummary') return <Gauge {...ICON} />;
+  return <HomeIcon {...ICON} />;
+}
+
 function buildNav(isCrew, isExecutive, isAdmin) {
   if (isExecutive) {
     return [
       { group: 'overviewGroup', items: [
-        { to: '/home', key: 'home', ico: '⌂' },
-        { to: '/mailbox', key: 'mailbox', ico: '✉' },
+        { to: '/home', key: 'home', icon: navIcon('home') },
+        { to: '/mailbox', key: 'mailbox', icon: navIcon('mailbox') },
       ]},
       { group: 'workspaceGroup', items: [
-        { to: '/dashboard', key: 'dashboard', ico: '◫' },
-        { to: '/map', key: 'map', ico: '⌖' },
+        { to: '/dashboard', key: 'dashboard', icon: navIcon('dashboard') },
+        { to: '/map', key: 'map', icon: navIcon('map') },
       ]},
       { group: 'managementGroup', items: [
-        { to: '/executive', key: 'executiveSummary', ico: '◷' },
+        { to: '/executive', key: 'executiveSummary', icon: navIcon('executiveSummary') },
       ]},
     ];
   }
   const nav = [
     { group: 'overviewGroup', items: [
-      { to: '/home', key: isCrew ? 'myDay' : 'home', ico: '⌂' },
-      { to: '/mailbox', key: 'mailbox', ico: '✉' },
+      { to: '/home', key: isCrew ? 'myDay' : 'home', icon: navIcon(isCrew ? 'myDay' : 'home') },
+      { to: '/mailbox', key: 'mailbox', icon: navIcon('mailbox') },
     ]},
     { group: 'workspaceGroup', items: [
-      { to: '/dashboard', key: 'dashboard', ico: '◫' },
-      { to: '/assets', key: 'assets', ico: '▤' },
-      { to: '/work', key: 'work', ico: '☰' },
-      { to: '/map', key: 'map', ico: '⌖' },
+      { to: '/dashboard', key: 'dashboard', icon: navIcon('dashboard') },
+      { to: '/assets', key: 'assets', icon: navIcon('assets') },
+      { to: '/work', key: 'work', icon: navIcon('work') },
+      { to: '/map', key: 'map', icon: navIcon('map') },
     ]},
   ];
   if (isAdmin) {
     nav.push({ group: 'managementGroup', items: [
-      { to: '/admin', key: 'admin', ico: '⚙' },
-      { to: '/executive', key: 'executiveSummary', ico: '◷' },
+      { to: '/admin', key: 'admin', icon: navIcon('admin') },
+      { to: '/executive', key: 'executiveSummary', icon: navIcon('executiveSummary') },
     ]});
   }
   return nav;

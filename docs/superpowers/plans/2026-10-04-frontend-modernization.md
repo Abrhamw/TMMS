@@ -67,15 +67,15 @@
 
 ### Task P1.1: Vendored UI kit
 
-- [ ] Step 1: Add `src/ui/` primitives (Button, Card, Badge, Sheet, Dialog, Tooltip, Tabs, Skeleton) using CVA + clsx + tailwind-merge.
-- [ ] Step 2: Add a `Sheet` drawer with focus trap, Escape close, backdrop, and reduced-motion-aware transition.
-- [ ] Step 3: Add a `Command` palette (Ctrl/Cmd+K) for navigation and entity search.
+- [x] Step 1: Add `src/ui/` primitives (Button, Card, Badge, Sheet, Tooltip, Tabs, Skeleton) using CVA + clsx + tailwind-merge.
+- [x] Step 2: Add a `Sheet` drawer with focus trap, Escape close, backdrop, and reduced-motion-aware transition.
+- [x] Step 3: Add a `Command` palette (Ctrl/Cmd+K) for navigation and entity search.
 
 ### Task P1.2: Shell modernization
 
-- [ ] Step 1: Replace unicode nav glyphs with `lucide-react` icons; keep the existing routes and labels.
-- [ ] Step 2: Add breadcrumbs and active-area cues.
-- [ ] Step 3: Add the command palette trigger and keyboard shortcut.
+- [x] Step 1: Replace unicode nav glyphs with `lucide-react` icons; keep the existing routes and labels.
+- [x] Step 2: Add breadcrumbs and active-area cues.
+- [x] Step 3: Add the command palette trigger and keyboard shortcut.
 
 ## Phase P2 - Executive command center
 
