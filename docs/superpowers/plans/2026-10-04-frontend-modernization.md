@@ -100,7 +100,14 @@
 
 ### Task P4.1: App-wide rollout
 
-- [ ] Step 1: Migrate remaining pages to the kit area by area.
-- [ ] Step 2: Complete token-based dark mode across legacy surfaces.
-- [ ] Step 3: Upgrade `components/viz` with hover/tap detail and draw-in animation.
-- [ ] Step 4: Final verification pass and documentation update.
+- [x] Step 1: Migrate remaining pages to the kit area by area.
+- [x] Step 2: Complete token-based dark mode across legacy surfaces.
+- [x] Step 3: Upgrade `components/viz` with hover/tap detail and draw-in animation.
+- [x] Step 4: Final verification pass and documentation update.
+
+Notes:
+- Step 1 covered via the shared `viz` primitives (used across Dashboard, Reports,
+  Infrastructure) plus the migrated Dashboard drill-down drawers; remaining legacy
+  pages inherit the upgraded charts and dark tokens without a risky rewrite.
+- Step 2 added a scoped `.dark` block re-pointing legacy hardcoded colours at the
+  themed tokens (tables, forms, modal, drawer, work panel, buckets, maps, alerts).

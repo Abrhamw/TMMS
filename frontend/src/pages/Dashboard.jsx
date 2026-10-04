@@ -3,6 +3,7 @@ import { api, fmtMoney, fmtDateTime } from '../api';
 import { ErrorNote, Loading, Page } from '../components';
 import { KpiTile } from '../components/InfraVisuals';
 import { Donut, TrendLine, SeverityBadge, SectionCard, EmptyState } from '../components/viz';
+import { Sheet } from '../ui/Sheet';
 
 function conditionSegments(condition = {}) {
   return [
@@ -23,6 +24,7 @@ export default function Dashboard() {
   const [regions, setRegions] = useState([]);
   const [region, setRegion] = useState('');
   const [error, setError] = useState(null);
+  const [drill, setDrill] = useState(null);
 
   useEffect(() => {
     api.get('/regions').then(setRegions).catch(() => {});
@@ -89,7 +91,7 @@ export default function Dashboard() {
         <SectionCard title="Condition distribution" sub={`${(portfolio.assets || 0).toLocaleString()} assets`}>
           <Donut segments={conditionSegments(summary.condition)} total={portfolio.assets || 0} centerValue={(portfolio.assets || 0).toLocaleString()} centerLabel="assets" />
         </SectionCard>
-        <SectionCard title="Degradation attention" sub={`Top ${Math.min(degradation.length, 5)} by negative movement`} actions={<a className="link" href="/assets">Assets</a>}>
+        <SectionCard title="Degradation attention" sub={`Top ${Math.min(degradation.length, 5)} by negative movement`} actions={<button type="button" className="link" onClick={() => setDrill('degradation')}>View all</button>}>
           {degradation.length ? (
             <div className="attention-list">
               {degradation.slice(0, 5).map((row) => (
@@ -116,7 +118,7 @@ export default function Dashboard() {
         </SectionCard>
       </div>
 
-      <SectionCard title="Recommendations" sub={`${recommendations.length} ranked by severity`} className="mt">
+      <SectionCard title="Recommendations" sub={`${recommendations.length} ranked by severity`} actions={<button type="button" className="link" onClick={() => setDrill('recs')}>View all</button>} className="mt">
         {recommendations.length ? (
           <div className="executive-grid">
             {recommendations.slice(0, 5).map((rec) => (
@@ -133,6 +135,41 @@ export default function Dashboard() {
           </div>
         ) : <EmptyState title="No exceptions detected">No critical portfolio exceptions in the current register.</EmptyState>}
       </SectionCard>
+
+      <Sheet open={drill === 'degradation'} onClose={() => setDrill(null)} title="Degradation attention" description={summary.hero?.scope || 'All regions'}>
+        {degradation.length ? (
+          <div className="attention-list">
+            {degradation.map((row) => (
+              <div className="attention-item" key={row.asset_id}>
+                <SeverityBadge severity={row.delta <= -3 ? 'high' : row.delta <= -1.5 ? 'medium' : 'low'} />
+                <div className="attention-main">
+                  <b>{row.asset_code || row.asset_name}</b>
+                  <span className="muted">{row.asset_name} · {row.region || '—'} · suggested {row.suggested_rating}/10</span>
+                </div>
+                <span className="contribution-neg">{row.delta}</span>
+              </div>
+            ))}
+          </div>
+        ) : <EmptyState title="No degradation signals">Performance data appears here once readings or events are recorded.</EmptyState>}
+      </Sheet>
+
+      <Sheet open={drill === 'recs'} onClose={() => setDrill(null)} title="Recommendations" description={`${recommendations.length} ranked by severity`}>
+        {recommendations.length ? (
+          <div className="space-y-3">
+            {recommendations.map((rec) => (
+              <article className={`rec-card sev-${rec.severity}`} key={rec.id}>
+                <div className="spread">
+                  <SeverityBadge severity={rec.severity} />
+                  <span className="rec-metric">{rec.metric?.key?.replace(/_/g, ' ')}: {rec.metric?.value}</span>
+                </div>
+                <h4>{rec.title}</h4>
+                <p>{rec.detail}</p>
+                {rec.link ? <a className="link" href={rec.link}>Open record</a> : null}
+              </article>
+            ))}
+          </div>
+        ) : <EmptyState title="No exceptions detected">No critical portfolio exceptions in the current register.</EmptyState>}
+      </Sheet>
     </Page>
   );
 }
