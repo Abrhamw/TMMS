@@ -1,5 +1,5 @@
 import { SearchSelect, PageSkeleton } from './components';
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Outlet, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { Moon, Sun, Home as HomeIcon, Mail, LayoutDashboard, Boxes, Wrench, Map as MapIcon, Settings as SettingsIcon, Gauge, ClipboardList, Search as SearchIcon, Menu, PanelLeftClose, PanelLeftOpen, X, MoreHorizontal } from 'lucide-react';
 import { useTheme } from './theme';
@@ -248,6 +248,12 @@ function Shell() {
   }, [railCollapsed]);
 
   useEffect(() => { setNavOpen(false); }, [location.pathname]);
+
+  useLayoutEffect(() => {
+    const el = document.querySelector('.main-col .content');
+    if (el) el.scrollTop = 0;
+    window.scrollTo(0, 0);
+  }, [location.pathname]);
 
   useEffect(() => {
     if (!navOpen) return;

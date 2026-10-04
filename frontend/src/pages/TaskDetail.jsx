@@ -433,6 +433,8 @@ export default function TaskDetail() {
       {notif && <div className="alert alert-success">{notif}</div>}
       {error && <ErrorNote error={error} />}
 
+      <div className="task-detail-flow">
+      <div className="task-detail-mapblock">
       {t.line_id ? (
         <>
           <div className="lw-toolbar">
@@ -500,6 +502,7 @@ export default function TaskDetail() {
           fit={false}
         />
       )}
+      </div>
 
       <div className="grid grid-3 mt">
         <div className="card card-pad" style={{ gridColumn: 'span 2' }}>
@@ -637,6 +640,7 @@ export default function TaskDetail() {
             <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>Flow: DRAFT → SCHEDULED → ASSIGNED → IN_PROGRESS → PENDING_VERIFICATION → COMPLETED</div>
           </div>
         </div>
+      </div>
       </div>
 
       {!TERMINAL_STATUSES.includes(t.status) && (canAssign || canManage) && (
