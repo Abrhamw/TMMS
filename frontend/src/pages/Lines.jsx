@@ -191,7 +191,9 @@ export default function Lines({ embedded }) {
     } catch (e) { setError(e.message); }
   }
 
-  if (!rows) return embedded ? <Loading /> : <Page title="Transmission Lines"><Loading /></Page>;
+  if (!rows) return embedded
+    ? (error ? <ErrorNote error={error} /> : <Loading />)
+    : <Page title="Transmission Lines">{error ? <ErrorNote error={error} /> : <Loading />}</Page>;
 
   const actions = (
     <>

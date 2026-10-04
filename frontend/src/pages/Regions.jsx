@@ -63,7 +63,9 @@ export default function Regions({ embedded }) {
     }
   }
 
-  if (!rows) return embedded ? <Loading /> : <Page title="Regions"><Loading /></Page>;
+  if (!rows) return embedded
+    ? (error ? <ErrorNote error={error} /> : <Loading />)
+    : <Page title="Regions">{error ? <ErrorNote error={error} /> : <Loading />}</Page>;
 
   const actions = canWrite ? <button className="btn btn-primary" onClick={() => setForm({ ...blank })}>+ Add Region</button> : null;
   const body = (

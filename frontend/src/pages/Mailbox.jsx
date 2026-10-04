@@ -454,7 +454,7 @@ export default function Mailbox() {
   return (
     <Page title={t('mailboxTitle')} crumbs="TMMS / Operations / Mailbox" fill>
       {error && <ErrorNote error={error} />}
-      {!data ? <Loading /> : (
+      {!data ? (error ? null : <Loading />) : (
         <div className="mailbox-layout">
           <aside className="mailbox-nav">
             <button type="button" className="btn btn-primary mailbox-compose-btn" onClick={() => startCompose()}>

@@ -118,8 +118,8 @@ function assetPopup(a) {
 function alertPopup(v) {
   return `<div class="tmms-pop"><b>GPS ${esc(v.result)}</b><div class="tmms-pop-sub">${esc(v.target_type)}</div>` +
     popupRows([
-      ['Expected', `${v.expected_lat.toFixed(4)}, ${v.expected_lng.toFixed(4)}`],
-      ['Measured', `${v.measured_lat.toFixed(4)}, ${v.measured_lng.toFixed(4)}`],
+      ['Expected', v.expected_lat == null || v.expected_lng == null ? '—' : `${v.expected_lat.toFixed(4)}, ${v.expected_lng.toFixed(4)}`],
+      ['Measured', v.measured_lat == null || v.measured_lng == null ? '—' : `${v.measured_lat.toFixed(4)}, ${v.measured_lng.toFixed(4)}`],
       ['Distance', `${v.distance_m} m (tol ${v.tolerance_m} m)`],
     ]) +
     (v.violation ? `<div class="tmms-pop-warn">Violation: ${esc(v.violation)}</div>` : '') +

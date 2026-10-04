@@ -62,6 +62,7 @@ export default function Reports() {
   const canGenerate = can(getStoredUser(), 'report:write');
   const [templates, setTemplates] = useState([]);
   const [reports, setReports] = useState([]);
+  const [loaded, setLoaded] = useState(false);
   const [regions, setRegions] = useState([]);
   const [error, setError] = useState(null);
   const [genForm, setGenForm] = useState(null);
@@ -202,7 +203,7 @@ export default function Reports() {
   const toggleSchedule = (s) => api.patch(`/report-schedules/${s.id}`, { active: !s.active })
     .then(() => loadSchedules()).catch((e) => setError(e.message));
   const load = () => {
-    api.get('/report-templates').then(setTemplates).catch((e) => setError(e.message));
+    api.get('/report-templates').then(setTemplates).catch((e) => setError(e.message)).finally(() => setLoaded(true));
     api.get('/reports').then(setReports).catch(() => {});
     loadSchedules();
     loadMonitor();
@@ -297,7 +298,7 @@ export default function Reports() {
     } catch (e) { setShareErr(e.message); }
     finally { setShareBusy(false); }
   }
-  if (!templates.length && !reports.length && !error) return <Page title="Operational & Compliance Reports"><Loading /></Page>;
+  if (!loaded) return <Page title="Operational & Compliance Reports"><Loading /></Page>;
 
   return (
     <Page title="Operational & Compliance Reports" crumbs="TMMS / Validation & Compliance"
@@ -577,6 +578,7 @@ export default function Reports() {
                 {top ? <button className="btn" onClick={popDocument}>{documents.length > 1 ? 'Back' : (view ? 'Back to report' : 'Close')}</button> : null}
                 {canShare ? (
                   <button className="btn" onClick={() => {
+                    loadEntityLists();
                     setShareResult(null);
                     if (top) setShareTarget({ kind: 'document', type: top.type, id: top.id, label: top.data?.title || top.label });
                     else setShareTarget({ kind: 'report', id: view.id, label: view.title });

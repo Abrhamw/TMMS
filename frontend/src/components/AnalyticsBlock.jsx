@@ -17,9 +17,9 @@ export default function AnalyticsBlock({ a }) {
           {a.kpis.map((k, i) => <KpiTile key={i} label={k.label} value={k.value} sub={k.sub} tone={k.tone} />)}
         </div>
       )}
-      {(a.bars || []).length > 0 && (
+      {((a.bars || []).length > 0 || (a.donuts || []).length > 0) && (
         <div className="analytics-charts">
-          {a.bars.map((b, i) => {
+          {(a.bars || []).map((b, i) => {
             // Scale every bar against the chart's own maximum. Without this a
             // chart that never declared `max` made each bar render at 100% (the
             // bar took its own value as the ceiling), so the comparison was

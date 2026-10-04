@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, fmtMoney, fmtDate } from '../api';
+import { api, fmtMoney, fmtNum, fmtDate } from '../api';
 import { SearchSelect, Page, MoneyCard, Loading, ErrorNote } from '../components';
 import { BarRow } from '../components/InfraVisuals';
 import { can, getStoredUser } from '../auth';
@@ -70,10 +70,10 @@ export default function Value() {
           {val && (
             <>
               <div className="grid grid-4">
-                <MoneyCard label="Population (assets)" value={fmtMoney(val.totals.count, val.currency.code)} sub={`${val.regions.length} region(s) · avg condition ${(val.totals.avg_condition || 0).toFixed(1)}`} />
+                <MoneyCard label="Population (assets)" value={fmtNum(val.totals.count)} sub={`${val.regions.length} region(s) · avg condition ${(val.totals.avg_condition || 0).toFixed(1)}`} />
                 <MoneyCard label="Replacement cost (RCN)" value={fmtMoney(val.totals.rcn, val.currency.code)} sub="benchmark catalog prices × quantity" />
                 <MoneyCard label="Condition-adjusted value" value={fmtMoney(val.totals.current, val.currency.code)} sub="RCN × condition / 10" />
-                <MoneyCard label="Unpriced assets" value={fmtMoney(val.totals.unpriced_count, val.currency.code)} sub={val.unpriced_types.length ? `${val.unpriced_types.length} type(s) without a price` : 'all priced'} />
+                <MoneyCard label="Unpriced assets" value={fmtNum(val.totals.unpriced_count)} sub={val.unpriced_types.length ? `${val.unpriced_types.length} type(s) without a price` : 'all priced'} />
               </div>
               {val.unpriced_types.length > 0 && (
                 <div className="card card-pad mt">
@@ -150,8 +150,8 @@ export default function Value() {
               <div className="grid grid-4">
                 <MoneyCard label="Total spend" value={fmtMoney(cost.totals.spend, cost.currency.code)} sub={`${cost.totals.count} event(s)`} />
                 <MoneyCard label="Average per event" value={fmtMoney(cost.totals.avg, cost.currency.code)} />
-                <MoneyCard label="Regions with spend" value={fmtMoney(cost.by_region.length, cost.currency.code)} />
-                <MoneyCard label="Event types" value={fmtMoney(cost.by_event_type.length, cost.currency.code)} />
+                <MoneyCard label="Regions with spend" value={fmtNum(cost.by_region.length)} />
+                <MoneyCard label="Event types" value={fmtNum(cost.by_event_type.length)} />
               </div>
               <div className="grid grid-2 mt">
                 <div className="card card-pad">

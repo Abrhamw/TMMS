@@ -335,7 +335,7 @@ export default function TaskDetail() {
   }
 
   if (error) return <Page title={FALLBACK_TITLE}><ErrorNote error={error} /></Page>;
-  if (!task) return <Page title={FALLBACK_TITLE}><Loading /></Page>;
+  if (!task) return <Page title={FALLBACK_TITLE}>{error ? <ErrorNote error={error} /> : <Loading />}</Page>;
 
   const t = task;
 

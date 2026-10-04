@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ClipboardList, AlertTriangle, Clock, ChevronRight } from 'lucide-react';
 import { api, fmtDate, fmtDateTime } from '../api';
-import { Page, Pill, Loading, ErrorNote, SearchField, useSearchFilter } from '../components';
+import { Page, Pill, Loading, ErrorNote, SearchField, filterItems, useSearchFilter } from '../components';
 import { getStoredUser } from '../auth';
 import { priorityLabel, statusLabel, taskTypeLabel } from '../labels';
 import TaskWorkPanel from '../components/TaskWorkPanel';
@@ -308,7 +308,7 @@ function StatChip({ icon, label, value, danger }) {
 function TaskList({ rows, onOpen, empty }) {
   const [query, setQuery] = useState('');
   const all = rows || [];
-  const results = useSearchFilter(all, query);
+  const results = filterItems(all, query);
   if (all.length === 0) return <div className="card card-pad muted">{empty}</div>;
   return (
     <div className="card">

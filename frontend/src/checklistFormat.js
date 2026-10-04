@@ -6,7 +6,7 @@ import { taskTypeLabel } from './labels.js';
 // observed instead ("Pass", "Yes", "118 kV", coordinates), so the mapping lives
 // here and is shared by the live run surfaces and the printed documents.
 
-function parseStored(v) {
+export function parseStored(v) {
   if (v === null || v === undefined || v === '') return null;
   if (typeof v === 'object') return v;
   try { return JSON.parse(v); } catch (_) { return v; }

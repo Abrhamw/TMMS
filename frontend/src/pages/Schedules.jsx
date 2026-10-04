@@ -232,7 +232,7 @@ export default function Schedules() {
                     <button className="btn btn-sm" onClick={() => preview(s)}>{t('schedPreview')}</button>{' '}
                     {canRun && <button className="btn btn-sm" onClick={() => runOne(s)} title="Generate due tasks for this schedule">{t('schedRunOne')}</button>}{' '}
                     {canWrite && <button className="btn btn-sm" onClick={() => toggleActive(s)}>{s.is_active ? t('schedPause') : t('schedResume')}</button>}{' '}
-                    {canWrite && <button className="btn btn-sm" onClick={() => { setForm({ ...s, next_due_date: s.next_due_date.slice(0, 10) }); setRule(ruleToUi(s.recurrence)); }}>{t('schedEdit')}</button>}
+                    {canWrite && <button className="btn btn-sm" onClick={() => { setForm({ ...s, next_due_date: s.next_due_date ? String(s.next_due_date).slice(0, 10) : '' }); setRule(ruleToUi(s.recurrence)); }}>{t('schedEdit')}</button>}
                   </td>
                 </tr>
               ))}

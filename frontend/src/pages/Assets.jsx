@@ -268,7 +268,7 @@ export default function Assets() {
   }, [typeFilter, subFilter, regionFilter, debouncedQuery, page]);
 
   useEffect(() => {
-    api.get('/asset-catalog').then(setCatalog).catch(() => {});
+    api.get('/asset-catalog').then(setCatalog).catch(() => setCatalog({ families: [] }));
     api.get('/regions').then(setRegions).catch(() => {});
     api.get('/substations').then(setSubs).catch(() => {});
     api.get('/lines').then(setLines).catch(() => {});
@@ -420,7 +420,9 @@ export default function Assets() {
     } catch (e) { setError(e.message); }
   }
 
-  if (!rows || (catalog === null)) return <Page title="Assets"><Loading /></Page>;
+  if (!rows) return error
+    ? <Page title="Assets"><ErrorNote error={error} /></Page>
+    : <Page title="Assets"><Loading /></Page>;
 
   const PAGE_SIZE = REGISTER_PAGE_SIZE;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));

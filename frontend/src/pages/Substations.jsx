@@ -87,7 +87,9 @@ export default function Substations({ embedded }) {
     try { setDetail(await api.get(`/substations/${s.id}`)); } catch (e) { setError(e.message); }
   }
 
-  if (!rows) return embedded ? <Loading /> : <Page title="Substations"><Loading /></Page>;
+  if (!rows) return embedded
+    ? (error ? <ErrorNote error={error} /> : <Loading />)
+    : <Page title="Substations">{error ? <ErrorNote error={error} /> : <Loading />}</Page>;
 
   const actions = canWrite ? (
     <>

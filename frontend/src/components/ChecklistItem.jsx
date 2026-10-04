@@ -1,5 +1,6 @@
 import { SearchSelect } from '../components';
 import { getDevicePosition } from './MapPicker';
+import { parseStored } from '../checklistFormat';
 
 // One checklist step input, shared by every execution surface so PASS/FAIL,
 // numeric, select, GPS and free-text steps behave identically wherever a crew
@@ -15,7 +16,7 @@ export default function ChecklistItem({ item, state, setState }) {
     );
   }
   if (item.response_type === 'NUMERIC') {
-    const pc = item.pass_criteria;
+    const pc = parseStored(item.pass_criteria);
     return (
       <div className="flex">
         <input type="number" style={{ width: 180 }} value={state.value ?? ''} onChange={(e) => set(e.target.value === '' ? null : Number(e.target.value))} placeholder="Enter value" />
@@ -24,7 +25,7 @@ export default function ChecklistItem({ item, state, setState }) {
     );
   }
   if (item.response_type === 'SELECT') {
-    const opts = item.pass_criteria?.options || [];
+    const opts = parseStored(item.pass_criteria)?.options || [];
     return (
       <SearchSelect value={state.value ?? ''} onChange={(e) => set(e.target.value)}>
         <option value="">Select…</option>

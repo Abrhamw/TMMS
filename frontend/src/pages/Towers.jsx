@@ -174,7 +174,9 @@ export default function Towers({ embedded }) {
     reader.readAsText(f);
   }
 
-  if (!rows) return embedded ? <Loading /> : <Page title="Towers"><Loading /></Page>;
+  if (!rows) return embedded
+    ? (error ? <ErrorNote error={error} /> : <Loading />)
+    : <Page title="Towers">{error ? <ErrorNote error={error} /> : <Loading />}</Page>;
 
   function towerMapProps(d, line) {
     const route = asArray(line && line.route_json);

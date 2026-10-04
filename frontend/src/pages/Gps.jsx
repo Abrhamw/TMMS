@@ -77,7 +77,7 @@ export default function Gps() {
   const load = () => {
     const q = filter ? `?result=${filter}` : '';
     api.get(`/gps-validations${q}`).then(setRows).catch((e) => setError(e.message));
-    api.get('/gps-summary').then(setSummary).catch(() => {});
+    api.get('/gps-summary').then(setSummary).catch(() => setSummary({}));
     api.get(`/violations${vFilter ? `?review_status=${vFilter}` : ''}`).then(setViolations).catch(() => {});
     api.get('/geofences').then(setGeofences).catch(() => {});
   };
@@ -254,7 +254,9 @@ export default function Gps() {
     }
   }
 
-  if (!rows || !summary) return <Page title="GPS Validation"><Loading /></Page>;
+  if (!rows || !summary) return error
+    ? <Page title="GPS Validation"><ErrorNote error={error} /></Page>
+    : <Page title="GPS Validation"><Loading /></Page>;
 
   return (
     <Page title="GPS Validation" crumbs="TMMS / Validation & Compliance"
@@ -315,7 +317,7 @@ export default function Gps() {
                   <td className="nowrap">{fmtDate(v.validated_at)}</td>
                   <td>{v.target_type}: <b>{v.target?.name || v.target?.asset_id || v.target?.tower_id || v.target_id}</b></td>
                   <td>{VIOLATION_LABEL[v.violation] || <Pill value={v.result} />}</td>
-                  <td className="mono">{Math.round(v.distance_m)} m <span className="muted">/ tol {v.tolerance_m} m</span></td>
+                  <td className="mono">{v.distance_m == null ? '—' : `${Math.round(v.distance_m)} m`} <span className="muted">/ tol {v.tolerance_m} m</span></td>
                   <td>{v.inside_geofence === 1 ? <span className="ok">✓</span> : v.inside_geofence === 0 ? <span className="bad">✗ out</span> : '—'}</td>
                   <td><span className={`review-badge review-${v.review_status || 'NOT_REQUIRED'}`}>{REVIEW_LABEL[v.review_status] || '—'}</span></td>
                   <td>{v.region?.code || '—'}</td>
@@ -483,7 +485,7 @@ export default function Gps() {
             <span className="k">Date</span><span>{fmtDate(review.validated_at)}</span>
             <span className="k">Target</span><span>{review.target?.name || review.target?.asset_id || review.target?.tower_id || review.target_id}</span>
             <span className="k">Violation</span><span>{VIOLATION_LABEL[review.violation] || <Pill value={review.result} />}</span>
-            <span className="k">Distance</span><span className="mono">{Math.round(review.distance_m)} m (tol {review.tolerance_m} m)</span>
+            <span className="k">Distance</span><span className="mono">{review.distance_m == null ? '—' : `${Math.round(review.distance_m)} m`} (tol {review.tolerance_m} m)</span>
             <span className="k">Review state</span><span><span className={`review-badge review-${review.review_status || 'NOT_REQUIRED'}`}>{REVIEW_LABEL[review.review_status] || '—'}</span></span>
             {review.geofence && <span className="k">Matched fence</span>}
             {review.geofence && <span>{review.geofence.name}</span>}

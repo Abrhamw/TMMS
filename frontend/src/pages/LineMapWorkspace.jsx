@@ -689,10 +689,12 @@ function PartsTab({ tower, canWrite, setError, setNotice }) {
   const [catalog, setCatalog] = useState([]);
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState(null);
 
   const load = useCallback(() => {
     if (!tower || tower.id < 0) return;
-    api.get(`/towers/${tower.id}/components`).then(setComponents).catch((e) => setError(e.message));
+    setLoadError(null);
+    api.get(`/towers/${tower.id}/components`).then(setComponents).catch((e) => { setError(e.message); setLoadError(e.message); });
   }, [tower.id, setError]);
 
   useEffect(() => { setComponents(null); setForm(null); load(); }, [load]);
@@ -724,7 +726,7 @@ function PartsTab({ tower, canWrite, setError, setNotice }) {
   }
 
   if (tower.id < 0) return <div className="muted" style={{ fontSize: 13 }}>Save the new tower before managing its parts.</div>;
-  if (!components) return <Loading />;
+  if (!components) return loadError ? <div className="error" style={{ fontSize: 13 }}>{loadError}</div> : <Loading />;
 
   return (
     <>
@@ -798,10 +800,12 @@ function AssetsTab({ tower, lineId, canWrite, setError, setNotice }) {
   const [catalog, setCatalog] = useState(null);
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState(null);
 
   const load = useCallback(() => {
     if (!tower || tower.id < 0) return;
-    api.get(`/assets?tower_id=${tower.id}`).then(setAssets).catch((e) => setError(e.message));
+    setLoadError(null);
+    api.get(`/assets?tower_id=${tower.id}`).then(setAssets).catch((e) => { setError(e.message); setLoadError(e.message); });
   }, [tower.id, setError]);
 
   useEffect(() => { setAssets(null); setForm(null); load(); }, [load]);
@@ -844,7 +848,7 @@ function AssetsTab({ tower, lineId, canWrite, setError, setNotice }) {
   }
 
   if (tower.id < 0) return <div className="muted" style={{ fontSize: 13 }}>Save the new tower before registering assets.</div>;
-  if (!assets) return <Loading />;
+  if (!assets) return loadError ? <div className="error" style={{ fontSize: 13 }}>{loadError}</div> : <Loading />;
 
   return (
     <>

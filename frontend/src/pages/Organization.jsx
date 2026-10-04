@@ -158,7 +158,9 @@ export default function Organization() {
     try { await api.del(`/org-units/${u.id}`); load(); } catch (e) { setError(e.message); }
   }
 
-  if (!tree || !counts) return <Page title="Organization"><Loading /></Page>;
+  if (!tree || !counts) return error
+    ? <Page title="Organization"><ErrorNote error={error} /></Page>
+    : <Page title="Organization"><Loading /></Page>;
 
   return (
     <Page title="Organization" crumbs="TMMS / Governance"

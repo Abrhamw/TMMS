@@ -204,7 +204,8 @@ export default function Settings() {
       <ErrorNote error={error} />
       {msg && <div className="alert alert-success">{msg}</div>}
 
-      {tab === 'settings' && !cfg && <Loading />}
+      {tab === 'settings' && !cfg && !error && <Loading />}
+      {tab === 'settings' && !cfg && error && <ErrorNote error={error} />}
       {tab === 'settings' && cfg && (
         <div className="card card-pad">
           <div className="grid2">

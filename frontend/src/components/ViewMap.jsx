@@ -7,6 +7,8 @@ import MapSearchBox from './MapSearchBox';
 import MapLegend from './MapLegend';
 import { t } from '../i18n';
 
+const EMPTY = [];
+
 function centroid(points) {
   const pts = asLatLngs(points);
   if (!pts.length) return null;
@@ -32,10 +34,10 @@ function markerPopup(m) {
 export default function ViewMap({
   center,
   zoom = 8,
-  markers = [],
-  polylines = [],
-  polygons = [],
-  circles = [],
+  markers = EMPTY,
+  polylines = EMPTY,
+  polygons = EMPTY,
+  circles = EMPTY,
   radius = null,
   radiusLatLng = null,
   fit = true,
