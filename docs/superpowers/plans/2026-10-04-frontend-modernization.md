@@ -91,10 +91,10 @@
 
 ### Task P3.1: Mobile-first work surface
 
-- [ ] Step 1: Redesign the worker home/work surface with large touch targets and thumb-reachable actions.
-- [ ] Step 2: Add an animated step-by-step task runner (progress stepper, current step, validation).
-- [ ] Step 3: Present photo/GPS/reading capture in bottom sheets with optimistic feedback.
-- [ ] Step 4: Add a persistent sync/offline indicator.
+- [x] Step 1: Redesign the worker home/work surface with large touch targets and thumb-reachable actions.
+- [x] Step 2: Add an animated step-by-step task runner (progress stepper, current step, validation).
+- [x] Step 3: Present photo/GPS/reading capture in bottom sheets with optimistic feedback.
+- [x] Step 4: Add a persistent sync/offline indicator.
 
 ## Phase P4 - Rollout and visualization
 

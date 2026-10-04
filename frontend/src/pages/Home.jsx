@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ClipboardList, AlertTriangle, Clock, ChevronRight } from 'lucide-react';
 import { api, fmtDate, fmtDateTime } from '../api';
 import { Page, Pill, Loading, ErrorNote, SearchField, useSearchFilter } from '../components';
 import { getStoredUser } from '../auth';
 import { priorityLabel, statusLabel, taskTypeLabel } from '../labels';
 import TaskWorkPanel from '../components/TaskWorkPanel';
 import TaskRunner from '../components/TaskRunner';
+import SyncStatus from '../components/SyncStatus';
+import { cn } from '../ui/cn';
 import { t } from '../i18n';
 
 const CRUMBS = 'TMMS / Home';
@@ -191,67 +194,102 @@ function CrewMyDay({ data, me, onOpen }) {
   const scope = data.scope.crew ? data.scope.crew.name : '';
   const actions = ACTION_LABEL();
   const { query, setQuery, results: inbox } = useSearchFilter(data.inbox);
+  const openCount = data.inbox.length;
+  const overdueCount = data.inbox.filter((it) => it.overdue).length;
+  const historyCount = data.history.mine.length;
+
   return (
-    <>
-      <div className="home-greeting">
-        <div className="avatar lg">{me?.first_name?.[0] || me?.username?.[0] || '?'}</div>
-        <div>
-          <div className="home-hello">{t('welcome')}, <b>{data.name || me?.username}</b></div>
-          <div className="muted">{t('myDaySubtitle')}{scope ? ` · ${scope}` : ''}</div>
+    <div className="space-y-5">
+      <header className="flex items-center gap-3 rounded-2xl bg-gradient-to-br from-emerald-900 via-emerald-800 to-teal-800 p-4 text-white shadow-sm">
+        <div className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-white/15 text-xl font-bold">
+          {me?.first_name?.[0] || me?.username?.[0] || '?'}
         </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-base font-semibold">{t('welcome')}, {data.name || me?.username}</div>
+          <div className="truncate text-xs text-emerald-100/90">{t('myDaySubtitle')}{scope ? ` · ${scope}` : ''}</div>
+        </div>
+        <SyncStatus />
+      </header>
+
+      <div className="grid grid-cols-3 gap-2">
+        <StatChip icon={<ClipboardList size={15} />} label={t('openTasks')} value={openCount} />
+        <StatChip icon={<AlertTriangle size={15} />} label={t('overdue')} value={overdueCount} danger={overdueCount > 0} />
+        <StatChip icon={<Clock size={15} />} label={t('recentHistory')} value={historyCount} />
       </div>
 
-      <div className="spread" style={{ alignItems: 'baseline', marginBottom: 10 }}>
-        <h3 className="section-title" style={{ margin: 0 }}>{t('openTasks')}</h3>
-        {data.inbox.length > 0 && (
-          <SearchField value={query} onChange={setQuery} placeholder={t('search')} />
+      <section>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold">{t('openTasks')}</h3>
+          {openCount > 0 && <SearchField value={query} onChange={setQuery} placeholder={t('search')} />}
+        </div>
+        {openCount === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">{t('allDone')}</div>
+        ) : inbox.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">{t('noMatches')}</div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {inbox.map((it) => (
+              <button
+                key={it.id}
+                onClick={() => onOpen(it)}
+                className={cn(
+                  'group flex min-h-[7.5rem] flex-col gap-2 rounded-2xl border bg-white p-4 text-left shadow-sm outline-none transition-transform hover:-translate-y-0.5 hover:shadow-md focus-visible:ring-2 focus-visible:ring-accent/40 active:scale-[0.99] dark:bg-slate-900',
+                  it.overdue ? 'border-red-300 dark:border-red-900' : 'border-slate-200 dark:border-slate-800'
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400">{it.task_number || `#${it.id}`}</span>
+                  <Pill value={it.status} />
+                </div>
+                <div className="text-sm font-semibold leading-snug text-slate-900 dark:text-slate-50">{it.title}</div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">{taskTypeLabel(it.task_type)} · {priorityLabel(it.priority)} · {it.where || '—'}</div>
+                {it.reason && <div className="text-[11px] text-slate-500 dark:text-slate-400">{it.reason}</div>}
+                <div className="mt-auto flex items-center justify-between gap-2">
+                  <span className={cn('text-xs', it.overdue ? 'font-semibold text-red-600 dark:text-red-400' : 'text-slate-500 dark:text-slate-400')}>{t('due')}: {fmtDate(it.due_date)}</span>
+                  <span className="inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white group-hover:bg-brand-light">
+                    {actions[it.primary_action] || t('open')}<ChevronRight size={14} />
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
         )}
-      </div>
-      {data.inbox.length === 0 ? (
-        <div className="card card-pad muted">{t('allDone')}</div>
-      ) : inbox.length === 0 ? (
-        <div className="card card-pad search-empty">{t('noMatches')}</div>
-      ) : (
-        <div className="myday-list">
-          {inbox.map((it) => (
-            <button key={it.id} className={'myday-card' + (it.overdue ? ' overdue' : '')} onClick={() => onOpen(it)}>
-              <div className="spread">
-                <span className="mono muted">{it.task_number || `#${it.id}`}</span>
-                <Pill value={it.status} />
-              </div>
-              <div className="myday-title">{it.title}</div>
-              <div className="muted" style={{ fontSize: 12 }}>
-                {taskTypeLabel(it.task_type)} · {priorityLabel(it.priority)} · {it.where || '—'}
-              </div>
-              <div className="spread mt">
-                <span className={it.overdue ? 'overdue' : 'muted'} style={{ fontSize: 12 }}>
-                  {t('due')}: {fmtDate(it.due_date)}
-                </span>
-                <span className="btn btn-sm btn-primary">{actions[it.primary_action] || t('open')}</span>
-              </div>
-              {it.reason && <div className="muted" style={{ fontSize: 11 }}>{it.reason}</div>}
-            </button>
-          ))}
-        </div>
-      )}
+      </section>
 
-      <h3 className="section-title mt">{t('recentHistory')}</h3>
-      {data.history.mine.length === 0 ? (
-        <div className="card card-pad muted">{t('noData')}</div>
-      ) : (
-        <div className="card">
-          {data.history.mine.map((it) => (
-            <div key={it.id} className="myday-row" onClick={() => onOpen(it)}>
-              <div>
-                <span className="mono muted">{it.task_number || `#${it.id}`}</span>
-                <div>{it.title}</div>
-              </div>
-              <div className="muted nowrap" style={{ fontSize: 12 }}>{fmtDateTime(it.due_date)}</div>
-            </div>
-          ))}
-        </div>
-      )}
-    </>
+      <section>
+        <h3 className="mb-2 text-sm font-semibold">{t('recentHistory')}</h3>
+        {historyCount === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">{t('noData')}</div>
+        ) : (
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+            {data.history.mine.map((it) => (
+              <button
+                key={it.id}
+                onClick={() => onOpen(it)}
+                className="flex w-full items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 text-left last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/60"
+              >
+                <div className="min-w-0">
+                  <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400">{it.task_number || `#${it.id}`}</span>
+                  <div className="truncate text-sm">{it.title}</div>
+                </div>
+                <div className="shrink-0 text-xs text-slate-500 dark:text-slate-400">{fmtDateTime(it.due_date)}</div>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function StatChip({ icon, label, value, danger }) {
+  return (
+    <div className={cn('rounded-2xl border bg-white p-3 dark:bg-slate-900', danger ? 'border-red-200 dark:border-red-900' : 'border-slate-200 dark:border-slate-800')}>
+      <div className={cn('flex items-center gap-1 text-[11px] font-medium', danger ? 'text-red-600 dark:text-red-400' : 'text-slate-500 dark:text-slate-400')}>
+        {icon}<span className="truncate">{label}</span>
+      </div>
+      <div className={cn('mt-0.5 text-xl font-bold', danger ? 'text-red-600 dark:text-red-400' : 'text-slate-900 dark:text-slate-50')}>{value}</div>
+    </div>
   );
 }
 

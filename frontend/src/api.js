@@ -1,4 +1,5 @@
 import { getSessionToken, clearSession } from './session';
+import { beginSync, endSync } from './sync';
 
 const BASE = '/api';
 
@@ -43,24 +44,32 @@ async function request(path, options = {}, { skipInvalidate = false } = {}) {
 
   if (method !== 'GET') {
     // Mutations always hit the network; a successful write invalidates cached
-    // reads so the next GET reflects it.
-    const res = await fetch(`${BASE}${path}`, { headers, ...options });
-    if (res.status === 401 && !isLogin) {
-      handle401();
-      throw new Error('Session expired. Please sign in again.');
-    }
-    if (!res.ok) {
-      let msg = `HTTP ${res.status}`;
-      try {
-        const data = await res.json();
-        if (data.error) msg = data.error;
-      } catch (_) {
-        /* ignore */
+    // reads so the next GET reflects it. They also drive the sync indicator.
+    beginSync();
+    try {
+      const res = await fetch(`${BASE}${path}`, { headers, ...options });
+      if (res.status === 401 && !isLogin) {
+        handle401();
+        throw new Error('Session expired. Please sign in again.');
       }
-      throw new Error(msg);
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try {
+          const data = await res.json();
+          if (data.error) msg = data.error;
+        } catch (_) {
+          /* ignore */
+        }
+        throw new Error(msg);
+      }
+      if (!skipInvalidate) invalidateGetCache();
+      const data = await res.json();
+      endSync(true);
+      return data;
+    } catch (error) {
+      endSync(false, error.message);
+      throw error;
     }
-    if (!skipInvalidate) invalidateGetCache();
-    return res.json();
   }
 
   const hit = getCache.get(path);
