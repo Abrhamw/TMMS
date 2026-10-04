@@ -201,6 +201,12 @@ function UserMenu() {
 }
 
 function NavGroups({ navItems, onNavigate, onPrefetch }) {
+  const [tip, setTip] = useState(null);
+  const showTip = (label, to, e) => {
+    onPrefetch?.(to);
+    const r = e.currentTarget.getBoundingClientRect();
+    setTip({ label, top: r.top + r.height / 2 });
+  };
   return (
     <>
       {navItems.map((g) => (
@@ -214,8 +220,10 @@ function NavGroups({ navItems, onNavigate, onPrefetch }) {
               title={t(it.key)}
               aria-label={t(it.key)}
               onClick={onNavigate}
-              onMouseEnter={onPrefetch ? () => onPrefetch(it.to) : undefined}
-              onFocus={onPrefetch ? () => onPrefetch(it.to) : undefined}
+              onMouseEnter={(e) => showTip(t(it.key), it.to, e)}
+              onFocus={(e) => showTip(t(it.key), it.to, e)}
+              onMouseLeave={() => setTip(null)}
+              onBlur={() => setTip(null)}
               className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')}
             >
               <span className="ico">{it.icon}</span><span className="nav-text">{t(it.key)}</span>
@@ -223,6 +231,7 @@ function NavGroups({ navItems, onNavigate, onPrefetch }) {
           ))}
         </div>
       ))}
+      {tip ? <span className="nav-tip-fixed" role="tooltip" style={{ top: tip.top }}>{tip.label}</span> : null}
     </>
   );
 }

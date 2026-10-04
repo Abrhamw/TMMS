@@ -151,6 +151,17 @@ body {
 .app-shell.rail-collapsed .nav-link { justify-content: center; padding: 10px; }
 .app-shell.rail-collapsed .nav-link .ico { width: auto; }
 .app-shell.rail-collapsed .nav-link.active { position: relative; }
+.nav-tip-fixed {
+  display: none;
+  position: fixed; left: 72px; transform: translateY(-50%); z-index: 1400;
+  padding: 5px 10px; border-radius: 6px; background: #0f172a; color: #fff;
+  font-size: 12px; font-weight: 600; white-space: nowrap; pointer-events: none;
+  box-shadow: 0 6px 20px rgba(2, 6, 23, 0.28);
+}
+.app-shell.rail-collapsed .nav-tip-fixed { display: block; }
+@media (min-width: 761px) and (max-width: 900px) {
+  .nav-tip-fixed { display: block; }
+}
 
 /* Shell page header slot */
 .shell-page-header-slot:empty { display: none; }
@@ -173,7 +184,7 @@ body {
 .topbar .crumbs { color: var(--muted); font-size: var(--text-xs); }
 .topbar .actions { display: flex; gap: 8px; align-items: center; }
 .content { padding: 24px 28px; flex: 1; min-height: 0; overflow-y: auto; animation: content-enter var(--dur) var(--ease-standard) both; }
-@keyframes content-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes content-enter { from { opacity: 0; } to { opacity: 1; } }
 /* Full-height pages (e.g. the mailbox) manage their own internal scrolling and
    must not let the content column scroll. */
 .content-fill { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 24px; }
@@ -253,10 +264,10 @@ td .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; 
   display: flex; align-items: flex-start; justify-content: center; padding: 48px 16px; overflow-y: auto;
 }
 .modal { background: #fff; border-radius: 12px; width: 100%; max-width: 720px; box-shadow: 0 20px 60px rgba(0,0,0,0.25); }
-.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 2; background: var(--panel); border-radius: 12px 12px 0 0; }
 .modal-header h3 { margin: 0; font-size: 16px; }
 .modal-body { padding: 20px; }
-.modal-footer { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+.modal-footer { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; position: sticky; bottom: 0; z-index: 2; background: var(--panel); border-radius: 0 0 12px 12px; }
 
 /* Filters */
 .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
