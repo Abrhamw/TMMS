@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Star, Trash2, Inbox, ShieldAlert, RotateCcw } from 'lucide-react';
 import { api, fmtDateTime, fmtDate } from '../api';
 import { ErrorNote, Loading, Modal, Page, Pill, PrintButton, SearchField, SearchSelect } from '../components';
 import Comments from '../components/Comments';
@@ -13,6 +14,8 @@ import { ReportView } from './Reports';
 // stream.
 const FOLDERS = [
   { key: 'mailinbox', labelKey: 'mailboxInbox', mail: true },
+  { key: 'junk', labelKey: 'mailboxJunk', mail: true },
+  { key: 'trash', labelKey: 'mailboxTrash', mail: true },
   { key: 'outbox', labelKey: 'mailboxOutbox', mail: true },
   { key: 'mailsent', labelKey: 'mailboxSent', mail: true },
   { key: 'drafts', labelKey: 'mailboxDrafts', mail: true },
@@ -34,7 +37,7 @@ const ACTIVITY_LIST_LIMIT = 5000;
 
 // Server folder keys returned in `mail_counts`, for badge totals that hold even
 // when only the first page of a folder has been loaded.
-const MAIL_COUNT_KEYS = { mailinbox: 'inbox', outbox: 'outbox', mailsent: 'sent', drafts: 'drafts', archive: 'archive' };
+const MAIL_COUNT_KEYS = { mailinbox: 'inbox', junk: 'junk', trash: 'trash', outbox: 'outbox', mailsent: 'sent', drafts: 'drafts', archive: 'archive' };
 
 // Format an ISO timestamp for a `datetime-local` input.
 function toLocalInput(iso) {
@@ -48,6 +51,8 @@ function folderRows(data, folder) {
   if (!data) return [];
   switch (folder) {
     case 'mailinbox': return data.mail_inbox || [];
+    case 'junk': return data.mail_junk || [];
+    case 'trash': return data.mail_trash || [];
     case 'outbox': return data.mail_outbox || [];
     case 'mailsent': return data.mail_sent || [];
     case 'drafts': return data.mail_drafts || [];
@@ -82,8 +87,8 @@ function isMessageFolder(folder) {
 function findMessage(data, key) {
   if (!data || !key) return null;
   const pools = [
-    data.messages, data.unread_messages, data.mail_inbox, data.mail_outbox,
-    data.mail_sent, data.mail_drafts, data.mail_archive,
+    data.messages, data.unread_messages, data.mail_inbox, data.mail_junk, data.mail_trash,
+    data.mail_outbox, data.mail_sent, data.mail_drafts, data.mail_archive,
   ];
   for (const pool of pools) {
     const hit = (pool || []).find((item) => item.key === key);
@@ -134,6 +139,16 @@ export default function Mailbox() {
   const [saveSearchOpen, setSaveSearchOpen] = useState(false);
   const [conversation, setConversation] = useState(null);
   const [selectedForBulk, setSelectedForBulk] = useState(() => new Set());
+  const [undo, setUndo] = useState(null);
+  const [confirmState, setConfirmState] = useState(null);
+
+  function pushUndo(label, undoFn) {
+    const entry = { id: Date.now(), label, undoFn };
+    setUndo(entry);
+    setTimeout(() => setUndo((cur) => (cur && cur.id === entry.id ? null : cur)), 6500);
+  }
+
+  function askConfirm(config) { setConfirmState(config); }
 
   async function loadSearches() {
     try { setSearches(await api.get('/mailbox/searches') || []); } catch (_) { /* optional */ }
@@ -418,7 +433,77 @@ export default function Mailbox() {
       setSelectedForBulk(new Set());
       await load();
       await loadLabels();
+      const back = { archive: 'restore', trash: 'restore', junk: 'not_junk' }[action];
+      if (back) pushUndo(t('mailboxBulkDone'), () => runBulk(back));
     } catch (e) { setError(e.message); }
+  }
+
+  // ---- Per-message filing actions (junk / trash / star / delete) ----
+  function patchMessage(id, patch) {
+    setMailMessage((cur) => (cur && cur.id === id ? { ...cur, ...patch } : cur));
+    setServerPage((cur) => (cur && cur.rows ? { ...cur, rows: cur.rows.map((m) => (m.id === id ? { ...m, ...patch } : m)) } : cur));
+  }
+
+  async function setJunk(id, junk) {
+    try {
+      await api.put(`/mailbox/messages/${id}/junk`, { junk });
+      patchMessage(id, { junked: junk, junk_reason: junk ? 'MANUAL' : null });
+      await load();
+      pushUndo(junk ? t('mailboxMovedToJunk') : t('mailboxMovedToInbox'), () => setJunk(id, !junk));
+    } catch (e) { setError(e.message); }
+  }
+
+  async function setTrash(id, trash) {
+    try {
+      await api.put(`/mailbox/messages/${id}/trash`, { trash });
+      patchMessage(id, { trashed: trash });
+      await load();
+      pushUndo(trash ? t('mailboxMovedToTrash') : t('mailboxRestored'), () => setTrash(id, !trash));
+    } catch (e) { setError(e.message); }
+  }
+
+  async function toggleStar(id, starred) {
+    try {
+      await api.put(`/mailbox/messages/${id}/star`, { starred });
+      patchMessage(id, { starred });
+      await load();
+    } catch (e) { setError(e.message); }
+  }
+
+  async function deleteForever(id) {
+    try {
+      await api.del(`/mailbox/messages/${id}`);
+      if (selectedMessageKey && mailMessage && mailMessage.id === id) setSelectedMessageKey(null);
+      await load();
+    } catch (e) { setError(e.message); }
+  }
+
+  async function emptyTrash() {
+    try {
+      await api.post('/mailbox/trash/empty', {});
+      setSelectedMessageKey(null);
+      await load();
+    } catch (e) { setError(e.message); }
+  }
+
+  function confirmDelete(id) {
+    askConfirm({
+      title: t('mailboxDeleteForever'),
+      body: t('mailboxDeleteForeverBody'),
+      confirmLabel: t('mailboxDeleteForever'),
+      danger: true,
+      onConfirm: () => { setConfirmState(null); deleteForever(id); },
+    });
+  }
+
+  function confirmEmptyTrash() {
+    askConfirm({
+      title: t('mailboxEmptyTrash'),
+      body: t('mailboxEmptyTrashBody'),
+      confirmLabel: t('mailboxEmptyTrash'),
+      danger: true,
+      onConfirm: () => { setConfirmState(null); emptyTrash(); },
+    });
   }
 
   function applySearch(s) {
@@ -469,7 +554,9 @@ export default function Mailbox() {
                   <span>{t(item.labelKey)}</span>
                   {item.key === 'mailinbox' && data.mail_unread_count > 0
                     ? <b className="mail-folder-unread">{data.mail_unread_count}</b>
-                    : <b>{folderCount(data, item.key)}</b>}
+                    : item.key === 'junk' && data.mail_counts?.junk_unread > 0
+                      ? <b className="mail-folder-unread">{data.mail_counts.junk_unread}</b>
+                      : <b>{folderCount(data, item.key)}</b>}
                 </button>
               ))}
             </div>
@@ -517,6 +604,11 @@ export default function Mailbox() {
           <aside className="mailbox-list">
             <div className="mail-list-head">
               <SearchField value={query} onChange={setQuery} placeholder={t('mailboxSearch')} />
+              {folder === 'trash' && (
+                <button type="button" className="btn btn-sm btn-danger mail-empty-trash" onClick={confirmEmptyTrash}>
+                  {t('mailboxEmptyTrash')}
+                </button>
+              )}
             </div>
             {useServerFeed && serverPage && (
               <div className="muted mail-result-count">
@@ -528,6 +620,9 @@ export default function Mailbox() {
                 <span>{selectedForBulk.size} {t('mailboxSelected')}</span>
                 <button type="button" className="btn btn-sm" onClick={() => runBulk('archive')}>{t('mailboxArchiveAction')}</button>
                 <button type="button" className="btn btn-sm" onClick={() => runBulk('unarchive')}>{t('mailboxUnarchiveAction')}</button>
+                <button type="button" className="btn btn-sm" onClick={() => runBulk('junk')}>{t('mailboxJunkAction')}</button>
+                <button type="button" className="btn btn-sm" onClick={() => runBulk('trash')}>{t('mailboxTrashAction')}</button>
+                <button type="button" className="btn btn-sm" onClick={() => runBulk('star')}>{t('mailboxStar')}</button>
                 {labels.length > 0 && (
                   <SearchSelect className="mail-bulk-label" value="" aria-label={t('mailboxAddLabel')}
                     onChange={(e) => { if (e.target.value) runBulk('label_add', Number(e.target.value)); }}>
@@ -548,15 +643,48 @@ export default function Mailbox() {
                     onClick={() => { setCompose(null); setSelectedId(null); setSelectedMessageKey(item.key); }}>
                     <div className="spread">
                       <b>{item.kind === 'MAIL' ? (item.outgoing ? `${t('mailboxTo')}: ${item.recipient}` : item.actor) : item.kind === 'REPORT' ? item.report_code : item.task_number}</b>
-                      <span className="mail-kind">{item.kind === 'MAIL' ? tagLabel(item.category) : item.kind === 'REPORT' ? t('mailboxKindReport') : item.kind === 'COMMENT' ? t('mailboxKindMessage') : t('mailboxKindUpdate')}</span>
+                      <div className="mail-thread-flags">
+                        {item.starred && <Star size={13} className="mail-flag-star" fill="currentColor" />}
+                        <span className="mail-kind">{item.kind === 'MAIL' ? tagLabel(item.category) : item.kind === 'REPORT' ? t('mailboxKindReport') : item.kind === 'COMMENT' ? t('mailboxKindMessage') : t('mailboxKindUpdate')}</span>
+                      </div>
                     </div>
                     {item.unread && <span className="mail-unread">{t('mailboxUnreadOne')}</span>}
                     {item.action_required && <span className="mail-action-badge">{t('mailboxActionRequired')}</span>}
                     <div className="mail-thread-title">{item.subject}</div>
                     <div className="muted mail-thread-meta">{item.kind === 'MAIL' ? `${item.actor} · ${fmtDate(item.at)}` : `${item.actor} · ${fmtDate(item.at)}`}</div>
+                    {item.junked && <span className="mail-junk-chip">{t('mailboxJunkChip')}{item.junk_reason ? `: ${item.junk_reason}` : ''}</span>}
                     <TagChips tags={item.tags} />
                     <div className="mail-thread-last"><span>{item.body}</span></div>
                   </button>
+                  {item.kind === 'MAIL' && (
+                    <div className="mail-thread-actions">
+                      <button type="button" className="mail-icon-btn" title={item.starred ? t('mailboxUnstar') : t('mailboxStar')}
+                        onClick={(e) => { e.stopPropagation(); toggleStar(item.id, !item.starred); }}>
+                        <Star size={14} fill={item.starred ? 'currentColor' : 'none'} />
+                      </button>
+                      <button type="button" className="mail-icon-btn" title={item.junked ? t('mailboxNotJunk') : t('mailboxJunkAction')}
+                        onClick={(e) => { e.stopPropagation(); setJunk(item.id, !item.junked); }}>
+                        {item.junked ? <Inbox size={14} /> : <ShieldAlert size={14} />}
+                      </button>
+                      {item.trashed ? (
+                        <>
+                          <button type="button" className="mail-icon-btn" title={t('mailboxRestore')}
+                            onClick={(e) => { e.stopPropagation(); setTrash(item.id, false); }}>
+                            <RotateCcw size={14} />
+                          </button>
+                          <button type="button" className="mail-icon-btn" title={t('mailboxDeleteForever')}
+                            onClick={(e) => { e.stopPropagation(); confirmDelete(item.id); }}>
+                            <Trash2 size={14} />
+                          </button>
+                        </>
+                      ) : (
+                        <button type="button" className="mail-icon-btn" title={t('mailboxTrashAction')}
+                          onClick={(e) => { e.stopPropagation(); setTrash(item.id, true); }}>
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <button key={item.id} className={'mail-thread' + (selectedId === item.id && !compose ? ' active' : '')}
@@ -614,6 +742,10 @@ export default function Mailbox() {
                 onSend={() => withReload(() => api.post(`/mailbox/messages/${mailMessage.id}/send`, {}))}
                 onArchive={() => withReload(() => api.put(`/mailbox/messages/${mailMessage.id}/archive`, {}))}
                 onUnarchive={() => withReload(() => api.put(`/mailbox/messages/${mailMessage.id}/unarchive`, {}))}
+                onJunk={() => setJunk(mailMessage.id, !mailMessage.junked)}
+                onTrash={() => setTrash(mailMessage.id, !mailMessage.trashed)}
+                onStar={() => toggleStar(mailMessage.id, !mailMessage.starred)}
+                onDelete={() => confirmDelete(mailMessage.id)}
                 onOpenLink={() => { if (mailMessage.link) nav(mailMessage.link); }}
                 onOpenTask={(tid) => nav(`/tasks/${tid}`)}
                 onPreview={setPreview}
@@ -664,6 +796,27 @@ export default function Mailbox() {
           onClose={() => setPreview(null)}
           onOpenTask={(tid) => { setPreview(null); nav(`/tasks/${tid}`); }}
         />
+      )}
+      {undo && (
+        <div className="mail-undo-toast" role="status">
+          <span>{undo.label}</span>
+          <button type="button" className="btn btn-sm" onClick={() => { const fn = undo.undoFn; setUndo(null); fn(); }}>{t('mailboxUndo')}</button>
+          <button type="button" className="mail-undo-x" aria-label={t('close')} onClick={() => setUndo(null)}>{'×'}</button>
+        </div>
+      )}
+      {confirmState && (
+        <div className="mail-confirm-overlay" role="dialog" aria-modal="true">
+          <div className="mail-confirm">
+            <h3>{confirmState.title}</h3>
+            <p className="muted">{confirmState.body}</p>
+            <div className="mail-confirm-actions">
+              <button type="button" className="btn btn-sm" onClick={() => setConfirmState(null)}>{t('cancel')}</button>
+              <button type="button" className={'btn btn-sm' + (confirmState.danger ? ' btn-danger' : '')} onClick={confirmState.onConfirm}>
+                {confirmState.confirmLabel || t('confirm')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </Page>
   );
@@ -783,7 +936,35 @@ function MailAttachmentPreview({ attachment, onClose, onOpenTask }) {
   );
 }
 
-function MailReader({ message, me, onReply, onReplyAll, onForward, onEdit, onSend, onArchive, onUnarchive, onOpenLink, onPreview, onOpenTask, allLabels, onLabels, onAcknowledge, conversation }) {
+function MessageBody({ body }) {
+  const [showQuote, setShowQuote] = useState(false);
+  const text = String(body || '');
+  // Split the readable part from a trailing quoted reply so long threads stay
+  // scannable. The quote is collapsed behind a toggle rather than always shown.
+  const lines = text.split('\n');
+  let cut = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/^\s*>/.test(lines[i])) { cut = i; break; }
+    if (/^On .+ wrote:\s*$/.test(lines[i].trim())) { cut = i; break; }
+  }
+  const main = cut === -1 ? text : lines.slice(0, cut).join('\n');
+  const quote = cut === -1 ? '' : lines.slice(cut).join('\n');
+  return (
+    <div className="mail-body-card">
+      <p className="mail-body-text">{main.trim() || '—'}</p>
+      {quote && (
+        <>
+          <button type="button" className="mail-quote-toggle" onClick={() => setShowQuote((v) => !v)}>
+            {showQuote ? t('mailboxHideQuoted') : t('mailboxShowQuoted')}
+          </button>
+          {showQuote && <pre className="mail-quoted">{quote}</pre>}
+        </>
+      )}
+    </div>
+  );
+}
+
+function MailReader({ message, me, onReply, onReplyAll, onForward, onEdit, onSend, onArchive, onUnarchive, onJunk, onTrash, onStar, onDelete, onOpenLink, onPreview, onOpenTask, allLabels, onLabels, onAcknowledge, conversation }) {
   const [showConversation, setShowConversation] = useState(false);
   const threadMessages = (conversation && conversation.messages) || [];
   const isDraft = message.status === 'DRAFT' || message.status === 'QUEUED';
@@ -819,6 +1000,27 @@ function MailReader({ message, me, onReply, onReplyAll, onForward, onEdit, onSen
             {!isDraft && <button type="button" className="btn btn-sm" onClick={onReply}>{t('mailboxReply')}</button>}
             {!isDraft && canReplyAll && <button type="button" className="btn btn-sm" onClick={onReplyAll}>{t('mailboxReplyAll')}</button>}
             {!isDraft && onForward && <button type="button" className="btn btn-sm" onClick={onForward}>{t('mailboxForward')}</button>}
+            {onStar && (
+              <button type="button" className={'btn btn-sm mail-star-btn' + (message.starred ? ' on' : '')}
+                title={message.starred ? t('mailboxUnstar') : t('mailboxStar')}
+                aria-pressed={!!message.starred} onClick={onStar}>
+                <Star size={15} fill={message.starred ? 'currentColor' : 'none'} />
+                <span className="mail-btn-label">{message.starred ? t('mailboxStarred') : t('mailboxStar')}</span>
+              </button>
+            )}
+            {onJunk && (
+              <button type="button" className="btn btn-sm" onClick={onJunk}>
+                {message.junked ? t('mailboxNotJunk') : t('mailboxJunkAction')}
+              </button>
+            )}
+            {onTrash && (
+              <button type="button" className="btn btn-sm" onClick={onTrash}>
+                {message.trashed ? t('mailboxRestore') : t('mailboxTrashAction')}
+              </button>
+            )}
+            {message.trashed && onDelete && (
+              <button type="button" className="btn btn-sm btn-danger" onClick={onDelete}>{t('mailboxDeleteForever')}</button>
+            )}
             {threadMessages.length > 1 && (
               <button type="button" className={'btn btn-sm' + (showConversation ? ' btn-primary' : '')} onClick={() => setShowConversation((v) => !v)}>
                 {t('mailboxConversation')} ({threadMessages.length})
@@ -882,7 +1084,14 @@ function MailReader({ message, me, onReply, onReplyAll, onForward, onEdit, onSen
         )}
       </header>
       <div className="mail-scroll">
-        <div className="mail-message"><p style={{ whiteSpace: 'pre-wrap' }}>{message.body}</p></div>
+        {message.junked && (
+          <div className="mail-junk-banner">
+            <b>{t('mailboxJunkBanner')}</b>
+            {message.junk_reason && <span className="muted"> · {message.junk_reason}</span>}
+            {onJunk && <button type="button" className="btn btn-sm" onClick={onJunk}>{t('mailboxNotJunk')}</button>}
+          </div>
+        )}
+        <MessageBody body={message.body} />
         {attachments.length > 0 && (
           <div className="mail-attach-reader">
             <div className="mail-attach-reader-title">{t('mailboxAttachments')} ({attachments.length})</div>

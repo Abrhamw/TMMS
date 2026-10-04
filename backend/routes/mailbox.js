@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const { db, get, insertRow, updateRow, byClientRef } = require('../util');
 const { isGlobal, isCrewUser, isOnCrew, hasPerm } = require('../auth');
 const { authorizedCrewIds, taskVisible, commandScope } = require('../authority');
+const { domainOf, evaluateJunk, senderRule } = require('../mail');
 
 const router = express.Router();
 const OPEN = new Set(['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION']);
@@ -411,7 +412,7 @@ function canAddress(user, personId) {
 }
 
 function mailStateFor(userId, messageId) {
-  return db.prepare('SELECT read_at, archived_at FROM message_state WHERE user_id = ? AND message_id = ?').get(userId, messageId) || null;
+  return db.prepare('SELECT read_at, archived_at, deleted_at, junk_at, junk_reason, starred_at, purged_at FROM message_state WHERE user_id = ? AND message_id = ?').get(userId, messageId) || null;
 }
 
 // A thread reference is only valid while the parent message still exists.
@@ -600,20 +601,33 @@ function mailRow(user, m, state) {
     tags: [m.category, m.priority !== 'NORMAL' ? m.priority : null].filter(Boolean),
     unread: incoming && m.status === 'SENT' && !resolved?.read_at,
     archived: !!resolved?.archived_at,
+    starred: !!resolved?.starred_at,
+    trashed: !!resolved?.deleted_at,
+    junked: !!resolved?.junk_at,
+    junk_reason: resolved?.junk_reason || null,
   };
 }
 
 // Folder definitions. Each mail folder is a query over message + the caller's
 // own state, so large mailboxes page on the server instead of in the browser.
+// `deleted`/`junk` are per-account filing flags on message_state.
 const MAIL_FOLDER_DEFS = {
-  mailinbox: { direction: 'in', status: 'SENT', archived: false },
-  outbox: { direction: 'out', status: 'QUEUED', archived: false },
-  mailsent: { direction: 'out', status: 'SENT', archived: false },
-  drafts: { direction: 'out', status: 'DRAFT', archived: false },
-  archive: { direction: 'any', status: null, archived: true },
+  mailinbox: { direction: 'in', status: 'SENT', archived: false, deleted: false, junk: false, purged: false },
+  junk: { direction: 'in', status: 'SENT', archived: false, deleted: false, junk: true, purged: false },
+  outbox: { direction: 'out', status: 'QUEUED', archived: false, deleted: false, purged: false },
+  mailsent: { direction: 'out', status: 'SENT', archived: false, deleted: false, purged: false },
+  drafts: { direction: 'out', status: 'DRAFT', archived: false, deleted: false, purged: false },
+  archive: { direction: 'any', status: null, archived: true, deleted: false, purged: false },
+  trash: { direction: 'any', status: null, deleted: true, purged: false },
   // Any message this account sent or received; used for label views.
-  mailany: { direction: 'any', status: null, archived: null },
+  mailany: { direction: 'any', status: null, archived: null, purged: false },
 };
+
+function mailStatePredicate(sql, params, user, column, present) {
+  const kw = present ? 'EXISTS' : 'NOT EXISTS';
+  sql.value += ` AND ${kw} (SELECT 1 FROM message_state s WHERE s.user_id = ? AND s.message_id = m.id AND s.${column} IS NOT NULL)`;
+  params.push(user.id);
+}
 
 function mailWhere(user, def, opts = {}) {
   const params = [];
@@ -629,12 +643,15 @@ function mailWhere(user, def, opts = {}) {
     params.push(user.id, user.person_id || -1);
   }
   if (def.status) { sql += ' AND m.status = ?'; params.push(def.status); }
-  if (def.archived === true) {
-    sql += ' AND EXISTS (SELECT 1 FROM message_state s WHERE s.user_id = ? AND s.message_id = m.id AND s.archived_at IS NOT NULL)';
-  } else if (def.archived === false) {
-    sql += ' AND NOT EXISTS (SELECT 1 FROM message_state s WHERE s.user_id = ? AND s.message_id = m.id AND s.archived_at IS NOT NULL)';
-  }
-  if (def.archived === true || def.archived === false) params.push(user.id);
+  const ref = { value: sql };
+  if (def.archived === true) mailStatePredicate(ref, params, user, 'archived_at', true);
+  else if (def.archived === false) mailStatePredicate(ref, params, user, 'archived_at', false);
+  if (def.deleted === true) mailStatePredicate(ref, params, user, 'deleted_at', true);
+  else if (def.deleted === false) mailStatePredicate(ref, params, user, 'deleted_at', false);
+  if (def.junk === true) mailStatePredicate(ref, params, user, 'junk_at', true);
+  else if (def.junk === false) mailStatePredicate(ref, params, user, 'junk_at', false);
+  if (def.purged === false) mailStatePredicate(ref, params, user, 'purged_at', false);
+  sql = ref.value;
   if (opts.q) {
     const like = `%${String(opts.q).slice(0, 120)}%`;
     sql += ` AND (m.subject LIKE ? OR m.body LIKE ?
@@ -669,12 +686,55 @@ function mailCounts(user) {
     const where = mailWhere(user, MAIL_FOLDER_DEFS[folder]);
     counts[folder] = db.prepare(`SELECT COUNT(*) c ${where.sql}`).get(...where.params).c;
   }
-  const inbox = mailWhere(user, MAIL_FOLDER_DEFS.mailinbox);
-  counts.mailinbox_unread = db.prepare(
-    `SELECT COUNT(*) c ${inbox.sql}
-       AND NOT EXISTS (SELECT 1 FROM message_state rs WHERE rs.user_id = ? AND rs.message_id = m.id AND rs.read_at IS NOT NULL)`
-  ).get(...inbox.params, user.id).c;
+  const unreadOf = (folder) => {
+    const where = mailWhere(user, MAIL_FOLDER_DEFS[folder]);
+    return db.prepare(
+      `SELECT COUNT(*) c ${where.sql}
+         AND NOT EXISTS (SELECT 1 FROM message_state rs WHERE rs.user_id = ? AND rs.message_id = m.id AND rs.read_at IS NOT NULL)`
+    ).get(...where.params, user.id).c;
+  };
+  counts.mailinbox_unread = unreadOf('mailinbox');
+  counts.junk_unread = unreadOf('junk');
   return counts;
+}
+
+// Lazy, per-account junk classification. Incoming messages that reach this
+// account without any message_state row are evaluated once: a match gets
+// junk_at + junk_reason, everything else gets an empty state row so it is never
+// re-evaluated. An account's Not-junk rules suppress the external/unknown
+// signals but never a spam keyword.
+function classifyIncoming(user) {
+  if (!user.person_id) return;
+  const rows = db.prepare(
+    `SELECT m.id, m.subject, m.body, m.sender_person_id,
+            p.email AS sender_email, p.active AS sender_active
+       FROM message m
+       JOIN message_recipient mrx ON mrx.message_id = m.id AND mrx.person_id = ?
+       LEFT JOIN person p ON p.id = m.sender_person_id
+       LEFT JOIN message_state s ON s.user_id = ? AND s.message_id = m.id
+      WHERE m.status = 'SENT' AND s.message_id IS NULL
+      ORDER BY m.id DESC LIMIT 500`
+  ).all(user.person_id, user.id);
+  if (!rows.length) return;
+  const rules = db.prepare('SELECT match_type, value FROM mail_junk_rule WHERE owner_user_id = ?').all(user.id);
+  const domains = new Set(rules.filter((r) => r.match_type === 'DOMAIN').map((r) => r.value));
+  const senders = new Set(rules.filter((r) => r.match_type === 'SENDER').map((r) => r.value));
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO message_state (user_id, message_id, junk_at, junk_reason) VALUES (?, ?, ?, ?)'
+  );
+  for (const row of rows) {
+    const domain = domainOf(row.sender_email);
+    const allowListed = (!!domain && domains.has(domain)) || (!!row.sender_person_id && senders.has(String(row.sender_person_id)));
+    const { junk, reason } = evaluateJunk({
+      subject: row.subject,
+      body: row.body,
+      senderPersonId: row.sender_person_id,
+      senderEmail: row.sender_email,
+      senderActive: row.sender_active,
+      allowListed,
+    });
+    insert.run(user.id, row.id, junk ? new Date().toISOString() : null, junk ? reason : null);
+  }
 }
 
 function mailVisible(user, id) {
@@ -894,6 +954,111 @@ router.put('/mailbox/messages/:id/unarchive', (req, res) => {
   res.json({ message_id: m.id, archived_at: null });
 });
 
+function upsertState(userId, messageId, column, value) {
+  db.prepare(
+    `INSERT INTO message_state (user_id, message_id, ${column}) VALUES (?, ?, ?)
+     ON CONFLICT(user_id, message_id) DO UPDATE SET ${column} = excluded.${column}`
+  ).run(userId, messageId, value);
+}
+
+function senderInfo(personId) {
+  if (!personId) return { senderEmail: null, senderActive: null };
+  const p = db.prepare('SELECT email, active FROM person WHERE id = ?').get(Number(personId));
+  return { senderEmail: p ? p.email : null, senderActive: p ? p.active : null };
+}
+
+// Junk / not-junk. "Not junk" also remembers the sender so classification never
+// files their future mail automatically.
+router.put('/mailbox/messages/:id/junk', (req, res) => {
+  const m = loadMailVisible(req, res);
+  if (!m) return;
+  const junk = !!(req.body && req.body.junk);
+  if (junk) {
+    upsertState(req.user.id, m.id, 'junk_at', new Date().toISOString());
+    db.prepare('UPDATE message_state SET junk_reason = ? WHERE user_id = ? AND message_id = ?').run('MANUAL', req.user.id, m.id);
+  } else {
+    upsertState(req.user.id, m.id, 'junk_at', null);
+    db.prepare('UPDATE message_state SET junk_reason = NULL WHERE user_id = ? AND message_id = ?').run(req.user.id, m.id);
+    const rule = senderRule({ senderPersonId: m.sender_person_id, senderEmail: senderInfo(m.sender_person_id).senderEmail });
+    if (rule) {
+      db.prepare(
+        'INSERT OR IGNORE INTO mail_junk_rule (owner_user_id, match_type, value, created_at) VALUES (?, ?, ?, ?)'
+      ).run(req.user.id, rule.match_type, rule.value, new Date().toISOString());
+    }
+  }
+  res.json({ message_id: m.id, junked: junk, junk_reason: junk ? 'MANUAL' : null });
+});
+
+router.get('/mailbox/junk-rules', (req, res) => {
+  res.json(db.prepare('SELECT id, match_type, value, created_at FROM mail_junk_rule WHERE owner_user_id = ? ORDER BY created_at DESC').all(req.user.id));
+});
+
+router.delete('/mailbox/junk-rules/:id', (req, res) => {
+  const info = db.prepare('DELETE FROM mail_junk_rule WHERE id = ? AND owner_user_id = ?').run(Number(req.params.id), req.user.id);
+  res.json({ ok: info.changes > 0 });
+});
+
+router.put('/mailbox/messages/:id/trash', (req, res) => {
+  const m = loadMailVisible(req, res);
+  if (!m) return;
+  const trash = !!(req.body && req.body.trash);
+  upsertState(req.user.id, m.id, 'deleted_at', trash ? new Date().toISOString() : null);
+  db.prepare('UPDATE message_state SET purged_at = NULL WHERE user_id = ? AND message_id = ?').run(req.user.id, m.id);
+  res.json({ message_id: m.id, trashed: trash });
+});
+
+router.put('/mailbox/messages/:id/star', (req, res) => {
+  const m = loadMailVisible(req, res);
+  if (!m) return;
+  const starred = !!(req.body && req.body.starred);
+  upsertState(req.user.id, m.id, 'starred_at', starred ? new Date().toISOString() : null);
+  res.json({ message_id: m.id, starred });
+});
+
+function gcAttachments(messageId) {
+  const atts = db.prepare('SELECT stored_name FROM message_attachment WHERE message_id = ? AND stored_name IS NOT NULL').all(messageId);
+  for (const a of atts) {
+    const still = db.prepare('SELECT 1 FROM message_attachment WHERE stored_name = ? LIMIT 1').get(a.stored_name);
+    if (!still) {
+      try { fs.unlinkSync(path.join(UPLOAD_DIR, path.basename(a.stored_name))); } catch (_) { /* non-fatal */ }
+    }
+  }
+}
+
+// Permanent, per-account delete. A recipient loses the message for their person
+// (all their accounts); a sender only hides it from their own folders because the
+// message row must survive for the people who received it.
+function deleteMessageForAccount(user, id) {
+  const m = get('message', Number(id));
+  if (!m) return false;
+  const isRecipient = user.person_id && db.prepare('SELECT 1 FROM message_recipient WHERE message_id = ? AND person_id = ?').get(m.id, user.person_id);
+  if (isRecipient) {
+    db.prepare('DELETE FROM message_recipient WHERE message_id = ? AND person_id = ?').run(m.id, user.person_id);
+    db.prepare('DELETE FROM message_state WHERE user_id = ? AND message_id = ?').run(user.id, m.id);
+  } else if (m.sender_user_id === user.id) {
+    upsertState(user.id, m.id, 'purged_at', new Date().toISOString());
+  } else {
+    return false;
+  }
+  gcAttachments(m.id);
+  return true;
+}
+
+router.delete('/mailbox/messages/:id', (req, res) => {
+  const m = mailParticipant(req.user, req.params.id);
+  if (!m) return res.status(404).json({ error: 'Message not found' });
+  deleteMessageForAccount(req.user, m.id);
+  res.json({ ok: true });
+});
+
+router.post('/mailbox/trash/empty', (req, res) => {
+  const where = mailWhere(req.user, MAIL_FOLDER_DEFS.trash);
+  const ids = db.prepare(`SELECT m.id ${where.sql}`).all(...where.params).map((r) => r.id);
+  let deleted = 0;
+  for (const id of ids) if (deleteMessageForAccount(req.user, id)) deleted++;
+  res.json({ ok: true, deleted });
+});
+
 // Serve a stored attachment to anyone who can see its parent message.
 router.get('/mailbox/attachments/:attId/file', (req, res) => {
   const att = db.prepare('SELECT * FROM message_attachment WHERE id = ?').get(Number(req.params.attId));
@@ -1000,6 +1165,7 @@ router.get('/mailbox/attachments/catalog', (req, res) => {
 router.get('/mailbox', (req, res) => {
   const user = req.user;
   processOutbox();
+  classifyIncoming(user);
   const tasks = taskRows(user);
   // The inbox is everything open that reaches this account: `taskRows` already
   // applies the chain-of-command visibility (a crew sees its crew's work, a
@@ -1035,6 +1201,8 @@ router.get('/mailbox', (req, res) => {
     mail_sent: firstPage('mailsent'),
     mail_drafts: firstPage('drafts'),
     mail_archive: firstPage('archive'),
+    mail_junk: firstPage('junk'),
+    mail_trash: firstPage('trash'),
     mail_unread_count: counts.mailinbox_unread,
     mail_counts: {
       inbox: counts.mailinbox,
@@ -1042,7 +1210,10 @@ router.get('/mailbox', (req, res) => {
       sent: counts.mailsent,
       drafts: counts.drafts,
       archive: counts.archive,
+      junk: counts.junk,
+      trash: counts.trash,
       unread: counts.mailinbox_unread,
+      junk_unread: counts.junk_unread,
     },
   });
 });
@@ -1050,6 +1221,7 @@ router.get('/mailbox', (req, res) => {
 router.get('/mailbox/summary', (req, res) => {
   const user = req.user;
   processOutbox();
+  classifyIncoming(user);
   const tasks = taskRows(user);
   const messages = messagesFor(user, tasks);
   const unread = messages.filter((message) => message.unread);
@@ -1071,6 +1243,8 @@ router.get('/mailbox/summary', (req, res) => {
     mail_sent_count: counts.mailsent,
     mail_drafts_count: counts.drafts,
     mail_archive_count: counts.archive,
+    mail_junk_count: counts.junk,
+    mail_trash_count: counts.trash,
     mail_unread_count: mailUnread,
   });
 });
@@ -1080,6 +1254,7 @@ router.get('/mailbox/summary', (req, res) => {
 router.get('/mailbox/folder', (req, res) => {
   processOutbox();
   const user = req.user;
+  classifyIncoming(user);
   const page = queryMailFolder(user, {
     folder: String(req.query.folder || 'mailinbox'),
     q: String(req.query.q || '').trim(),
@@ -1200,7 +1375,30 @@ router.post('/mailbox/messages/bulk', (req, res) => {
   if (!visible.length) return res.json({ ok: true, count: 0 });
   const now = new Date().toISOString();
   let count = 0;
-  if (action === 'archive' || action === 'unarchive') {
+  const stateAction = {
+    junk: ['junk_at', now, 'junk_reason', 'MANUAL'],
+    not_junk: ['junk_at', null, 'junk_reason', null],
+    trash: ['deleted_at', now],
+    restore: ['deleted_at', null],
+    star: ['starred_at', now],
+    unstar: ['starred_at', null],
+  }[action];
+  if (stateAction) {
+    for (const id of visible) {
+      upsertState(req.user.id, id, stateAction[0], stateAction[1]);
+      if (action === 'junk') db.prepare('UPDATE message_state SET junk_reason = ? WHERE user_id = ? AND message_id = ?').run('MANUAL', req.user.id, id);
+      if (action === 'not_junk') {
+        db.prepare('UPDATE message_state SET junk_reason = NULL WHERE user_id = ? AND message_id = ?').run(req.user.id, id);
+        const msg = get('message', id);
+        const rule = msg && senderRule({ senderPersonId: msg.sender_person_id, senderEmail: senderInfo(msg.sender_person_id).senderEmail });
+        if (rule) db.prepare('INSERT OR IGNORE INTO mail_junk_rule (owner_user_id, match_type, value, created_at) VALUES (?, ?, ?, ?)').run(req.user.id, rule.match_type, rule.value, now);
+      }
+      if (action === 'trash' || action === 'restore') db.prepare('UPDATE message_state SET purged_at = NULL WHERE user_id = ? AND message_id = ?').run(req.user.id, id);
+      count++;
+    }
+  } else if (action === 'delete') {
+    for (const id of visible) if (deleteMessageForAccount(req.user, id)) count++;
+  } else if (action === 'archive' || action === 'unarchive') {
     const archivedAt = action === 'archive' ? now : null;
     for (const id of visible) {
       db.prepare(

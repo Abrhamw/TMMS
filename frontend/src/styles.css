@@ -1125,6 +1125,35 @@ a.patch-chip:hover { border-color: var(--primary); color: var(--primary); }
 .mail-preview-img { max-width: 100%; height: auto; }
 .mail-preview-text { max-height: 70vh; overflow: auto; margin: 0; padding: 12px; border: 1px solid var(--border); background: #f8fafc; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 
+/* Junk / trash filing actions */
+.mail-thread-wrap { position: relative; }
+.mail-thread-actions { position: absolute; top: 8px; right: 8px; display: none; gap: 2px; }
+.mail-thread-wrap:hover .mail-thread-actions, .mail-thread-wrap:focus-within .mail-thread-actions { display: flex; }
+.mail-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--muted); cursor: pointer; }
+.mail-icon-btn:hover { color: var(--text); background: #f1f5f9; }
+.mail-thread-flags { display: inline-flex; align-items: center; gap: 4px; }
+.mail-flag-star { color: #d97706; }
+.mail-junk-chip { display: inline-block; margin-top: 4px; padding: 1px 6px; border-radius: 999px; background: #fef3c7; color: #92400e; font-size: 11px; }
+.mail-junk-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; padding: 8px 10px; border: 1px solid #fde68a; border-radius: 8px; background: #fffbeb; color: #92400e; font-size: 13px; }
+.mail-body-card { max-width: 760px; padding: 12px 14px; border: 1px solid var(--border); background: #fff; }
+.mail-body-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mail-quote-toggle { margin-top: 10px; padding: 0; border: 0; background: transparent; color: var(--primary); font: inherit; font-size: 12px; cursor: pointer; }
+.mail-quoted { margin: 8px 0 0; padding: 8px 10px; border-left: 3px solid var(--border); background: #f8fafc; color: var(--muted); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mail-star-btn.on { color: #d97706; border-color: #fcd34d; }
+.mail-star-btn { display: inline-flex; align-items: center; gap: 5px; }
+.mail-undo-toast { position: fixed; left: 50%; bottom: 22px; z-index: 60; display: flex; align-items: center; gap: 10px; padding: 10px 12px; transform: translateX(-50%); border-radius: 10px; background: #0f172a; color: #fff; box-shadow: 0 10px 30px rgba(15,23,42,.3); font-size: 13px; }
+.mail-undo-toast .btn { color: #fff; border-color: rgba(255,255,255,.35); background: transparent; }
+.mail-undo-x { border: 0; background: transparent; color: #cbd5e1; font-size: 18px; line-height: 1; cursor: pointer; }
+.mail-confirm-overlay { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(15,23,42,.45); }
+.mail-confirm { width: min(420px, 100%); padding: 18px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border); }
+.mail-confirm h3 { margin: 0 0 8px; font-size: 16px; }
+.mail-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.mail-empty-trash { white-space: nowrap; }
+.dark .mail-body-card, .dark .mail-quoted { background: var(--surface-1); }
+.dark .mail-junk-banner { background: rgba(180,83,9,.18); border-color: rgba(253,224,71,.35); color: #fcd34d; }
+.dark .mail-junk-chip { background: rgba(180,83,9,.25); color: #fcd34d; }
+.dark .mail-icon-btn:hover { background: var(--surface-2); }
+
 /* Executive portfolio summary */
 .executive-brief { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 4px 0 14px; border-bottom: 1px solid var(--border); }
 .executive-brief h1 { margin: 3px 0 0; font-size: 22px; }

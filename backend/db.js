@@ -660,14 +660,32 @@ function initSchema() {
     UNIQUE(owner_user_id, name)
   );
 
-  -- Per-account mailbox state (read receipt, archive filing) for directed mail.
+  -- Per-account mailbox state (read receipt, archive filing, junk/trash filing,
+  -- starring) for directed mail.
   CREATE TABLE IF NOT EXISTS message_state (
     user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
     message_id INTEGER NOT NULL REFERENCES message(id) ON DELETE CASCADE,
     read_at TEXT,
     archived_at TEXT,
+    deleted_at TEXT,
+    junk_at TEXT,
+    junk_reason TEXT,
+    starred_at TEXT,
+    purged_at TEXT,
     PRIMARY KEY (user_id, message_id)
   );
+
+  -- A "Not junk" memory: senders/domains an account has explicitly rescued, so
+  -- automatic classification never files future mail from them again.
+  CREATE TABLE IF NOT EXISTS mail_junk_rule (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    match_type TEXT NOT NULL,
+    value TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(owner_user_id, match_type, value)
+  );
+  CREATE INDEX IF NOT EXISTS idx_mail_junk_rule_owner ON mail_junk_rule(owner_user_id);
 
   -- Documents attached to a directed mail. An attachment is either a reference
   -- to an existing entity (report, execution, task, asset document, ...) carried
@@ -882,6 +900,14 @@ function initSchema() {
   migrate('inspection_trace_point', 'client_ref', 'ALTER TABLE inspection_trace_point ADD COLUMN client_ref TEXT');
   migrate('message_recipient', 'delivered_at', 'ALTER TABLE message_recipient ADD COLUMN delivered_at TEXT');
   migrate('message_recipient', 'acknowledged_at', 'ALTER TABLE message_recipient ADD COLUMN acknowledged_at TEXT');
+  // Junk/trash/star filing for directed mail lives on the per-account state row.
+  migrate('message_state', 'deleted_at', 'ALTER TABLE message_state ADD COLUMN deleted_at TEXT');
+  migrate('message_state', 'junk_at', 'ALTER TABLE message_state ADD COLUMN junk_at TEXT');
+  migrate('message_state', 'junk_reason', 'ALTER TABLE message_state ADD COLUMN junk_reason TEXT');
+  migrate('message_state', 'starred_at', 'ALTER TABLE message_state ADD COLUMN starred_at TEXT');
+  // A permanently removed message leaves a purged marker for senders (whose
+  // message row must survive for recipients) so it stops showing in Trash/Sent.
+  migrate('message_state', 'purged_at', 'ALTER TABLE message_state ADD COLUMN purged_at TEXT');
   // A line inspection may be split across crews: a section task carries the
   // inclusive tower range it is responsible for.
   migrate('task', 'tower_from_id', 'ALTER TABLE task ADD COLUMN tower_from_id INTEGER REFERENCES tower(id)');
