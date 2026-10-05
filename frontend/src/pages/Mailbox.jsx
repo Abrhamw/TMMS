@@ -737,7 +737,21 @@ export default function Mailbox() {
                 <button type="button" className="btn btn-sm" onClick={() => runBulk('archive')}>{t('mailboxArchiveAction')}</button>
                 <button type="button" className="btn btn-sm" onClick={() => runBulk('unarchive')}>{t('mailboxUnarchiveAction')}</button>
                 <button type="button" className="btn btn-sm" onClick={() => runBulk('junk')}>{t('mailboxJunkAction')}</button>
-                <button type="button" className="btn btn-sm" onClick={() => runBulk('trash')}>{t('mailboxTrashAction')}</button>
+                {folder !== 'trash' && (
+                  <button type="button" className="btn btn-sm" onClick={() => runBulk('trash')}>{t('mailboxTrashAction')}</button>
+                )}
+                {folder === 'trash' && (
+                  <>
+                    <button type="button" className="btn btn-sm" onClick={() => runBulk('restore')}>{t('mailboxRestore')}</button>
+                    <button type="button" className="btn btn-sm btn-danger" onClick={() => askConfirm({
+                      title: t('mailboxDeleteForever'),
+                      body: t('mailboxDeleteForeverBody'),
+                      confirmLabel: t('mailboxDeleteForever'),
+                      danger: true,
+                      onConfirm: () => { setConfirmState(null); runBulk('delete'); },
+                    })}>{t('mailboxDeleteForever')}</button>
+                  </>
+                )}
                 <button type="button" className="btn btn-sm" onClick={() => runBulk('star')}>{t('mailboxStar')}</button>
                 {labels.length > 0 && (
                   <SearchSelect className="mail-bulk-label" value="" aria-label={t('mailboxAddLabel')}
