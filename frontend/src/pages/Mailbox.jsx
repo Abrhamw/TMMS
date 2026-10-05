@@ -78,6 +78,9 @@ function folderRows(data, folder) {
 
 function folderCount(data, folder) {
   if (!data) return 0;
+  // The Unread view mixes the activity stream with the first page of directed
+  // mail, so its server total (`unread_count`) is the authoritative badge.
+  if (folder === 'unread') return data.unread_count || 0;
   // Directed-mail folders page on the server, so trust the server total even
   // before their first page is loaded. Every activity folder is derived from
   // the payload arrays, so count its rows directly — that keeps the badge in
@@ -257,6 +260,7 @@ export default function Mailbox() {
             if (!alive) return;
             setData((current) => markMailRead(current, message.id));
             setServerPage((cur) => (cur ? { ...cur, rows: cur.rows.map((m) => (m.id === message.id ? { ...m, unread: false } : m)) } : cur));
+            load();
           }).catch(() => {});
         }
         return () => { alive = false; };
@@ -273,6 +277,7 @@ export default function Mailbox() {
           sent: current.sent.map((item) => item.id === message.task_id ? { ...item, unread_count: Math.max(0, item.unread_count - (message.unread ? 1 : 0)), unread: item.unread_count > 1 } : item),
           history: current.history.map((item) => item.id === message.task_id ? { ...item, unread_count: Math.max(0, item.unread_count - (message.unread ? 1 : 0)), unread: item.unread_count > 1 } : item),
         } : current);
+        load();
       }).catch(() => {});
       if (message.kind === 'REPORT') {
         setThread(null);
@@ -302,6 +307,7 @@ export default function Mailbox() {
         key,
         Array.isArray(rows) ? rows.map((item) => item.id === selectedId ? { ...item, unread: false } : item) : rows,
       ])) : current);
+      load();
     }).catch(() => {});
     api.get(`/mailbox/${selectedId}`).then((result) => {
       if (alive) { setThread(result); setError(null); }
@@ -494,6 +500,14 @@ export default function Mailbox() {
     } catch (e) { setError(e.message); }
   }
 
+  async function markAllRead() {
+    try {
+      await api.put('/mailbox/read-all', {});
+      setSelectedForBulk(new Set());
+      await load();
+    } catch (e) { setError(e.message); }
+  }
+
   function confirmDelete(id) {
     askConfirm({
       title: t('mailboxDeleteForever'),
@@ -643,6 +657,11 @@ export default function Mailbox() {
               {t('mailboxShortcuts')}
             </button>
             <div className="mailbox-unread-total"><b>{data.unread_count || 0}</b> {t('mailboxUnreadTotal')}</div>
+            {data.unread_count > 0 && (
+              <button type="button" className="mail-mark-all-btn" onClick={markAllRead}>
+                {t('mailboxMarkAllRead')}
+              </button>
+            )}
             <div className="mailbox-folders" role="tablist" aria-label="Mailbox folders">
               {folders.map((item) => (
                 <button key={item.key} className={'mail-folder' + (folder === item.key && !compose && !labelView ? ' active' : '')}

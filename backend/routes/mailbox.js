@@ -1542,6 +1542,36 @@ router.put('/mailbox/message/:messageKey/read', (req, res) => {
   res.json({ message_key: key, read_at: readAt });
 });
 
+router.put('/mailbox/read-all', (req, res) => {
+  const user = req.user;
+  const readAt = new Date().toISOString();
+  let mailMarked = 0;
+  if (user.person_id) {
+    const info = db.prepare(
+      `INSERT INTO message_state (user_id, message_id, read_at)
+       SELECT ?, m.id, ?
+         FROM message m
+         JOIN message_recipient mrx ON mrx.message_id = m.id AND mrx.person_id = ?
+         LEFT JOIN message_state s ON s.user_id = ? AND s.message_id = m.id
+        WHERE m.status = 'SENT' AND (s.message_id IS NULL OR s.read_at IS NULL)
+       ON CONFLICT(user_id, message_id) DO UPDATE SET read_at = excluded.read_at`
+    ).run(user.id, readAt, user.person_id, user.id);
+    mailMarked = info.changes;
+    db.prepare('UPDATE message_recipient SET read_at = COALESCE(read_at, ?) WHERE person_id = ?')
+      .run(readAt, user.person_id);
+  }
+  const tasks = taskRows(user);
+  const messages = messagesFor(user, tasks);
+  const mark = db.prepare('INSERT INTO mailbox_message_read (user_id, message_key, read_at) VALUES (?, ?, ?) ON CONFLICT(user_id, message_key) DO UPDATE SET read_at = excluded.read_at');
+  const markTask = db.prepare('INSERT INTO mailbox_read (user_id, task_id, read_at) VALUES (?, ?, ?) ON CONFLICT(user_id, task_id) DO UPDATE SET read_at = excluded.read_at');
+  let activityMarked = 0;
+  for (const message of messages) {
+    if (message.unread) { mark.run(user.id, message.key, readAt); activityMarked += 1; }
+  }
+  for (const task of tasks) markTask.run(user.id, task.id, readAt);
+  res.json({ read_at: readAt, mail_marked: mailMarked, activity_marked: activityMarked });
+});
+
 module.exports = router;
 // Exposed so the server can sweep scheduled mail on a timer.
 module.exports.processOutbox = processOutbox;

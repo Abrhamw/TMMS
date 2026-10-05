@@ -187,3 +187,26 @@ test('bulk junk and not_junk act on a selection', async () => {
   const ids = inbox.rows.map((r) => r.id);
   assert.ok(ids.includes(a) && ids.includes(b));
 });
+
+test('read-all clears unread counts for inbox mail', async () => {
+  resetInternalDomains();
+  const recPerson = person('Rec7', 'rec7@tmms.local');
+  const recUser = user('rec7', recPerson);
+  const internalPerson = person('Int7', 'int7@tmms.local');
+  const internalUser = user('int7', internalPerson);
+  const userObj = { id: recUser, person_id: recPerson, role: 'FIELD' };
+  const id = send(internalUser, internalPerson, recPerson, 'Unread me', 'body');
+
+  const before = await get('/mailbox/summary', userObj);
+  assert.ok(before.mail_unread_count >= 1);
+  assert.ok(before.unread_count >= 1);
+
+  await put('/mailbox/read-all', {}, userObj);
+  const after = await get('/mailbox/summary', userObj);
+  assert.strictEqual(after.mail_unread_count, 0);
+  assert.strictEqual(after.unread_count, 0);
+
+  const inbox = await get('/mailbox/folder?folder=mailinbox', userObj);
+  assert.ok(inbox.rows.some((r) => r.id === id));
+  assert.ok(!inbox.rows.some((r) => r.id === id && r.unread));
+});
