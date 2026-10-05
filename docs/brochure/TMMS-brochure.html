@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TMMS — Transmission Asset Management System</title>
+<style>
+  :root{
+    --green:#1f6f4a; --green2:#2f8f63; --ink:#0f172a; --muted:#5b6b7c;
+    --line:#e2e8f0; --bg:#f8fafc; --amber:#d97706; --blue:#2563eb; --violet:#7c3aed;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:#e5e9ee;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .page{
+    width:210mm;min-height:297mm;background:#fff;margin:0 auto;position:relative;
+    padding:16mm 15mm 14mm;overflow:hidden;page-break-after:always;
+  }
+  .page:last-child{page-break-after:auto}
+  .kicker{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--green);font-weight:700}
+  h1{font-size:40px;line-height:1.06;margin:8px 0 10px;letter-spacing:-.5px}
+  h2{font-size:26px;line-height:1.12;margin:0 0 8px;letter-spacing:-.3px}
+  h3{font-size:15px;margin:0 0 4px}
+  p{font-size:11.5px;line-height:1.62;color:#334155;margin:0 0 9px}
+  .lead{font-size:13px;color:#475569;line-height:1.6}
+  .muted{color:var(--muted)}
+  .rule{height:3px;width:52px;background:var(--green);border-radius:2px;margin:10px 0 16px}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:9mm}
+  .cols3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6mm}
+  .shot{width:100%;border:1px solid var(--line);border-radius:9px;display:block;box-shadow:0 6px 18px rgba(15,23,42,.08)}
+  .cap{font-size:9px;color:var(--muted);margin:5px 0 12px;letter-spacing:.02em}
+  .card{border:1px solid var(--line);border-radius:11px;padding:11px 13px;background:#fff}
+  .card.tint{background:linear-gradient(180deg,#f1f8f3,#ffffff);border-color:#d5e7dc}
+  .icon{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:15px;color:#fff;font-weight:800;margin-bottom:7px}
+  ul{margin:0 0 8px;padding-left:16px}
+  li{font-size:11.5px;line-height:1.6;color:#334155;margin-bottom:4px}
+  .pill{display:inline-block;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--green);border:1px solid #cfe3d8;background:#eef7f1;border-radius:20px;padding:3px 9px;margin:0 4px 4px 0}
+  .cover{background:linear-gradient(135deg,#0b3d2a 0%,#0f172a 62%,#111827 100%);color:#fff;padding:0;overflow:hidden}
+  .cover .inner{position:relative;z-index:2;padding:22mm 16mm 0}
+  .cover h1{font-size:52px;color:#fff;margin:6px 0 12px}
+  .cover .lead{color:#c7d6cd;font-size:13.5px;max-width:145mm}
+  .cover .kicker{color:#7fd0a3}
+  .hero{border-radius:12px;border:1px solid rgba(255,255,255,.18);box-shadow:0 18px 50px rgba(0,0,0,.45)}
+  .cover-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:5mm;margin-top:9mm}
+  .cover-stat{border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05);border-radius:11px;padding:10px 11px}
+  .cover-stat b{display:block;font-size:26px;color:#8fe0b4;line-height:1}
+  .cover-stat span{font-size:9.5px;color:#c7d6cd;letter-spacing:.04em}
+  .foot{position:absolute;left:15mm;right:15mm;bottom:7mm;display:flex;justify-content:space-between;font-size:8.5px;color:#94a3b8;letter-spacing:.08em;border-top:1px solid var(--line);padding-top:5px;text-transform:uppercase}
+  .cover .foot{color:#7f9a8b;border-color:rgba(255,255,255,.14)}
+  .band{background:linear-gradient(135deg,#0b3d2a,#0f172a);color:#fff;border-radius:12px;padding:14px 16px;margin-top:4mm}
+  .band h2{color:#fff}
+  .band p{color:#c7d6cd}
+  .toc-row{display:flex;align-items:baseline;gap:8px;border-bottom:1px dashed var(--line);padding:6px 0}
+  .toc-row b{font-size:12px}
+  .toc-row span{font-size:10px;color:var(--muted);margin-left:auto}
+  .num{font-size:11px;font-weight:800;color:var(--green);width:22px}
+  .quote{font-size:14px;font-style:italic;color:var(--green);border-left:3px solid var(--green);padding-left:10px;margin:6px 0 12px;line-height:1.5}
+</style>
+</head>
+<body>
+
+<!-- ============================ COVER ============================ -->
+<section class="page cover">
+  <div class="inner">
+    <div class="kicker">Transmission Asset Management System</div>
+    <h1>Every tower.<br>Every task.<br>Every proof.</h1>
+    <p class="lead">TMMS is a geographic, asset-centric operations platform for high-voltage transmission
+      networks. It keeps one authoritative record of every asset and location, and drives each piece of
+      work through a closed loop: <b style="color:#8fe0b4">Plan → Dispatch → Execute → Document → Verify</b>.</p>
+    <img class="shot hero" src="img/06-map.png" alt="Integrated map">
+    <div class="cover-stats">
+      <div class="cover-stat"><b>12,148</b><span>Georeferenced assets</span></div>
+      <div class="cover-stat"><b>13</b><span>Regions managed</span></div>
+      <div class="cover-stat"><b>6</b><span>Lifecycle stages</span></div>
+      <div class="cover-stat"><b>1</b><span>Source of truth</span></div>
+    </div>
+  </div>
+  <div class="foot"><span>TMMS Product Brochure</span><span>Geographic · Asset-centric · Auditable</span></div>
+</section>
+
+<!-- ============================ WHY ============================ -->
+<section class="page">
+  <div class="kicker">Why TMMS</div>
+  <h1>One closed loop<br>from plan to proof</h1>
+  <div class="rule"></div>
+  <p class="lead">Utilities rarely fail for lack of work orders. They fail because the plan, the dispatch,
+    the field evidence and the verification live in separate places — so nobody can prove what happened,
+    where, or when. TMMS closes that loop in a single georeferenced system.</p>
+  <img class="shot" src="img/diagram-closed-loop.png" alt="Closed maintenance loop">
+  <div class="cols3" style="margin-top:6mm">
+    <div class="card tint"><div class="icon" style="background:var(--green)">1</div>
+      <h3>Georeferenced by default</h3><p>Every substation, line, tower and asset carries coordinates. Locations are verified, not trusted.</p></div>
+    <div class="card tint"><div class="icon" style="background:var(--blue)">2</div>
+      <h3>Accountable to the person</h3><p>Each stage has one owner. The verifier can never be the executor, and every action is logged.</p></div>
+    <div class="card tint"><div class="icon" style="background:var(--amber)">3</div>
+      <h3>Nothing disappears</h3><p>Recurring work is automated, evidence is retained, and closed work feeds the next plan.</p></div>
+  </div>
+  <div class="band">
+    <h2>Built for the field, trusted by the board</h2>
+    <p style="margin:0">A crew sees only its assigned work. A manager sees the crews it commands. A director
+      sees the region. An executive sees the whole network — the same data, filtered by role, never duplicated.</p>
+  </div>
+  <div class="foot"><span>TMMS Product Brochure</span><span>02</span></div>
+</section>
+
+<!-- ============================ COMMAND CENTER ============================ -->
+<section class="page">
+  <div class="kicker">The command center</div>
+  <h2>A home that tells each role exactly what to do</h2>
+  <div class="rule"></div>
+  <p>Every signed-in user gets a function banner and one card per task bucket their role owns — <b>execute</b>,
+    <b>schedule</b>, <b>assign</b>, <b>verify</b> or <b>review</b>. Buckets are separate sections, never merged
+    into one queue, so scheduling, assignment, execution and verification never mix.</p>
+  <img class="shot" src="img/03-home.png" alt="Home">
+  <div class="cap">Home — role-scoped buckets with live counts and collapsible sub-categories.</div>
+  <div class="cols">
+    <div><img class="shot" src="img/04-dashboard.png" alt="Dashboard"><div class="cap">Dashboard — operational overview.</div></div>
+    <div><img class="shot" src="img/17-organization.png" alt="Organization"><div class="cap">Organization — each unit's function and the role that heads it.</div></div>
+  </div>
+  <div class="foot"><span>TMMS Product Brochure</span><span>03</span></div>
+</section>
+
+<!-- ============================ MAP + GPS ============================ -->
+<section class="page">
+  <div class="kicker">Geospatial intelligence</div>
+  <h2>See the whole network, then prove you were there</h2>
+  <div class="rule"></div>
+  <p>Satellite and vector layers plot substations, transmission lines and towers with live inspection coverage.
+    Field capture records a GPS point against the expected device location, so a completed step carries proof
+    of presence — not just a claim.</p>
+  <img class="shot" src="img/06-map.png" alt="Integrated map">
+  <div class="cap">Integrated map — substations, line corridors and asset coverage in one view.</div>
+  <div class="cols">
+    <div><img class="shot" src="img/23-task-detail.png" alt="Task route"><div class="cap">Task route — line coverage, crew path and progress.</div></div>
+    <div><img class="shot" src="img/19-gps.png" alt="GPS validation"><div class="cap">GPS validation — capture against device tolerance.</div></div>
+  </div>
+  <div class="cols3" style="margin-top:5mm">
+    <div class="card"><h3>Geofences</h3><p>Coordinates are checked against the real world before they are trusted.</p></div>
+    <div class="card"><h3>Coverage</h3><p>Line and tower inspection progress computed automatically.</p></div>
+    <div class="card"><h3>Violations</h3><p>Out-of-tolerance captures are reviewable and auditable.</p></div>
+  </div>
+  <div class="foot"><span>TMMS Product Brochure</span><span>04</span></div>
+</section>
+
+<!-- ============================ ASSETS ============================ -->
+<section class="page">
+  <div class="kicker">Infrastructure registry</div>
+  <h2>One authoritative record of every asset</h2>
+  <div class="rule"></div>
+  <p>Regions, substations, transmission lines, towers, components and equipment are modelled as one connected
+    tree. Condition scores, class mix, per-region distribution and the top degrading assets are computed from
+    the same source of truth that drives the map and the work.</p>
+  <img class="shot" src="img/24-assets-register.png" alt="Assets overview">
+  <div class="cap">Assets overview — condition distribution, mix by class, by region and top degradation.</div>
+  <div class="cols">
+    <div><img class="shot" src="img/07-assets.png" alt="Assets register"><div class="cap">Asset register — paged, filtered, exportable.</div></div>
+    <div><img class="shot" src="img/15-value.png" alt="Value and cost"><div class="cap">The same register carries replacement cost and condition-adjusted value.</div></div>
+  </div>
+  <div class="foot"><span>TMMS Product Brochure</span><span>05</span></div>
+</section>
+
+<!-- ============================ TASKS ============================ -->
+<section class="page">
+  <div class="kicker">Tasks &amp; workflow</div>
+  <h2>A lifecycle with one owner at every step</h2>
+  <div class="rule"></div>
+  <p>Work moves through six accountable stages and cannot skip one. Checklist or GPS gates block completion
+    until the evidence is complete, and the verifier can never be the person who executed the task.</p>
+  <img class="shot" src="img/diagram-lifecycle.png" alt="Task lifecycle">
+  <div class="cols" style="margin-top:5mm">
+    <div><img class="shot" src="img/08-tasks.png" alt="Tasks"><div class="cap">Task list — full list with filtering and bulk work.</div></div>
+    <div><img class="shot" src="img/25-task-checklist.png" alt="Task evidence"><div class="cap">Task evidence — checklist executions, photos, signature and document.</div></div>
+  </div>
+  <div class="cols3" style="margin-top:5mm">
+    <div class="card"><h3>Emergency path</h3><p>A task can be raised straight to ASSIGNED, skipping draft and calendar.</p></div>
+    <div class="card"><h3>Follow-up work</h3><p>Failed evidence auto-suggests corrective or emergency follow-ups.</p></div>
+    <div class="card"><h3>Dispatch eligibility</h3><p>Skills and certifications are checked before a crew is assigned.</p></div>
+  </div>
+  <div class="foot"><span>TMMS Product Brochure</span><span>06</span></div>
+</section>
+
+<!-- ============================ FIELD OPS ============================ -->
+<section class="page">
+  <div class="kicker">Field operations</div>
+  <h2>Crews, schedules, checklists and certifications</h2>
+  <div class="rule"></div>
+  <p>Recurring maintenance is planned once and generated automatically. Crews execute standardised checklists
+    step by step, and the platform knows who holds which qualification and when it expires.</p>
+  <div class="cols">
+    <div><img class="shot" src="img/09-crews.png" alt="Crews"><div class="cap">Crews — members, skills and certifications.</div></div>
+    <div><img class="shot" src="img/10-schedules.png" alt="Schedules"><div class="cap">Schedules — recurrence rules and generation.</div></div>
+  </div>
+  <div class="cols" style="margin-top:5mm">
+    <div><img class="shot" src="img/11-checklists.png" alt="Checklists"><div class="cap">Checklists — templates and step-by-step execution.</div></div>
+    <div><img class="shot" src="img/12-certifications.png" alt="Certifications"><div class="cap">Certifications — qualification and expiry tracking.</div></div>
+  </div>
+  <div class="foot"><span>TMMS Product Brochure</span><span>07</span></div>
+</section>
+
+<!-- ============================ MAILBOX / REPORTS ============================ -->
+<section class="page">
+  <div class="kicker">Communication &amp; evidence</div>
+  <h2>Every task update, message and report in one inbox</h2>
+  <div class="rule"></div>
+  <p>The mailbox is the collaboration spine of the operation: task updates, direct messages and generated
+    reports arrive as a single, searchable activity stream, with folders, labels and saved searches.</p>
+  <img class="shot" src="img/13-mailbox.png" alt="Task mailbox">
+  <div class="cap">Task mailbox — 623 activity records across folders, labels and saved searches.</div>
+  <div class="cols">
+    <div><img class="shot" src="img/14-reports.png" alt="Reports"><div class="cap">Reports — operational and compliance outputs.</div></div>
+    <div><img class="shot" src="img/16-admin.png" alt="Admin reports"><div class="cap">Administration — reports, users and governance.</div></div>
+  </div>
+  <div class="foot"><span>TMMS Product Brochure</span><span>08</span></div>
+</section>
+
+<!-- ============================ EXECUTIVE + ORG ============================ -->
+<section class="page">
+  <div class="kicker">Oversight</div>
+  <h2>Executive clarity, organisational discipline</h2>
+  <div class="rule"></div>
+  <p>An executive summary distils critical overdue work, GPS violations, expiring certifications and cost
+    into a single board-ready view. The organisation model keeps each unit's function and the role that heads
+    it explicit — so authority is never ambiguous.</p>
+  <div class="cols">
+    <div><img class="shot" src="img/05-executive.png" alt="Executive summary"><div class="cap">Executive summary — risks, compliance and value.</div></div>
+    <div><img class="shot" src="img/22-executive-dark.png" alt="Executive summary dark"><div class="cap">Dark theme for control-room and after-hours review.</div></div>
+  </div>
+  <img class="shot" src="img/diagram-roles.png" alt="One function per role" style="margin-top:5mm">
+  <div class="foot"><span>TMMS Product Brochure</span><span>09</span></div>
+</section>
+
+<!-- ============================ ARCHITECTURE + CLOSE ============================ -->
+<section class="page">
+  <div class="kicker">Under the hood</div>
+  <h2>Modern, secure and built to stay consistent</h2>
+  <div class="rule"></div>
+  <p>A React single-page console talks to a role-scoped Node / Express API over one authoritative SQLite
+    datastore. Schema changes are idempotent, referential integrity is enforced, and every mutation is written
+    to an audit log — with a redacted, size-capped request body.</p>
+  <img class="shot" src="img/diagram-architecture.png" alt="System architecture">
+  <div class="cols3" style="margin-top:5mm">
+    <div class="card tint"><h3>Role-scoped reads</h3><p>Queries are filtered by region and department, so a manager only ever sees its own domain.</p></div>
+    <div class="card tint"><h3>Referential integrity</h3><p>Cascades are transactional and leave <span class="muted">foreign_key_check</span> empty.</p></div>
+    <div class="card tint"><h3>Auditable by design</h3><p>Sessions expire, expired sessions are pruned, and sensitive fields are redacted.</p></div>
+  </div>
+  <div class="band" style="text-align:center;padding:20px 16px;margin-top:6mm">
+    <div class="kicker" style="color:#7fd0a3">Transmission Asset Management System</div>
+    <h2 style="font-size:24px;margin:6px 0 6px">One platform. One truth. Every tower, task and proof.</h2>
+    <p style="margin:0">Plan · Dispatch · Execute · Document · Verify</p>
+  </div>
+  <div class="foot"><span>TMMS Product Brochure</span><span>10</span></div>
+</section>
+
+</body>
+</html>
