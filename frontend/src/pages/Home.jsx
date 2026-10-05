@@ -45,17 +45,6 @@ export default function Home() {
     }
   }, [data]);
 
-  // On phones the task detail panel stacks below the whole workbench (including
-  // History), so bring it into view as soon as it opens.
-  useEffect(() => {
-    if (!openTask) return;
-    if (!window.matchMedia('(max-width: 900px)').matches) return;
-    const panel = workbenchRef.current?.querySelector('.work-panel');
-    if (!panel || window.getComputedStyle(panel).position === 'fixed') return;
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    panel.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
-  }, [openTask]);
-
   if (error) return <Page title={t('home')} crumbs={CRUMBS}><ErrorNote error={error} /></Page>;
   if (!data) return <Page title={t('home')} crumbs={CRUMBS}><Loading /></Page>;
 

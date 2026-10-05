@@ -12,6 +12,7 @@ import { getDevicePosition } from './MapPicker';
 import ChecklistItem from './ChecklistItem';
 import ReadinessNotes from './ReadinessNotes';
 import SyncStatus from './SyncStatus';
+import WorkPanelOverlay from './WorkPanelOverlay';
 import { Sheet } from '../ui/Sheet';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
@@ -127,8 +128,8 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
     reader.readAsDataURL(file);
   }
 
-  if (error && !task) return <div className="work-panel work-panel--modal"><ErrorNote error={error} /><button className="btn btn-sm mt" onClick={onClose}>{t('cancel')}</button></div>;
-  if (!task) return <div className="work-panel work-panel--modal"><Loading /></div>;
+  if (error && !task) return <WorkPanelOverlay><div className="p-3"><ErrorNote error={error} /><button className="btn btn-sm mt" onClick={onClose}>{t('cancel')}</button></div></WorkPanelOverlay>;
+  if (!task) return <WorkPanelOverlay><div className="p-3"><Loading /></div></WorkPanelOverlay>;
 
   const x = task;
   const where = x.tower?.tower_id || x.asset?.name || x.substation?.name || x.line?.name || '—';
@@ -172,7 +173,7 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
 
   if (inRun) {
     return (
-      <div className="work-panel work-panel--modal">
+      <WorkPanelOverlay>
         <div className="work-panel-head">
           <div className="min-w-0">
             <b className="block truncate">{t('runChecklist')}: {tpl.name}</b>
@@ -223,7 +224,7 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
           <button className="btn btn-sm" onClick={() => setSheet('gps')} disabled={busy}><Navigation size={14} /> {t('useDeviceLocation')}</button>
         </div>
 
-        <div className="mt-4 flex gap-2">
+        <div className="work-panel-actions">
           <Button variant="primary" size="lg" onClick={submitRun} disabled={busy}>
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
             {x.status === 'ASSIGNED' ? t('startWork') : t('submitTask')}
@@ -232,12 +233,12 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
         </div>
 
         <CaptureSheets sheet={sheet} setSheet={setSheet} gps={gps} capture={capture} busy={busy} canAttach={canAttach} attachments={attachments} uploadFile={uploadFile} uploading={uploading} />
-      </div>
+      </WorkPanelOverlay>
     );
   }
 
   return (
-    <div className="work-panel work-panel--modal">
+    <WorkPanelOverlay>
       <div className="work-panel-head">
         <div className="min-w-0">
           <b className="block truncate">{x.task_number} — {x.title}</b>
@@ -421,7 +422,7 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
         uploadFile={uploadFile}
         uploading={uploading}
       />
-    </div>
+    </WorkPanelOverlay>
   );
 }
 

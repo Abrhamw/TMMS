@@ -3,6 +3,7 @@ import { api, fmtDate, fmtDateTime } from '../api';
 import { SearchSelect, Pill, Loading, ErrorNote, Modal } from '../components';
 import { can, getStoredUser } from '../auth';
 import ChecklistItem from './ChecklistItem';
+import WorkPanelOverlay from './WorkPanelOverlay';
 import ExecutionDetail from './ExecutionDetail';
 import { describeTarget } from '../checklistFormat';
 import { taskTypeLabel, priorityLabel } from '../labels';
@@ -214,8 +215,10 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
     </>
   );
 
-  return (
-    <div className={checklist !== null && !readOnly ? 'work-panel work-panel--modal' : 'work-panel'}>
+  const inChecklist = checklist !== null && !readOnly;
+
+  const content = (
+    <>
       <div className="work-panel-head">
         <div>
           <b>{t ? t.task_number : 'Task'} — {t ? t.title : ''}</b>
@@ -226,7 +229,7 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
         </div>
       </div>
 
-      {checklist !== null && !readOnly ? (
+      {inChecklist ? (
         <div className="work-panel-checklist">
           <div className="spread"><b>Checklist</b><button className="btn btn-sm" onClick={() => { setChecklist(null); setTpl(null); }}>Cancel</button></div>
           {tpl.items.map((it) => (
@@ -238,7 +241,9 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
               </div>
             </div>
           ))}
-          <button className="btn btn-primary mt" onClick={submitChecklist}>Submit execution</button>
+          <div className="work-panel-actions">
+            <button className="btn btn-primary" onClick={submitChecklist}>Submit execution</button>
+          </div>
         </div>
       ) : body}
 
@@ -271,6 +276,8 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
           )}
         </Modal>
       )}
-    </div>
+    </>
   );
+
+  return inChecklist ? <WorkPanelOverlay>{content}</WorkPanelOverlay> : <div className="work-panel">{content}</div>;
 }

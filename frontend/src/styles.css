@@ -183,7 +183,7 @@ body {
 .topbar h2 { margin: 0; font-size: var(--text-xl); }
 .topbar .crumbs { color: var(--muted); font-size: var(--text-xs); }
 .topbar .actions { display: flex; gap: 8px; align-items: center; }
-.content { padding: 24px 28px; flex: 1; min-height: 0; overflow-y: auto; animation: content-enter var(--dur) var(--ease-standard) both; }
+.content { padding: 24px 28px; flex: 1; min-height: 0; overflow-y: auto; animation: content-enter var(--dur) var(--ease-standard); }
 @keyframes content-enter { from { opacity: 0; } to { opacity: 1; } }
 /* Full-height pages (e.g. the mailbox) manage their own internal scrolling and
    must not let the content column scroll. */
@@ -764,13 +764,36 @@ a.patch-chip:hover { border-color: var(--primary); color: var(--primary); }
 .workbench-main { flex: 1; min-width: 0; }
 .work-panel { width: 420px; max-width: 42vw; background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 14px; position: sticky; top: 12px; }
 .work-panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 10px; }
-.work-panel--modal { position: fixed; inset: 4% 6%; width: auto; max-width: none; overflow: auto; z-index: 60; }
-.work-panel-checklist { max-height: 70vh; overflow: auto; }
+
+/* Guided task/checklist execution. Pinned above the sticky page header and the
+   phone tab bar so the full form and its submit action always stay reachable. */
+.work-panel-overlay { position: fixed; inset: 0; z-index: 1150; display: flex; align-items: center; justify-content: center; padding: 3vh 3vw; }
+.work-panel-scrim { position: absolute; inset: 0; background: rgba(15, 23, 42, 0.5); }
+.work-panel--modal {
+  position: relative; width: 100%; max-width: 820px; max-height: 92vh;
+  overflow: auto; margin: 0; padding-top: 0; border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+}
+.work-panel--modal .work-panel-head {
+  position: sticky; top: 0; z-index: 3;
+  margin: 0 -14px 10px; padding: 12px 14px;
+  background: var(--panel); border-bottom: 1px solid var(--border); border-radius: 14px 14px 0 0;
+}
+.work-panel--modal .work-panel-actions {
+  position: sticky; bottom: 0; z-index: 3;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin: 12px -14px -14px; padding: 12px 14px;
+  background: var(--panel); border-top: 1px solid var(--border); border-radius: 0 0 14px 14px;
+}
+.work-panel-checklist { max-height: none; overflow: visible; }
 @media (max-width: 900px) {
   .workbench { flex-direction: column; align-items: stretch; }
   .workbench-main { width: 100%; }
-  .work-panel { position: static; width: 100%; max-width: none; }
-  .work-panel--modal { inset: 0; border-radius: 0; }
+  .work-panel:not(.work-panel--modal) { position: static; width: 100%; max-width: none; }
+  .work-panel-overlay { padding: 0; }
+  .work-panel--modal { max-width: none; max-height: 100dvh; min-height: 100dvh; border-radius: 0; }
+  .work-panel--modal .work-panel-head { border-radius: 0; }
+  .work-panel--modal .work-panel-actions { border-radius: 0; }
 }
 /* My Day: crew landing — one card per assigned task, tap to run it. */
 .myday-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
