@@ -25,7 +25,17 @@ function famOf(catalog, a) {
     : { family: 'UNCLASSIFIED', family_label: 'Unclassified', cat: null };
 }
 
-function regionPopulation(regionId, scope) {
+function buildPopulationCache() {
+  const towerRows = db.prepare('SELECT * FROM tower ORDER BY km_marker, id').all();
+  return {
+    catalog: catalogMap(),
+    towerRows,
+    lineOfTower: new Map(towerRows.map((t) => [t.id, t.line_id])),
+    assetsAll: db.prepare("SELECT * FROM asset WHERE lifecycle_status != 'REMOVED'").all().map((a) => ({ ...a, metadata: null })),
+  };
+}
+
+function regionPopulation(regionId, scope, cache) {
   const scoped = !!scope && !scope.global;
   let substationIds = new Set(db.prepare('SELECT id FROM substation WHERE region_id = ?').all(regionId).map((r) => r.id));
   let lineIds = db.prepare('SELECT id FROM transmission_line WHERE region_id = ? ORDER BY name').all(regionId).map((r) => r.id);
@@ -34,10 +44,11 @@ function regionPopulation(regionId, scope) {
     lineIds = lineIds.filter((id) => scope.lineIds.has(id));
   }
   const lineIdSet = new Set(lineIds);
-  const towerRows = db.prepare('SELECT * FROM tower ORDER BY km_marker, id').all().filter((t) => !scoped || scope.towerIds.has(t.id));
-  const lineOfTower = new Map(towerRows.map((t) => [t.id, t.line_id]));
-  const catalog = catalogMap();
-  const assetsAll = db.prepare("SELECT * FROM asset WHERE lifecycle_status != 'REMOVED'").all().map((a) => ({ ...a, metadata: null }));
+  const towerRowsBase = cache ? cache.towerRows : db.prepare('SELECT * FROM tower ORDER BY km_marker, id').all();
+  const towerRows = scoped ? towerRowsBase.filter((t) => scope.towerIds.has(t.id)) : towerRowsBase;
+  const lineOfTower = (!scoped && cache) ? cache.lineOfTower : new Map(towerRows.map((t) => [t.id, t.line_id]));
+  const catalog = cache ? cache.catalog : catalogMap();
+  const assetsAll = cache ? cache.assetsAll : db.prepare("SELECT * FROM asset WHERE lifecycle_status != 'REMOVED'").all().map((a) => ({ ...a, metadata: null }));
   const counted = [];
   const towerAssets = new Map();
   for (const a of assetsAll) {
@@ -180,8 +191,8 @@ function quantityOf(a) {
   return 1;
 }
 
-function computeRegionValuation(regionId, scope) {
-  const pop = regionPopulation(regionId, scope);
+function computeRegionValuation(regionId, scope, cache) {
+  const pop = regionPopulation(regionId, scope, cache);
   const region = get('region', regionId);
   const byFamily = new Map();
   const byType = new Map();
@@ -338,3 +349,4 @@ router.get('/register/valuation', (req, res) => {
 module.exports = router;
 module.exports.computeRegionValuation = computeRegionValuation;
 module.exports.mergeValuations = mergeValuations;
+module.exports.buildPopulationCache = buildPopulationCache;

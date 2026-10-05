@@ -4,7 +4,7 @@ const { isGlobal } = require('../auth');
 const { taskVisible, authorizedCrewIds, readCrewIds, regionWideRead, isManager, commandScope } = require('../authority');
 const { taskReadiness } = require('../readiness');
 const { maintenanceCostForRegions } = require('../maintenanceCost');
-const { computeRegionValuation, mergeValuations } = require('./register');
+const { computeRegionValuation, mergeValuations, buildPopulationCache } = require('./register');
 const { recentRevaluationData } = require('../assetMonitor');
 const { buildRecommendations } = require('../executiveRecommendations');
 const { buildRegionLoad, buildInterventions, valueConcentration } = require('../summary');
@@ -194,7 +194,8 @@ function computeSummary(req, res, opts = {}) {
   const assetPkSet = new Set(assets.map((asset) => asset.id));
   const openTasks = tasks.filter((task) => OPEN.includes(task.status));
   const overdueTasks = openTasks.filter((task) => task.due_date && task.due_date < nowIso);
-  const regionValuations = regionIds.map((regionId) => computeRegionValuation(regionId, { global: true }));
+  const populationCache = buildPopulationCache();
+  const regionValuations = regionIds.map((regionId) => computeRegionValuation(regionId, { global: true }, populationCache));
   const valuation = mergeValuations(regionValuations);
   const cost = maintenanceCostForRegions(regionIds, {
     from: new Date(now.getTime() - 365 * 864e5).toISOString().slice(0, 10),
