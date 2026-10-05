@@ -377,10 +377,13 @@ export default function Assets() {
 
   async function acceptSimulated() {
     if (!detail || !simResult) return;
+    const rating = Number(simResult.computed?.combined_rating);
+    if (!Number.isFinite(rating)) return;
     try {
-      const updated = await api.post(`/assets/${detail.id}/evaluation`, { combined: true, evaluation_notes: `What-if accepted: ${simResult.computed.combined_rating}/10` });
+      const updated = await api.post(`/assets/${detail.id}/evaluation`, { condition_rating: rating, evaluation_notes: `What-if accepted: ${rating}/10` });
       setDetail({ ...detail, ...updated });
       await refreshPerf();
+      load();
     } catch (e) { setError(e.message); }
   }
 
