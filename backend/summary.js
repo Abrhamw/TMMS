@@ -224,6 +224,24 @@ function certificationReadiness(certs = [], now = Date.now()) {
   return { total, valid, expiring, expired, percent: total ? Math.round((valid / total) * 100) : null };
 }
 
+// Value concentration: share of total current asset value held by the largest
+// categories, owners or regions. Unpriced assets carry zero value, so callers
+// surface the unpriced count separately to keep the denominator honest.
+function valueConcentration(rows = [], topN = 5) {
+  const sorted = rows
+    .map((row) => ({ label: String(row.label ?? 'Unspecified'), value: Number(row.value) || 0 }))
+    .sort((a, b) => b.value - a.value);
+  const total = sorted.reduce((sum, row) => sum + row.value, 0);
+  const top = sorted.slice(0, topN).map((row) => ({ ...row, share: total ? row.value / total : 0 }));
+  return {
+    total,
+    count: sorted.length,
+    top,
+    top_share: top.length ? top[0].share : 0,
+    top5_share: total ? sorted.slice(0, topN).reduce((sum, row) => sum + row.value / total, 0) : 0,
+  };
+}
+
 module.exports = {
   COST_BUCKETS,
   conditionDistribution,
@@ -236,4 +254,5 @@ module.exports = {
   summarizeRegion,
   buildRegionLoad,
   buildInterventions,
+  valueConcentration,
 };

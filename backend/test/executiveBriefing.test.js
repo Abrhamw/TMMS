@@ -6,6 +6,7 @@ const {
   summarizeRegion,
   buildRegionLoad,
   buildInterventions,
+  valueConcentration,
 } = require('../summary');
 
 test('regionEffectiveness combines availability, delivery and condition', () => {
@@ -108,4 +109,31 @@ test('buildInterventions ignores unknown actions and honours the limit', () => {
   const rows = buildInterventions(candidates, { limit: 3 });
   assert.strictEqual(rows.length, 3);
   assert.ok(rows.every((row) => row.action === 'REPAIR'));
+});
+
+test('valueConcentration ranks buckets and reports top shares', () => {
+  const c = valueConcentration([
+    { label: 'A', value: 50 },
+    { label: 'B', value: 30 },
+    { label: 'C', value: 20 },
+  ]);
+  assert.strictEqual(c.total, 100);
+  assert.strictEqual(c.count, 3);
+  assert.strictEqual(c.top[0].label, 'A');
+  assert.strictEqual(c.top[0].share, 0.5);
+  assert.strictEqual(c.top_share, 0.5);
+  assert.strictEqual(c.top5_share, 1);
+});
+
+test('valueConcentration is zero-safe and coerces missing values', () => {
+  const empty = valueConcentration([]);
+  assert.strictEqual(empty.total, 0);
+  assert.strictEqual(empty.top_share, 0);
+  assert.strictEqual(empty.top5_share, 0);
+  assert.deepStrictEqual(empty.top, []);
+
+  const c = valueConcentration([{ label: null, value: 'n/a' }, { value: 10 }]);
+  assert.strictEqual(c.total, 10);
+  assert.strictEqual(c.top[0].label, 'Unspecified');
+  assert.strictEqual(c.top[0].share, 1);
 });

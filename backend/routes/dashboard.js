@@ -7,7 +7,7 @@ const { maintenanceCostForRegions } = require('../maintenanceCost');
 const { computeRegionValuation, mergeValuations } = require('./register');
 const { recentRevaluationData } = require('../assetMonitor');
 const { buildRecommendations } = require('../executiveRecommendations');
-const { buildRegionLoad, buildInterventions } = require('../summary');
+const { buildRegionLoad, buildInterventions, valueConcentration } = require('../summary');
 const { substationBayCounts } = require('../integrity');
 
 const router = express.Router();
@@ -194,7 +194,8 @@ function computeSummary(req, res, opts = {}) {
   const assetPkSet = new Set(assets.map((asset) => asset.id));
   const openTasks = tasks.filter((task) => OPEN.includes(task.status));
   const overdueTasks = openTasks.filter((task) => task.due_date && task.due_date < nowIso);
-  const valuation = mergeValuations(regionIds.map((regionId) => computeRegionValuation(regionId, { global: true })));
+  const regionValuations = regionIds.map((regionId) => computeRegionValuation(regionId, { global: true }));
+  const valuation = mergeValuations(regionValuations);
   const cost = maintenanceCostForRegions(regionIds, {
     from: new Date(now.getTime() - 365 * 864e5).toISOString().slice(0, 10),
     to: nowIso.slice(0, 10),
@@ -243,6 +244,15 @@ function computeSummary(req, res, opts = {}) {
     entry.spend += Number(event.cost) || 0;
     maintenanceCostByOwner.set(owner, entry);
   }
+
+  const ownerCurrent = new Map();
+  for (const row of ownerMix.values()) ownerCurrent.set(row.owner, (ownerCurrent.get(row.owner) || 0) + row.current);
+  const assetConcentration = {
+    unpriced_count: valuation.totals.unpriced_count || 0,
+    category: valueConcentration(valuation.by_type.map((row) => ({ label: row.label, value: row.current }))),
+    owner: valueConcentration([...ownerCurrent].map(([label, value]) => ({ label, value }))),
+    region: valueConcentration(regionValuations.map((part) => ({ label: part.region.name, value: part.current }))),
+  };
 
   const taskByStatus = {};
   const taskByType = {};
@@ -581,6 +591,7 @@ function computeSummary(req, res, opts = {}) {
       by_family: valuation.by_family || [],
       unpriced_types: valuation.unpriced_types || [],
     },
+    asset_concentration: assetConcentration,
     condition,
     infrastructure_condition: infrastructureCondition,
     region_load: regionLoad,

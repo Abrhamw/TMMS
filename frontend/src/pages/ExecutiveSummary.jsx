@@ -212,6 +212,7 @@ export default function ExecutiveSummary() {
   const [refreshing, setRefreshing] = useState(false);
   const [drawer, setDrawer] = useState(null);
   const [intFilter, setIntFilter] = useState('ALL');
+  const [concDim, setConcDim] = useState('category');
   const user = getStoredUser();
   const linksEnabled = !!user && user.role === 'ADMIN';
   const alive = useRef(true);
@@ -277,6 +278,14 @@ export default function ExecutiveSummary() {
   const condition = summary.condition || {};
   const infra = summary.infrastructure_condition || {};
   const valuation = summary.valuation || {};
+  const concentration = summary.asset_concentration || {};
+  const concDims = [
+    { key: 'category', label: 'Category' },
+    { key: 'owner', label: 'Owner' },
+    { key: 'region', label: 'Region' },
+  ].filter((dim) => (concentration[dim.key]?.count || 0) > 1);
+  const activeConcDim = (concDims.find((dim) => dim.key === concDim) || concDims[0] || { key: 'category' }).key;
+  const conc = concentration[activeConcDim] || { top: [], total: 0, count: 0, top5_share: 0 };
   const regionLoad = summary.region_load || [];
   const interventions = summary.interventions || [];
   const byStatus = summary.tasks?.by_status || {};
@@ -394,6 +403,38 @@ export default function ExecutiveSummary() {
               <Row left="Replacement cost (RCN)" right={fmtMoney(valuation.rcn, currency)} />
               <Row left="Current value" right={fmtMoney(valuation.current, currency)} />
               <Row left="Avg condition" right={valuation.avg_condition != null ? `${Number(valuation.avg_condition).toFixed(1)}/10` : '—'} />
+            </Card>
+
+            <Card
+              title="Portfolio concentration"
+              sub={conc.count ? `top ${Math.min(5, conc.count)} hold ${Math.round((conc.top5_share || 0) * 100)}% of value` : 'no priced assets'}
+            >
+              {concDims.length > 1 && (
+                <div className="chip-row" style={{ marginBottom: 8 }}>
+                  {concDims.map((dim) => (
+                    <button
+                      key={dim.key}
+                      type="button"
+                      className={cn('chip', dim.key === activeConcDim && 'chip-on')}
+                      onClick={() => setConcDim(dim.key)}
+                    >
+                      {dim.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {conc.top?.length ? conc.top.map((row) => (
+                <Bar
+                  key={row.label}
+                  label={`${row.label} · ${Math.round(row.share * 100)}%`}
+                  value={row.value}
+                  max={conc.top[0]?.value || 1}
+                  color="#0e7490"
+                />
+              )) : <div className="exec-empty">No priced assets in scope</div>}
+              {concentration.unpriced_count ? (
+                <div className="exec-mini"><span>Unpriced assets <b>{fmtNum(concentration.unpriced_count)}</b></span></div>
+              ) : null}
             </Card>
           </div>
         </Section>
