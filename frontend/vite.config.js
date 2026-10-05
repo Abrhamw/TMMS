@@ -41,4 +41,15 @@ export default defineConfig({
       },
     },
   },
+  preview: {
+    host: true,
+    port: 4173,
+    allowedHosts: ['.monkeycode-ai.live'],
+    proxy: {
+      '/api': {
+        target: apiTarget,
+        changeOrigin: true,
+      },
+    },
+  },
 });
