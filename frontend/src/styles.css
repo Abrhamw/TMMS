@@ -447,10 +447,13 @@ a.patch-chip:hover { border-color: var(--primary); color: var(--primary); }
 
 @media (max-width: 900px) {
   .sidebar { width: 64px; padding: 12px 6px; }
-  .brand-text, .rail-toggle, .nav-link .nav-text, .g-label { display: none; }
-  .brand { justify-content: center; padding: 4px 0 14px; }
-  .nav-link { justify-content: center; padding: 10px; }
-  .nav-link .ico { width: auto; }
+  .sidebar .brand-text,
+  .sidebar .rail-toggle,
+  .sidebar .nav-link .nav-text,
+  .sidebar .g-label { display: none; }
+  .sidebar .brand { justify-content: center; padding: 4px 0 14px; }
+  .sidebar .nav-link { justify-content: center; padding: 10px; }
+  .sidebar .nav-link .ico { width: auto; }
   .content, .topbar { padding-left: 16px; padding-right: 16px; }
 }
 

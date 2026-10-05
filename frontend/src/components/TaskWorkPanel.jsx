@@ -10,8 +10,22 @@ import { taskTypeLabel, priorityLabel } from '../labels';
 
 const GPS_TOLERANCE = 500;
 
+const NARROW_QUERY = '(max-width: 900px)';
+
+function useNarrow() {
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia(NARROW_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(NARROW_QUERY);
+    const onChange = (e) => setNarrow(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return narrow;
+}
+
 export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClose, onChanged }) {
   const me = getStoredUser();
+  const narrow = useNarrow();
   const [task, setTask] = useState(null);
   const [crews, setCrews] = useState([]);
   const [error, setError] = useState(null);
@@ -279,5 +293,5 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
     </>
   );
 
-  return inChecklist ? <WorkPanelOverlay>{content}</WorkPanelOverlay> : <div className="work-panel">{content}</div>;
+  return (inChecklist || narrow) ? <WorkPanelOverlay>{content}</WorkPanelOverlay> : <div className="work-panel">{content}</div>;
 }
