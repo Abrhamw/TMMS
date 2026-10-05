@@ -109,6 +109,111 @@ function threadSummary(task, user) {
   };
 }
 
+// Batched counterpart to `threadSummary` for the mailbox landing page, which
+// renders hundreds of rows at once. It resolves line/crew names, the latest
+// activity and the unread tally for every task from a handful of set queries
+// instead of ~8 queries per task, while producing the exact same shape.
+function threadSummaries(tasks, user) {
+  const nowIso = new Date().toISOString();
+  const readKeys = mailboxReadKeys(user.id);
+  const ids = tasks.map((task) => task.id);
+  const commentsByTask = new Map();
+  const eventsByTask = new Map();
+  const lineIds = new Set();
+  const crewIds = new Set();
+  for (const task of tasks) {
+    if (task.line_id) lineIds.add(task.line_id);
+    if (task.crew_id) crewIds.add(task.crew_id);
+  }
+  const nameMap = (table, idSet) => {
+    const map = new Map();
+    const list = [...idSet];
+    if (!list.length) return map;
+    const ph = list.map(() => '?').join(',');
+    for (const row of db.prepare(`SELECT id, name FROM ${table} WHERE id IN (${ph})`).all(...list)) map.set(row.id, row.name);
+    return map;
+  };
+  const lineNames = nameMap('transmission_line', lineIds);
+  const crewNames = nameMap('crew', crewIds);
+  const CHUNK = 400;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    const ph = chunk.map(() => '?').join(',');
+    for (const row of db.prepare(
+      `SELECT c.id, c.entity_id, c.body, c.created_at, u.username, p.first_name, p.last_name
+         FROM comment c JOIN user u ON u.id = c.user_id
+         LEFT JOIN person p ON p.id = u.person_id
+        WHERE c.entity_type = 'task' AND c.entity_id IN (${ph})
+        ORDER BY c.created_at, c.id`
+    ).all(...chunk)) {
+      const bucket = commentsByTask.get(row.entity_id) || [];
+      bucket.push(row);
+      commentsByTask.set(row.entity_id, bucket);
+    }
+    for (const row of db.prepare(
+      `SELECT id, entity_id, actor, action, detail, created_at
+         FROM audit_log WHERE entity = 'task' AND entity_id IN (${ph})
+        ORDER BY created_at, id`
+    ).all(...chunk)) {
+      const bucket = eventsByTask.get(row.entity_id) || [];
+      bucket.push(row);
+      eventsByTask.set(row.entity_id, bucket);
+    }
+  }
+  const out = new Map();
+  for (const task of tasks) {
+    const taskComments = commentsByTask.get(task.id) || [];
+    const taskEvents = eventsByTask.get(task.id) || [];
+    const lastComment = taskComments[taskComments.length - 1] || null;
+    const lastEvent = taskEvents[taskEvents.length - 1] || null;
+    let last;
+    if (lastComment && (!lastEvent || lastComment.created_at >= lastEvent.created_at)) {
+      last = {
+        at: lastComment.created_at,
+        kind: 'COMMENT',
+        actor: [lastComment.first_name, lastComment.last_name].filter(Boolean).join(' ') || lastComment.username,
+        actor_key: lastComment.username,
+        summary: lastComment.body,
+      };
+    } else if (lastEvent) {
+      let detail = {};
+      try { detail = JSON.parse(lastEvent.detail || '{}'); } catch (_) { /* retain generic event */ }
+      last = {
+        at: lastEvent.created_at,
+        kind: lastEvent.action,
+        actor: lastEvent.actor,
+        actor_key: lastEvent.actor,
+        summary: detail.action ? `Task ${String(detail.action).replace(/_/g, ' ').toLowerCase()}` : `Task record ${String(lastEvent.action).toLowerCase()}`,
+      };
+    } else {
+      last = { at: task.updated_at || task.created_at, kind: 'TASK', actor: null, actor_key: null, summary: `Task status: ${task.status}` };
+    }
+    let unreadCount = 0;
+    for (const row of taskComments) if (row.username !== user.username && !readKeys.has(`comment-${row.id}`)) unreadCount++;
+    for (const row of taskEvents) if (row.actor && row.actor !== user.username && !readKeys.has(`event-${row.id}`)) unreadCount++;
+    out.set(task.id, {
+      id: task.id,
+      kind: 'TASK',
+      task_number: task.task_number,
+      title: task.title,
+      status: task.status,
+      priority: task.priority,
+      task_type: task.task_type,
+      due_date: task.due_date,
+      updated_at: task.updated_at,
+      line_name: task.line_id ? (lineNames.get(task.line_id) || null) : null,
+      crew_name: task.crew_id ? (crewNames.get(task.crew_id) || null) : null,
+      tags: taskTags(task, nowIso),
+      link: `/tasks/${task.id}`,
+      message_count: taskComments.length + taskEvents.length,
+      latest: last,
+      unread: unreadCount > 0,
+      unread_count: unreadCount,
+    });
+  }
+  return out;
+}
+
 function messageWasRead(userId, key) {
   return !!db.prepare('SELECT 1 FROM mailbox_message_read WHERE user_id = ? AND message_key = ?').get(userId, key);
 }
@@ -1232,6 +1337,7 @@ router.get('/mailbox', (req, res) => {
   const sent = tasks.filter((task) => user.person_id && task.created_by === user.person_id);
   const history = tasks.filter((task) => CLOSED.has(task.status) && taskInvolvement(user, task));
   const messages = messagesFor(user, tasks);
+  const summaries = threadSummaries(tasks, user);
   const unreadMessages = messages.filter((message) => message.unread);
   const counts = mailCounts(user);
   // Badge totals are computed here from the very arrays the folders render, so
@@ -1239,9 +1345,9 @@ router.get('/mailbox', (req, res) => {
   const reportCount = messages.filter((message) => message.kind === 'REPORT').length;
   const firstPage = (folder) => queryMailFolder(user, { folder, pageSize: 50 }).rows;
   res.json({
-    inbox: inbox.map((task) => threadSummary(task, user)),
-    sent: sent.map((task) => threadSummary(task, user)),
-    history: history.map((task) => threadSummary(task, user)),
+    inbox: inbox.map((task) => summaries.get(task.id)),
+    sent: sent.map((task) => summaries.get(task.id)),
+    history: history.map((task) => summaries.get(task.id)),
     message_count: messages.length,
     report_count: reportCount,
     task_inbox_count: inbox.length,
