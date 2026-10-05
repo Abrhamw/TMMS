@@ -113,21 +113,25 @@ function messageWasRead(userId, key) {
   return !!db.prepare('SELECT 1 FROM mailbox_message_read WHERE user_id = ? AND message_key = ?').get(userId, key);
 }
 
-function messageRow(user, message) {
+// Every message key this account has already opened, in one round trip. The
+// mailbox holds hundreds of activity messages, so resolving read state per
+// message turned a page render into hundreds of tiny queries.
+function mailboxReadKeys(userId) {
+  return new Set(db.prepare('SELECT message_key FROM mailbox_message_read WHERE user_id = ?')
+    .all(Number(userId)).map((row) => row.message_key));
+}
+
+function messageRow(user, message, readKeys) {
   const incoming = !!message.actor_key && message.actor_key !== user.username;
+  const read = readKeys ? readKeys.has(message.key) : messageWasRead(user.id, message.key);
   return {
     ...message,
-    unread: incoming && !messageWasRead(user.id, message.key),
+    unread: incoming && !read,
   };
 }
 
-function taskMessageRows(task, user) {
-  const comments = db.prepare(
-    `SELECT c.id, c.body, c.created_at, u.username, p.first_name, p.last_name
-       FROM comment c JOIN user u ON u.id = c.user_id
-       LEFT JOIN person p ON p.id = u.person_id
-      WHERE c.entity_type = 'task' AND c.entity_id = ? ORDER BY c.created_at, c.id`
-  ).all(task.id).map((row) => ({
+function commentMessage(task, row, nowIso) {
+  return {
     key: `comment-${row.id}`,
     kind: 'COMMENT',
     entity_type: 'task',
@@ -139,45 +143,96 @@ function taskMessageRows(task, user) {
     actor: [row.first_name, row.last_name].filter(Boolean).join(' ') || row.username,
     actor_key: row.username,
     body: row.body,
-    tags: taskTags(task, new Date().toISOString()),
+    tags: taskTags(task, nowIso),
     link: `/tasks/${task.id}`,
-  }));
+  };
+}
+
+function eventMessage(task, row, nowIso) {
+  let detail = {};
+  try { detail = JSON.parse(row.detail || '{}'); } catch (_) { /* use generic event wording */ }
+  const action = detail.action || row.action;
+  return {
+    key: `event-${row.id}`,
+    kind: 'WORKFLOW',
+    entity_type: 'task',
+    entity_id: task.id,
+    task_id: task.id,
+    task_number: task.task_number,
+    subject: task.title,
+    at: row.created_at,
+    actor: row.actor,
+    actor_key: row.actor,
+    body: `Task workflow: ${String(action).replace(/_/g, ' ').toLowerCase()}`,
+    tags: taskTags(task, nowIso),
+    link: `/tasks/${task.id}`,
+  };
+}
+
+function taskMessageRows(task, user, readKeys) {
+  const nowIso = new Date().toISOString();
+  const comments = db.prepare(
+    `SELECT c.id, c.body, c.created_at, u.username, p.first_name, p.last_name
+       FROM comment c JOIN user u ON u.id = c.user_id
+       LEFT JOIN person p ON p.id = u.person_id
+      WHERE c.entity_type = 'task' AND c.entity_id = ? ORDER BY c.created_at, c.id`
+  ).all(task.id).map((row) => commentMessage(task, row, nowIso));
   const events = db.prepare(
     `SELECT id, actor, action, detail, created_at
        FROM audit_log WHERE entity = 'task' AND entity_id = ? ORDER BY created_at, id`
-  ).all(task.id).map((row) => {
-    let detail = {};
-    try { detail = JSON.parse(row.detail || '{}'); } catch (_) { /* use generic event wording */ }
-    const action = detail.action || row.action;
-    return {
-      key: `event-${row.id}`,
-      kind: 'WORKFLOW',
-      entity_type: 'task',
-      entity_id: task.id,
-      task_id: task.id,
-      task_number: task.task_number,
-      subject: task.title,
-      at: row.created_at,
-      actor: row.actor,
-      actor_key: row.actor,
-      body: `Task workflow: ${String(action).replace(/_/g, ' ').toLowerCase()}`,
-      tags: taskTags(task, new Date().toISOString()),
-      link: `/tasks/${task.id}`,
-    };
-  });
-  return [...comments, ...events].map((message) => messageRow(user, message));
+  ).all(task.id).map((row) => eventMessage(task, row, nowIso));
+  return [...comments, ...events].map((message) => messageRow(user, message, readKeys));
+}
+
+// Build the full activity stream for every visible task with a bounded number
+// of queries: the comments and workflow events are fetched per task-id chunk
+// and grouped back by task, which keeps the same per-task ordering while
+// avoiding a query per task.
+function taskMessagesFor(user, tasks, readKeys) {
+  const nowIso = new Date().toISOString();
+  const byTask = new Map(tasks.map((task) => [task.id, { comments: [], events: [] }]));
+  const ids = tasks.map((task) => task.id);
+  const CHUNK = 400;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    const ph = chunk.map(() => '?').join(',');
+    for (const row of db.prepare(
+      `SELECT c.id, c.entity_id, c.body, c.created_at, u.username, p.first_name, p.last_name
+         FROM comment c JOIN user u ON u.id = c.user_id
+         LEFT JOIN person p ON p.id = u.person_id
+        WHERE c.entity_type = 'task' AND c.entity_id IN (${ph})
+        ORDER BY c.created_at, c.id`
+    ).all(...chunk)) {
+      const bucket = byTask.get(row.entity_id);
+      if (bucket) bucket.comments.push(row);
+    }
+    for (const row of db.prepare(
+      `SELECT id, entity_id, actor, action, detail, created_at
+         FROM audit_log WHERE entity = 'task' AND entity_id IN (${ph})
+        ORDER BY created_at, id`
+    ).all(...chunk)) {
+      const bucket = byTask.get(row.entity_id);
+      if (bucket) bucket.events.push(row);
+    }
+  }
+  const messages = [];
+  for (const task of tasks) {
+    const bucket = byTask.get(task.id);
+    for (const row of bucket.comments) messages.push(messageRow(user, commentMessage(task, row, nowIso), readKeys));
+    for (const row of bucket.events) messages.push(messageRow(user, eventMessage(task, row, nowIso), readKeys));
+  }
+  return messages;
 }
 
 function messagesFor(user, tasks) {
-  const taskById = new Map(tasks.map((task) => [task.id, task]));
-  const messages = [];
-  for (const task of tasks) messages.push(...taskMessageRows(task, user));
+  const readKeys = mailboxReadKeys(user.id);
+  const messages = taskMessagesFor(user, tasks, readKeys);
 
   // Reports are a management/oversight surface: only roles holding
   // `report:read` see them in the mailbox. Field crews (which lack the
   // permission) must not receive report messages or unread report badges.
   const reports = hasPerm(user, 'report:read')
-    ? db.prepare('SELECT * FROM report ORDER BY generated_at DESC, id DESC').all()
+    ? db.prepare('SELECT id, report_code, report_type, title, period_start, period_end, scope_region_id, status, generated_at FROM report ORDER BY generated_at DESC, id DESC').all()
       .filter((report) => isGlobal(user) || !report.scope_region_id || report.scope_region_id === user.region_id)
     : [];
   const reportAudit = db.prepare("SELECT entity_id, actor, created_at FROM audit_log WHERE entity = 'report' AND action = 'GENERATE' ORDER BY id DESC").all();
@@ -202,7 +257,7 @@ function messagesFor(user, tasks) {
       status: report.status,
       tags: reportTags(report),
       link: `/reports?report=${report.id}`,
-    });
+    }, readKeys);
   });
   return [...messages, ...reportMessages].sort((a, b) => b.at.localeCompare(a.at));
 }
