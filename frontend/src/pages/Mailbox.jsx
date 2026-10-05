@@ -432,6 +432,7 @@ export default function Mailbox() {
   }
 
   function toggleBulk(id) {
+    if (id == null) return;
     setSelectedForBulk((cur) => {
       const next = new Set(cur);
       if (next.has(id)) next.delete(id); else next.add(id);
@@ -447,7 +448,7 @@ export default function Mailbox() {
       setSelectedForBulk(new Set());
       await load();
       await loadLabels();
-      const back = { archive: 'restore', trash: 'restore', junk: 'not_junk' }[action];
+      const back = { archive: 'unarchive', trash: 'restore', junk: 'not_junk' }[action];
       if (back) pushUndo(t('mailboxBulkDone'), () => runBulk(back));
     } catch (e) { setError(e.message); }
   }
@@ -766,10 +767,12 @@ export default function Mailbox() {
             <div className="mail-thread-list" {...swipe.bind}>
               {visibleRows.map((item) => isMessageFolder(folder) || labelView ? (
                 <div key={item.key} className={'mail-thread-wrap' + (selectedMessageKey === item.key && !compose ? ' active' : '')}
-                  data-mail-id={item.id} data-mail-trashed={item.trashed ? '1' : '0'} data-mail-junked={item.junked ? '1' : '0'}>
-                  <label className="mail-thread-check" title={t('mailboxSelectMessage')}>
-                    <input type="checkbox" checked={selectedForBulk.has(item.id)} onChange={() => toggleBulk(item.id)} />
-                  </label>
+                  data-mail-id={item.kind === 'MAIL' ? item.id : undefined} data-mail-trashed={item.trashed ? '1' : '0'} data-mail-junked={item.junked ? '1' : '0'}>
+                  {item.kind === 'MAIL' && item.id != null && (
+                    <label className="mail-thread-check" title={t('mailboxSelectMessage')}>
+                      <input type="checkbox" checked={selectedForBulk.has(item.id)} onChange={() => toggleBulk(item.id)} />
+                    </label>
+                  )}
                   <button className={'mail-thread' + (selectedMessageKey === item.key && !compose ? ' active' : '')}
                     onClick={() => { if (swipe.consumeClick()) return; setCompose(null); setSelectedId(null); setSelectedMessageKey(item.key); }}>
                     <div className="spread">
