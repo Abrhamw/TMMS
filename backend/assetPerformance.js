@@ -1,6 +1,6 @@
 const { ageYears, ageBaseline, computeHealth, RECOMMENDATION_LABELS } = require('./assetBaseline');
 
-const MODEL_VERSION = 'performance-v1';
+const MODEL_VERSION = 'performance-v2';
 
 const READING_TYPES = [
   'LOAD_PCT', 'AMBIENT_C', 'TOP_OIL_C', 'WINDING_C', 'DGA_H2_PPM', 'DGA_CH4_PPM',
@@ -28,13 +28,33 @@ const FAMILY_BY_TYPE = {
 
 const FAMILY_FACTORS = {
   TRANSFORMER: ['loading', 'thermal', 'dga', 'moisture', 'faults', 'maintenance'],
-  BREAKER: ['switching', 'faults', 'maintenance'],
+  BREAKER: ['loading', 'switching', 'faults', 'maintenance'],
   LINE: ['loading', 'voltage', 'faults', 'maintenance'],
   TOWER: ['environment', 'maintenance'],
   AUX: ['loading', 'events', 'maintenance'],
   CONTROL: ['events', 'maintenance'],
-  GENERIC: ['events', 'maintenance'],
+  GENERIC: ['loading', 'events', 'maintenance'],
 };
+
+const LOADING_PROFILES = {
+  TRANSFORMER: { label: 'MV capacity loading', warn: 85, critical: 100, gradient: 1.2, weight: 1.2 },
+  LINE: { label: 'MV circuit loading', warn: 75, critical: 95, gradient: 1, weight: 1 },
+  OTHER: { label: 'MV loading', warn: 80, critical: 100, gradient: 0.5, weight: 0.8 },
+};
+
+const LOADING_FAMILY = { TRANSFORMER: 'TRANSFORMER', LINE: 'LINE' };
+
+function declaredCapacityMva(asset) {
+  if (!asset) return null;
+  const direct = Number(asset.rating_mva);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  let meta = asset.metadata;
+  if (typeof meta === 'string') {
+    try { meta = JSON.parse(meta); } catch (_) { return null; }
+  }
+  const value = Number(meta && (meta.rating_mva ?? meta.capacity_mva ?? meta.ratingMVA));
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
 
 function round1(n) {
   return Math.round(Number(n) * 10) / 10;
@@ -86,13 +106,25 @@ function weightedEvents(events, types, days, now) {
 }
 
 function fLoading(ctx) {
+  const family = familyOf(ctx.asset);
+  const profile = LOADING_PROFILES[LOADING_FAMILY[family]] || LOADING_PROFILES.OTHER;
   const peak = maxInWindow(ctx.readings, 'LOAD_PCT', 90, ctx.now);
   if (peak == null) return null;
+  const span = Math.max(1, profile.critical - profile.warn);
   let c = 0;
-  if (peak > 100) c = -(1 + Math.min(1.5, (peak - 100) / 50));
-  else if (peak > 80) c = -0.5 * ((peak - 80) / 20);
+  if (peak > profile.critical) c = -(1 + Math.min(1.5, (peak - profile.critical) / 50));
+  else if (peak > profile.warn) c = -(profile.gradient * ((peak - profile.warn) / span));
   if (!c) return null;
-  return { key: 'loading', label: 'Loading', value: `${Math.round(peak)}% peak`, contribution: round1(c), weight: 1, reason: `Peak loading ${Math.round(peak)}% of nameplate in the last 90 days` };
+  const capacity = declaredCapacityMva(ctx.asset);
+  const basis = capacity ? `${Math.round(peak)}% of ${capacity} MVA` : `${Math.round(peak)}% of MV rating`;
+  return {
+    key: 'loading',
+    label: profile.label,
+    value: `${Math.round(peak)}% peak`,
+    contribution: round1(c),
+    weight: profile.weight,
+    reason: `Peak loading ${basis} in the last 90 days`,
+  };
 }
 
 function fThermal(ctx) {

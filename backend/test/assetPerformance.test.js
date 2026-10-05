@@ -6,6 +6,7 @@ const { evaluatePerformance, familyOf, READING_TYPES, EVENT_TYPES } = require('.
 const NOW = '2026-10-02T00:00:00.000Z';
 const YOUNG = { id: 1, asset_id: 'AST-1', name: 'T1', asset_type: 'TRANSFORMER', installation_date: '2018-01-01T00:00:00.000Z', criticality: 'HIGH' };
 const OLD = { id: 2, asset_id: 'AST-2', name: 'T2', asset_type: 'TRANSFORMER', installation_date: '1998-01-01T00:00:00.000Z', criticality: 'MEDIUM' };
+const LINE = { id: 3, asset_id: 'AST-3', name: 'L1', asset_type: 'CONDUCTOR_SPAN', installation_date: '2018-01-01T00:00:00.000Z', criticality: 'HIGH' };
 
 test('no performance data reproduces the age baseline with no delta', () => {
   const r = evaluatePerformance(YOUNG, [], [], { now: NOW });
@@ -22,6 +23,26 @@ test('nameplate overloading degrades the combined rating', () => {
   assert.ok(r.combined_rating < r.base_rating);
   assert.ok(r.factors.some((f) => f.key === 'loading'));
   assert.strictEqual(r.confidence, 'HIGH');
+});
+
+test('loading thresholds are independent per asset category', () => {
+  const loadAt = (asset, pct) => {
+    const r = evaluatePerformance(asset, [{ reading_type: 'LOAD_PCT', value_num: pct, recorded_at: '2026-09-01T00:00:00.000Z' }], [], { now: NOW });
+    return r.factors.find((f) => f.key === 'loading') || null;
+  };
+  assert.strictEqual(loadAt(YOUNG, 80), null);
+  assert.strictEqual(loadAt(LINE, 70), null);
+  assert.ok(loadAt(LINE, 80));
+  assert.ok(loadAt(YOUNG, 90));
+});
+
+test('transformer loading cites declared MV capacity when present', () => {
+  const rated = { ...YOUNG, metadata: JSON.stringify({ rating_mva: 120 }) };
+  const reading = { reading_type: 'LOAD_PCT', value_num: 110, recorded_at: '2026-09-01T00:00:00.000Z' };
+  const r = evaluatePerformance(rated, [reading], [], { now: NOW });
+  const factor = r.factors.find((f) => f.key === 'loading');
+  assert.ok(factor);
+  assert.match(factor.reason, /120 MVA/);
 });
 
 test('through-fault events degrade a transformer', () => {
