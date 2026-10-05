@@ -226,10 +226,13 @@ export default function ExecutiveSummary() {
     api.get('/regions').then(setRegions).catch(() => {});
   }, []);
 
-  const load = useCallback(() => {
-    const qs = region ? `?region=${region}` : '';
+  const load = useCallback((force) => {
+    const qs = new URLSearchParams();
+    if (region) qs.set('region', region);
+    if (force) qs.set('force', '1');
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
     setRefreshing(true);
-    return api.get(`/executive/summary${qs}`)
+    return api.get(`/executive/summary${suffix}`)
       .then((s) => { if (alive.current) setSummary(s); })
       .catch((e) => { if (alive.current) setError(e.message); })
       .finally(() => { if (alive.current) setRefreshing(false); });
@@ -255,7 +258,7 @@ export default function ExecutiveSummary() {
         <option value="">All regions</option>
         {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
       </select>
-      <button type="button" className="theme-toggle" onClick={load} aria-label="Refresh" title="Refresh">
+      <button type="button" className="theme-toggle" onClick={() => load(true)} aria-label="Refresh" title="Refresh">
         <RefreshCw size={16} className={refreshing ? 'animate-spin' : undefined} />
       </button>
       <button type="button" className="btn btn-sm" onClick={() => window.print()}>Export view</button>

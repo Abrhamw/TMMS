@@ -172,8 +172,8 @@ function regionSummary(region, scope) {
   return { ...region, substation_count: substations, line_count: lines, crew_count: crews, asset_count: assets, open_task_count: openTasks };
 }
 
-// Batched region summaries: four grouped counts plus one in-memory asset-region
-// pass, instead of five queries per region.
+// Batched region summaries: grouped SQL counts for the global view, and one
+// in-memory pass for region-scoped viewers (who can only see their own slice).
 function regionSummaries(regions, scope) {
   const group = (sql) => {
     const m = new Map();
@@ -185,24 +185,13 @@ function regionSummaries(regions, scope) {
   const crews = group('SELECT region_id, COUNT(*) c FROM crew GROUP BY region_id');
   const open = group("SELECT region_id, COUNT(*) c FROM task WHERE status NOT IN ('COMPLETED','CANCELLED','FAILED') GROUP BY region_id");
 
-  const subRegion = new Map();
-  for (const s of list('substation')) subRegion.set(s.id, s.region_id);
-  const lineRegion = new Map();
-  for (const l of list('transmission_line')) lineRegion.set(l.id, l.region_id);
-  const towerLine = new Map();
-  for (const t of list('tower')) towerLine.set(t.id, t.line_id);
-  const assetRegions = new Map();
-  for (const a of list('asset')) {
-    const seen = new Set();
-    if (a.substation_id && subRegion.has(a.substation_id)) seen.add(subRegion.get(a.substation_id));
-    if (a.line_id && lineRegion.has(a.line_id)) seen.add(lineRegion.get(a.line_id));
-    if (a.tower_id && towerLine.has(a.tower_id)) seen.add(lineRegion.get(towerLine.get(a.tower_id)));
-    for (const rid of seen) {
-      if (!assetRegions.has(rid)) assetRegions.set(rid, new Set());
-      assetRegions.get(rid).add(a.id);
-    }
-  }
   if (scope && !scope.global) {
+    const subRegion = new Map();
+    for (const s of list('substation')) subRegion.set(s.id, s.region_id);
+    const lineRegion = new Map();
+    for (const l of list('transmission_line')) lineRegion.set(l.id, l.region_id);
+    const towerLine = new Map();
+    for (const t of list('tower')) towerLine.set(t.id, t.line_id);
     const crewRegion = new Map(list('crew').map((c) => [c.id, c.region_id]));
     const taskById = new Map(list('task').map((t) => [t.id, t]));
     const countIn = (ids, regionOf) => {
@@ -239,12 +228,25 @@ function regionSummaries(regions, scope) {
       open_task_count: scopedOpen.get(r.id) || 0,
     }));
   }
+  // Global asset counts straight from SQL: an asset is counted in every region
+  // reachable through its substation/line/tower parent, matching regionAssetCount.
+  const assetCounts = new Map();
+  const assetRows = db.prepare(
+    `SELECT rid, COUNT(DISTINCT aid) c FROM (
+       SELECT a.id AS aid, s.region_id AS rid FROM asset a JOIN substation s ON a.substation_id = s.id
+       UNION ALL
+       SELECT a.id AS aid, l.region_id AS rid FROM asset a JOIN transmission_line l ON a.line_id = l.id
+       UNION ALL
+       SELECT a.id AS aid, tl.region_id AS rid FROM asset a JOIN tower t ON a.tower_id = t.id JOIN transmission_line tl ON t.line_id = tl.id
+     ) WHERE rid IS NOT NULL GROUP BY rid`
+  ).all();
+  for (const r of assetRows) assetCounts.set(r.rid, r.c);
   return regions.map((r) => ({
     ...r,
     substation_count: subs.get(r.id) || 0,
     line_count: lines.get(r.id) || 0,
     crew_count: crews.get(r.id) || 0,
-    asset_count: (assetRegions.get(r.id) || { size: 0 }).size,
+    asset_count: assetCounts.get(r.id) || 0,
     open_task_count: open.get(r.id) || 0,
   }));
 }

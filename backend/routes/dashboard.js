@@ -14,7 +14,7 @@ const router = express.Router();
 
 const OPEN = ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION'];
 
-const SUMMARY_TTL_MS = 20000;
+const SUMMARY_TTL_MS = 60000;
 const summaryCache = new Map();
 
 // People attached to a region: directorate/station personnel plus the members
@@ -641,8 +641,9 @@ function scopedSummary(req, res) {
   const scopeKey = scope.global ? 'global' : [...(scope.regionIds || [])].sort((a, b) => a - b).join(',');
   const key = `${scopeKey}|${region}`;
   const nowMs = Date.now();
+  const force = String(req.query.force || '') === '1';
   const hit = summaryCache.get(key);
-  if (hit && nowMs - hit.at < SUMMARY_TTL_MS) return { scope, summary: hit.summary };
+  if (!force && hit && nowMs - hit.at < SUMMARY_TTL_MS) return { scope, summary: hit.summary };
   const summary = computeSummary(req, res, { allowedRegionIds: scope.global ? null : scope.regionIds });
   if (!summary) return null;
   summaryCache.set(key, { at: nowMs, summary });

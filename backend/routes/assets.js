@@ -182,8 +182,20 @@ router.get('/assets', (req, res) => {
   if (req.query.brief) return res.json(findAssetBrief(req));
   const page = parsePage(req.query);
   const lk = buildAssetLookups();
-  const raw = findAssetId(req);
-  const paged = paginate(raw, page);
+  let paged;
+  if (page.paginated && commandScope(req.user).global) {
+    // Push LIMIT/OFFSET and COUNT to SQL so a paged register read does not load
+    // and parse the entire asset table (10+ MB for a full register).
+    const { where, args } = assetFilter(req);
+    const whereSql = where.length ? ` WHERE ${where.join(' AND ')}` : '';
+    const total = db.prepare(`SELECT COUNT(*) c FROM asset${whereSql}`).get(...args).c;
+    const items = db.prepare(`SELECT * FROM asset${whereSql} ORDER BY id LIMIT ? OFFSET ?`)
+      .all(...args, page.pageSize, (page.page - 1) * page.pageSize)
+      .map((r) => parseRow(r, ['metadata']));
+    paged = { items, total, page: page.page, page_size: page.pageSize };
+  } else {
+    paged = paginate(findAssetId(req), page);
+  }
   const rows = (page.paginated ? paged.items : paged).map((a) => enrichAsset(a, lk));
   for (const a of rows) {
     // Compact location briefs. The full substation (boundary_json) and line
