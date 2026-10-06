@@ -1005,6 +1005,75 @@ function initSchema() {
   CREATE INDEX IF NOT EXISTS idx_resource_usage_resource ON resource_usage(resource_id, started_at);
   CREATE INDEX IF NOT EXISTS idx_resource_usage_task ON resource_usage(task_id);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_resource_usage_client_ref ON resource_usage(client_ref) WHERE client_ref IS NOT NULL;
+
+  -- Controlled material/spare register. Operational stock control must not
+  -- depend on free-text material descriptions on checklists.
+  CREATE TABLE IF NOT EXISTS material_item (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'SPARE',
+    unit TEXT NOT NULL DEFAULT 'EA',
+    unit_cost REAL,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    min_stock REAL NOT NULL DEFAULT 0,
+    max_stock REAL,
+    reorder_point REAL NOT NULL DEFAULT 0,
+    supplier TEXT,
+    lead_time_days INTEGER,
+    criticality TEXT NOT NULL DEFAULT 'MEDIUM',
+    shelf_life_days INTEGER,
+    substitute_item_id INTEGER REFERENCES material_item(id),
+    default_location TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE INDEX IF NOT EXISTS idx_material_item_cat ON material_item(category, criticality);
+  CREATE INDEX IF NOT EXISTS idx_material_item_active ON material_item(active);
+
+  -- Reservation reduces available stock before dispatch without moving it, so
+  -- two tasks cannot plan against the same last critical spare.
+  CREATE TABLE IF NOT EXISTS material_reservation (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id INTEGER NOT NULL REFERENCES material_item(id),
+    task_id INTEGER REFERENCES task(id),
+    quantity REAL NOT NULL,
+    location TEXT,
+    status TEXT NOT NULL DEFAULT 'RESERVED',
+    reserved_by INTEGER REFERENCES person(id),
+    notes TEXT,
+    client_ref TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_material_reservation_item ON material_reservation(item_id, status);
+  CREATE INDEX IF NOT EXISTS idx_material_reservation_task ON material_reservation(task_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_material_reservation_client_ref ON material_reservation(client_ref) WHERE client_ref IS NOT NULL;
+
+  -- Immutable stock/consumption ledger. Corrections are ADJUSTMENT rows, never
+  -- edits to a posted transaction.
+  CREATE TABLE IF NOT EXISTS material_transaction (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id INTEGER NOT NULL REFERENCES material_item(id),
+    task_id INTEGER REFERENCES task(id),
+    reservation_id INTEGER REFERENCES material_reservation(id),
+    type TEXT NOT NULL,
+    quantity REAL NOT NULL,
+    location TEXT,
+    unit_cost REAL,
+    cost REAL,
+    notes TEXT,
+    status TEXT NOT NULL DEFAULT 'POSTED',
+    created_by INTEGER REFERENCES person(id),
+    client_ref TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_material_txn_item ON material_transaction(item_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_material_txn_task ON material_transaction(task_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_material_txn_client_ref ON material_transaction(client_ref) WHERE client_ref IS NOT NULL;
   `);
 
   migrate('task', 'tower_id', 'ALTER TABLE task ADD COLUMN tower_id INTEGER REFERENCES tower(id)');

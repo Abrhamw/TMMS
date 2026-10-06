@@ -8,6 +8,7 @@
 
 const { db, list, get } = require('./util');
 const { buildRequirements, mergeRequirements, evaluateCrew, certIsValid } = require('./dispatch');
+const { onHand } = require('./materials');
 
 const OPEN_TASK_STATES = ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION'];
 
@@ -207,6 +208,18 @@ function dispatchGate(t) {
       blockers.push({ code: 'RESOURCE_UNAVAILABLE', message: `Reserved resource is under maintenance: ${r.name}` });
     } else if (r.calibration_expiry && r.calibration_expiry < now) {
       blockers.push({ code: 'RESOURCE_CALIBRATION_DUE', message: `Reserved resource calibration lapsed: ${r.name}` });
+    }
+  }
+
+  // A reserved critical spare that cannot actually be covered from stock blocks
+  // dispatch; non-critical items stay advisory.
+  const criticalSpares = db.prepare(
+    "SELECT mr.item_id, mr.quantity, mr.location, mi.description, mi.code FROM material_reservation mr JOIN material_item mi ON mi.id = mr.item_id WHERE mr.task_id = ? AND mr.status = 'RESERVED' AND mi.criticality = 'CRITICAL'"
+  ).all(t.id);
+  for (const s of criticalSpares) {
+    const hand = onHand(s.item_id, s.location);
+    if (hand + 1e-9 < Number(s.quantity)) {
+      blockers.push({ code: 'CRITICAL_SPARE_SHORT', message: `Critical spare ${s.code || ''} ${s.description} short: need ${s.quantity}, on hand ${hand}`.trim() });
     }
   }
 
