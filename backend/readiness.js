@@ -162,6 +162,51 @@ function taskReadiness(t) {
   };
 }
 
+// The enforceable dispatch gate. taskReadiness is decision support: it warns.
+// dispatchGate turns the mandatory conditions into HARD blockers that must be
+// satisfied — or explicitly overridden by an authorised manager with a recorded
+// reason — before a task may start. Everything else stays advisory.
+function dispatchGate(t) {
+  if (!t) return { ready: false, blockers: [{ code: 'NOT_FOUND', message: 'Task not found' }], warnings: [] };
+  const audit = taskReadiness(t);
+  const blockers = [];
+  const warnings = [];
+
+  const crewId = resolveTaskCrewId(t);
+  if (!crewId) {
+    blockers.push({ code: 'NO_CREW', message: 'No crew is assigned or resolvable for this task' });
+  } else if (audit && audit.eligible === false) {
+    if (audit.team_shortfall > 0) {
+      blockers.push({ code: 'TEAM_SHORTFALL', message: `Crew is short by ${audit.team_shortfall} member(s)` });
+    }
+    for (const skill of audit.missing_skills || []) {
+      blockers.push({ code: 'MISSING_SKILL', message: `No crew member covers required skill: ${skill}` });
+    }
+    for (const cert of audit.missing_certs || []) {
+      blockers.push({ code: 'MISSING_CERT', message: `No crew member holds required certification: ${cert}` });
+    }
+  }
+
+  // A required checklist step's equipment/test instrument must be confirmed
+  // available before dispatch; unconfirmed items are hard blockers.
+  for (const item of (audit && audit.equipment_to_secure) || []) {
+    blockers.push({ code: 'EQUIPMENT_UNCONFIRMED', message: `Required equipment not confirmed available: ${item}` });
+  }
+
+  if (t.permit_required && !t.permit_approved_at) {
+    blockers.push({ code: 'PERMIT_NOT_APPROVED', message: 'Permit/isolation approval is required before dispatch' });
+  }
+
+  for (const c of (audit && audit.certs_to_obtain) || []) {
+    if (!c.required) warnings.push({ code: 'RECOMMENDED_CERT', message: `Recommended certification not held: ${c.cert}` });
+  }
+  for (const skill of (audit && audit.unmapped_skills) || []) {
+    warnings.push({ code: 'UNMAPPED_SKILL', message: `Skill has no crew mapping: ${skill}` });
+  }
+
+  return { ready: blockers.length === 0, blockers, warnings };
+}
+
 // Execution KPIs per crew over an already-scoped task set.
 function cycleHours(t) {
   if (!t.actual_start || !t.actual_end) return null;
@@ -349,6 +394,7 @@ module.exports = {
   taskRequirements,
   crewSnapshot,
   taskReadiness,
+  dispatchGate,
   crewPerformanceRows,
   personPerformanceRows,
   crewRosterPersonIds,

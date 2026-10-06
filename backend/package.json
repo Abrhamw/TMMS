@@ -8,7 +8,9 @@
     "start": "node server.js",
     "dev": "node server.js",
     "fix-data": "node scripts/fixRuntimeData.js",
-    "fix-data:apply": "node scripts/fixRuntimeData.js --apply"
+    "fix-data:apply": "node scripts/fixRuntimeData.js --apply",
+    "db:backup": "node scripts/backup.js",
+    "db:verify": "node scripts/backup.js --test-restore"
   },
   "engines": {
     "node": ">=22.5.0"

@@ -12,7 +12,7 @@ const { lineCoverageFor } = require('../lineInspection');
 const { projectPointToRoute } = require('../lineGeometry');
 const { maxTaskSeq, formatTaskNumber, nextTaskNumber } = require('../taskNumber');
 const { canAssignCrew, taskVisible, authorizedCrewIds } = require('../authority');
-const { taskReadiness, taskRequirements, resolveTaskCrewId, taskCrewSource } = require('../readiness');
+const { taskReadiness, taskRequirements, resolveTaskCrewId, taskCrewSource, dispatchGate } = require('../readiness');
 const { readyCrew, scoreCrewFit } = require('../assignment');
 const { resolveTarget, infraName, assetName } = require('../target');
 const { sendMail, primaryUserForPerson, immediateBossForTask } = require('../mail');
@@ -628,6 +628,7 @@ router.get('/tasks/:id', (req, res) => {
   t.created_by_name = personLabel(t.created_by);
   t.cancelled_by_name = personLabel(t.cancelled_by);
   t.readiness = taskReadiness(t);
+  t.dispatch_gate = dispatchGate(t);
   t.target = resolveTarget({ task: t });
   const fu = taskFollowUpView(t);
   t.follow_ups = fu.followUps;
@@ -643,7 +644,38 @@ router.get('/tasks/:id/readiness', (req, res) => {
   const t = get('task', Number(req.params.id));
   if (!t) return res.status(404).json({ error: 'Task not found' });
   if (!taskVisible(req.user, t)) return res.status(404).json({ error: 'Task not found' });
-  res.json(taskReadiness(t));
+  res.json({ ...taskReadiness(t), gate: dispatchGate(t) });
+});
+
+// Record (or revoke) the permit/isolation approval that the dispatch gate
+// requires for a permit-governed task.
+router.post('/tasks/:id/permit', (req, res) => {
+  const id = Number(req.params.id);
+  const t = get('task', id);
+  if (!t) return res.status(404).json({ error: 'Task not found' });
+  if (!taskVisible(req.user, t)) return res.status(404).json({ error: 'Task not found' });
+  if (!can(req, 'task:manage') && !can(req, 'task:assign')) {
+    return res.status(403).json({ error: 'Forbidden: requires task:manage or task:assign' });
+  }
+  if (['COMPLETED', 'CANCELLED'].includes(t.status)) {
+    return res.status(409).json({ error: `Cannot change the permit of a ${t.status} task` });
+  }
+  const now = new Date().toISOString();
+  if (req.body && req.body.revoke) {
+    db.prepare('UPDATE task SET permit_reference = NULL, permit_approved_at = NULL, permit_approved_by = NULL, updated_at = ?, revision = revision + 1 WHERE id = ?')
+      .run(now, id);
+    audit(req.user, 'UPDATE', 'task_permit', id, { revoked: true });
+  } else {
+    const reference = String((req.body && req.body.reference) || '').trim();
+    if (!reference) return res.status(400).json({ error: 'A permit reference is required' });
+    db.prepare('UPDATE task SET permit_reference = ?, permit_approved_at = ?, permit_approved_by = ?, updated_at = ?, revision = revision + 1 WHERE id = ?')
+      .run(reference, now, req.user.person_id || null, now, id);
+    audit(req.user, 'UPDATE', 'task_permit', id, { reference });
+  }
+  const out = taskDetail(get('task', id));
+  out.readiness = taskReadiness(out);
+  out.dispatch_gate = dispatchGate(out);
+  res.json(out);
 });
 
 router.put('/tasks/:id/equipment-checks', (req, res) => {
@@ -1030,6 +1062,30 @@ router.post('/tasks/:id/state', (req, res) => {
   if (!tr.from.includes(t.status) && !assignable) return res.status(409).json({ error: `Cannot ${action} from status ${t.status}` });
   if (tr.needsCrew && !t.crew_id) return res.status(409).json({ error: 'Task requires an assigned crew first' });
 
+  // Hard readiness gate. taskReadiness warns; this blocks. A task may only move
+  // to IN_PROGRESS when every mandatory condition is satisfied. An authorised
+  // manager (task:manage) may override with a recorded reason; otherwise it is a
+  // hard stop that names the blockers.
+  let readinessOverride = null;
+  if (action === 'start') {
+    const gate = dispatchGate(t);
+    const overrideReason = String(req.body.readiness_override_reason || '').trim();
+    if (!gate.ready) {
+      if (!overrideReason) {
+        return res.status(409).json({
+          error: 'Task is not ready to dispatch',
+          code: 'READINESS_BLOCKED',
+          blockers: gate.blockers,
+          warnings: gate.warnings,
+        });
+      }
+      if (!can(req, 'task:manage')) {
+        return res.status(403).json({ error: 'Forbidden: overriding readiness requires task:manage' });
+      }
+      readinessOverride = { reason: overrideReason, blockers: gate.blockers };
+    }
+  }
+
   // Cancelling is a deliberate, recorded act: the caller must supply a comment
   // explaining why, which is kept on the task for the retrieved/closed record.
   const cancelReason = action === 'cancel' ? String(req.body.reason || req.body.comment || '').trim() : '';
@@ -1150,11 +1206,16 @@ router.post('/tasks/:id/state', (req, res) => {
       action, patch.cancel_reason ?? null, action, patch.cancelled_by ?? null, action, patch.cancelled_at ?? null, action, patch.status_before_cancel ?? null, id);
     if (action === 'retrieve') db.prepare('UPDATE task SET completion_summary = NULL WHERE id = ?').run(id);
     if (action === 'verify') applyCompletionSideEffects(req, get('task', id), completionCost);
+    if (readinessOverride) {
+      db.prepare('UPDATE task SET readiness_override_reason = ?, readiness_override_by = ?, readiness_override_at = ? WHERE id = ?')
+        .run(readinessOverride.reason, req.user.person_id || null, now, id);
+    }
     return get('task', id);
   });
   const auditDetail = { from: t.status, to: toStatus };
   if (action === 'cancel') auditDetail.reason = cancelReason;
   if (action === 'retrieve') auditDetail.restored_from = t.status_before_cancel || null;
+  if (readinessOverride) auditDetail.readiness_override = { reason: readinessOverride.reason, blockers: readinessOverride.blockers };
   audit(req.user, action.toUpperCase(), 'task', id, auditDetail);
   if (updatedTask.crew_id) {
     try { syncCrewStatus(updatedTask.crew_id); } catch (e) { console.error('crew status sync failed', e); }

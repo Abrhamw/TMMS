@@ -960,6 +960,14 @@ function initSchema() {
   // inclusive tower range it is responsible for.
   migrate('task', 'tower_from_id', 'ALTER TABLE task ADD COLUMN tower_from_id INTEGER REFERENCES tower(id)');
   migrate('task', 'tower_to_id', 'ALTER TABLE task ADD COLUMN tower_to_id INTEGER REFERENCES tower(id)');
+  // Permit/isolation approval and the recorded readiness override are the
+  // evidence that a hard-blocked task was authorised to start anyway.
+  migrate('task', 'permit_reference', 'ALTER TABLE task ADD COLUMN permit_reference TEXT');
+  migrate('task', 'permit_approved_at', 'ALTER TABLE task ADD COLUMN permit_approved_at TEXT');
+  migrate('task', 'permit_approved_by', 'ALTER TABLE task ADD COLUMN permit_approved_by INTEGER REFERENCES person(id)');
+  migrate('task', 'readiness_override_reason', 'ALTER TABLE task ADD COLUMN readiness_override_reason TEXT');
+  migrate('task', 'readiness_override_by', 'ALTER TABLE task ADD COLUMN readiness_override_by INTEGER REFERENCES person(id)');
+  migrate('task', 'readiness_override_at', 'ALTER TABLE task ADD COLUMN readiness_override_at TEXT');
   // Performance-aware condition snapshots: the asset monitor records how much
   // of a suggested rating came from the age baseline versus live performance
   // (loading, faults, thermal), so the change-log can explain a degradation.
