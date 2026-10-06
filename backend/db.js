@@ -6,6 +6,7 @@ const DB_PATH = process.env.TMMS_DB || path.join(__dirname, 'tmms.db');
 const db = new DatabaseSync(DB_PATH);
 db.exec('PRAGMA journal_mode = WAL;');
 db.exec('PRAGMA foreign_keys = ON;');
+db.exec('PRAGMA busy_timeout = 5000;');
 
 function initSchema() {
   db.exec(`
@@ -826,6 +827,53 @@ function initSchema() {
   CREATE INDEX IF NOT EXISTS idx_geofence_region ON geofence(region_id);
   CREATE INDEX IF NOT EXISTS idx_report_region ON report(scope_region_id);
   CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+
+  CREATE INDEX IF NOT EXISTS idx_task_finding_crew ON task_finding(crew_id);
+  CREATE INDEX IF NOT EXISTS idx_task_finding_exec ON task_finding(execution_id);
+  CREATE INDEX IF NOT EXISTS idx_attachment_creator ON attachment(created_by);
+  CREATE INDEX IF NOT EXISTS idx_attachment_item ON attachment(checklist_item_id);
+  CREATE INDEX IF NOT EXISTS idx_checklist_exec_item_item ON checklist_execution_item(execution_id, template_item_id);
+  CREATE INDEX IF NOT EXISTS idx_crew_member_active ON crew_member(crew_id, active);
+  CREATE INDEX IF NOT EXISTS idx_task_status_due ON task(status, due_date);
+  CREATE INDEX IF NOT EXISTS idx_task_assignee ON task(assigned_by);
+  CREATE INDEX IF NOT EXISTS idx_report_schedule_due ON report_schedule(active, next_run_at);
+  CREATE INDEX IF NOT EXISTS idx_certification_expiry ON certification(expires_at);
+
+  CREATE TABLE IF NOT EXISTS job (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    dedupe_key TEXT,
+    payload TEXT,
+    status TEXT NOT NULL DEFAULT 'QUEUED',
+    priority INTEGER NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 5,
+    available_at TEXT NOT NULL,
+    locked_until TEXT,
+    locked_by TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_job_dedupe ON job(dedupe_key) WHERE dedupe_key IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_job_claim ON job(status, available_at, priority);
+
+  CREATE TABLE IF NOT EXISTS applied_migration (
+    name TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS idempotency_key (
+    key TEXT PRIMARY KEY,
+    user_id INTEGER REFERENCES user(id),
+    method TEXT NOT NULL,
+    path TEXT NOT NULL,
+    status INTEGER,
+    response TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_key(created_at);
   `);
 
   migrate('task', 'tower_id', 'ALTER TABLE task ADD COLUMN tower_id INTEGER REFERENCES tower(id)');
@@ -1008,6 +1056,10 @@ function initSchema() {
     ).run();
   } catch (_) { /* non-fatal */ }
 
+  // Indexes that reference migrated columns must be created after the ALTERs
+  // above so a fresh database builds cleanly.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_checklist_exec_crew ON checklist_execution(crew_id);');
+
   // Let SQLite refresh its statistics after any new indexes/columns so the
   // planner keeps picking the indexes added above.
   try { db.exec('PRAGMA optimize;'); } catch (_) { /* non-fatal */ }
@@ -1016,6 +1068,33 @@ function initSchema() {
 function migrate(table, column, alterSql) {
   const exists = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
   if (!exists) db.exec(alterSql);
+}
+
+function hasMigration(name) {
+  try {
+    return !!db.prepare('SELECT 1 FROM applied_migration WHERE name = ?').get(name);
+  } catch (_) {
+    return false;
+  }
+}
+
+function recordMigration(name) {
+  db.prepare('INSERT OR IGNORE INTO applied_migration (name, applied_at) VALUES (?, ?)').run(name, new Date().toISOString());
+}
+
+function once(name, fn) {
+  if (hasMigration(name)) return false;
+  fn();
+  recordMigration(name);
+  return true;
+}
+
+function appliedMigrations() {
+  try {
+    return db.prepare('SELECT name, applied_at FROM applied_migration ORDER BY applied_at').all();
+  } catch (_) {
+    return [];
+  }
 }
 
 function writeAudit(action, entity, entityId, detail) {
@@ -1028,4 +1107,4 @@ function writeAudit(action, entity, entityId, detail) {
   }
 }
 
-module.exports = { db, initSchema, writeAudit };
+module.exports = { db, initSchema, writeAudit, migrate, hasMigration, recordMigration, once, appliedMigrations };

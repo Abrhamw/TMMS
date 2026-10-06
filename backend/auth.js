@@ -21,15 +21,28 @@ function verifyPassword(password, stored) {
 // ---------------------------------------------------------------------------
 // Sessions (opaque bearer tokens stored in DB)
 // ---------------------------------------------------------------------------
+const MAX_SESSIONS_PER_USER = 10;
+
 function createSession(userId) {
   const token = crypto.randomBytes(32).toString('hex');
   const now = new Date();
   const expires = new Date(now.getTime() + 12 * 3600 * 1000).toISOString();
   // Bound the session table: drop expired sessions as we go.
   db.prepare('DELETE FROM session WHERE expires_at <= ?').run(now.toISOString());
+  // Cap concurrent active sessions per account, keeping the most recent ones.
+  const active = db.prepare('SELECT id FROM session WHERE user_id = ? ORDER BY created_at DESC, id DESC').all(userId);
+  if (active.length >= MAX_SESSIONS_PER_USER) {
+    const stale = active.slice(MAX_SESSIONS_PER_USER - 1).map((s) => s.id);
+    if (stale.length) db.prepare(`DELETE FROM session WHERE id IN (${stale.map(() => '?').join(',')})`).run(...stale);
+  }
   db.prepare('INSERT INTO session (token, user_id, created_at, expires_at) VALUES (?,?,?,?)')
     .run(token, userId, now.toISOString(), expires);
   return token;
+}
+
+function revokeUserSessions(userId) {
+  if (!userId) return 0;
+  return db.prepare('DELETE FROM session WHERE user_id = ?').run(userId).changes || 0;
 }
 
 function destroySession(token) {
@@ -282,6 +295,7 @@ module.exports = {
   hashPassword,
   verifyPassword,
   createSession,
+  revokeUserSessions,
   destroySession,
   getUserFromToken,
   getUserCrew,

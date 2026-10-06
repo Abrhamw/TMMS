@@ -1,10 +1,28 @@
 const express = require('express');
 const { db, get } = require('../util');
-const { hashPassword, hasPerm, audit } = require('../auth');
+const { hashPassword, hasPerm, audit, revokeUserSessions } = require('../auth');
+const { validateBody } = require('../validation');
 
 const router = express.Router();
 
 const CONFIG_KEYS = ['language', 'unit_system', 'grid_frequency_hz', 'currency', 'date_locale', 'timezone'];
+
+const USER_CREATE_SCHEMA = {
+  username: { type: 'string', required: true, trim: true, minLength: 3, maxLength: 60 },
+  password: { type: 'string', required: true, minLength: 8, maxLength: 200 },
+  role: { type: 'string', required: true, trim: true, maxLength: 40 },
+  region_id: { type: 'integer', nullable: true },
+  person_id: { type: 'integer', nullable: true },
+  active: { type: 'boolean' },
+};
+
+const USER_UPDATE_SCHEMA = {
+  password: { type: 'string', minLength: 8, maxLength: 200 },
+  role: { type: 'string', trim: true, maxLength: 40 },
+  region_id: { type: 'integer', nullable: true },
+  person_id: { type: 'integer', nullable: true },
+  active: { type: 'boolean' },
+};
 
 // ---------------------------------------------------------------------------
 // System settings (system_config)
@@ -61,7 +79,7 @@ router.get('/users', (req, res) => {
   res.json(rows);
 });
 
-router.post('/users', (req, res) => {
+router.post('/users', validateBody(USER_CREATE_SCHEMA), (req, res) => {
   if (req.user.role !== 'ADMIN') return res.status(403).json({ error: 'Forbidden' });
   const { username, password, role, region_id, person_id, active } = req.body || {};
   const uname = String(username || '').trim().toLowerCase();
@@ -76,7 +94,7 @@ router.post('/users', (req, res) => {
   res.status(201).json({ id });
 });
 
-router.patch('/users/:id', (req, res) => {
+router.patch('/users/:id', validateBody(USER_UPDATE_SCHEMA), (req, res) => {
   if (req.user.role !== 'ADMIN') return res.status(403).json({ error: 'Forbidden' });
   const { password, role, region_id, active, person_id } = req.body || {};
   const existing = get('user', req.params.id);
@@ -91,9 +109,21 @@ router.patch('/users/:id', (req, res) => {
     const sets = Object.keys(updates).map((k) => `${k} = ?`).join(', ');
     db.prepare(`UPDATE user SET ${sets} WHERE id = ?`).run(...Object.values(updates), Number(req.params.id));
   }
+  const privilegeChanged = ['role', 'region_id', 'active', 'password_hash'].some((key) => key in updates);
+  let revoked = 0;
+  if (privilegeChanged) revoked = revokeUserSessions(Number(req.params.id));
   const { password_hash, ...auditUpdates } = updates;
-  audit(req.user, 'UPDATE', 'user', Number(req.params.id), auditUpdates);
-  res.json({ ok: true });
+  audit(req.user, 'UPDATE', 'user', Number(req.params.id), { ...auditUpdates, sessions_revoked: revoked });
+  res.json({ ok: true, sessions_revoked: revoked });
+});
+
+router.post('/users/:id/revoke-sessions', (req, res) => {
+  if (req.user.role !== 'ADMIN') return res.status(403).json({ error: 'Forbidden' });
+  const existing = get('user', req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Not found' });
+  const revoked = revokeUserSessions(Number(req.params.id));
+  audit(req.user, 'REVOKE_SESSIONS', 'user', Number(req.params.id), { revoked });
+  res.json({ ok: true, revoked });
 });
 
 router.delete('/users/:id', (req, res) => {

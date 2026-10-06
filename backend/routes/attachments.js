@@ -6,6 +6,7 @@ const { db } = require('../db');
 const { get, byClientRef } = require('../util');
 const { can, isCrewUser, isGlobal, isOnCrew, audit } = require('../auth');
 const { taskVisible } = require('../authority');
+const { detectMime, extensionFor, isAllowed } = require('../upload');
 
 const router = express.Router();
 
@@ -108,9 +109,13 @@ router.post('/tasks/:id/attachments', (req, res) => {
   if (buf.length === 0) return res.status(400).json({ error: 'Empty file payload' });
   if (buf.length > MAX_BYTES) return res.status(413).json({ error: 'File exceeds 8 MB limit' });
 
-  const orig = String(req.body.file_name || req.body.name || 'upload').trim();
-  const ext = path.extname(orig).slice(0, 10).toLowerCase();
-  const stored = `${crypto.randomUUID()}${ext || '.bin'}`;
+  const detected = detectMime(buf);
+  if (!detected || !isAllowed(detected)) {
+    return res.status(415).json({ error: 'Unsupported file type. Allowed: JPEG, PNG, WebP, PDF.', code: 'UNSUPPORTED_MEDIA_TYPE' });
+  }
+
+  const orig = String(req.body.file_name || req.body.name || 'upload').replace(/[\r\n"]/g, '').trim().slice(0, 200) || 'upload';
+  const stored = `${crypto.randomUUID()}${extensionFor(detected)}`;
   fs.writeFileSync(path.join(UPLOAD_DIR, stored), buf);
 
   const now = new Date().toISOString();
@@ -125,7 +130,7 @@ router.post('/tasks/:id/attachments', (req, res) => {
     ['PHOTO', 'DOC', 'OTHER'].includes(req.body.kind) ? req.body.kind : 'PHOTO',
     orig,
     stored,
-    req.body.mime || 'application/octet-stream',
+    detected,
     buf.length,
     req.body.lat ?? null,
     req.body.lng ?? null,

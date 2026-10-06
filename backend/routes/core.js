@@ -1,6 +1,6 @@
 const express = require('express');
 const { db, parseRow, list, get, insertRow, updateRow, safeDelete, withTx } = require('../util');
-const { can, isGlobal, audit } = require('../auth');
+const { can, isGlobal, audit, revokeUserSessions } = require('../auth');
 const { commandScope, regionBoundaryFor, pointInRegionBoundary, lineInRegionBoundary } = require('../authority');
 const { polygonFromCenter, haversine } = require('../geo');
 const { parseRouteGeometry, coordsToKm } = require('../geoimport');
@@ -339,7 +339,9 @@ function cascadeDeleteRegion(id) {
   db.prepare('DELETE FROM geofence WHERE region_id = ?').run(id);
   db.prepare('DELETE FROM report WHERE scope_region_id = ?').run(id);
   db.prepare('UPDATE org_unit SET region_id = NULL WHERE region_id = ?').run(id);
+  const regionUsers = db.prepare('SELECT id FROM user WHERE region_id = ?').all(id).map((u) => u.id);
   db.prepare('UPDATE user SET region_id = NULL WHERE region_id = ?').run(id);
+  for (const userId of regionUsers) revokeUserSessions(userId);
   db.prepare('DELETE FROM gps_validation WHERE region_id = ?').run(id);
 
   if (crewIds.length) {
