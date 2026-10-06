@@ -95,7 +95,9 @@ Replace the current `task:assign || task:manage` check with:
 The existing status guard (only `DRAFT`, `SCHEDULED`, `ASSIGNED`), the
 all-or-nothing validation against the current required set, the delete/reinsert
 transaction, and the audit entry are unchanged. A crew user off the task's crew
-still receives `403`.
+cannot see the task at all: the existing `taskVisible` guard returns
+`404 Task not found` before the permission check, consistent with the other task
+routes.
 
 ## 5. Frontend
 

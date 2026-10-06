@@ -55,7 +55,7 @@
 
 - [ ] Step 1: Replace the guard at the top of the `PUT /tasks/:id/equipment-checks` handler with: allow when `can(req,'task:assign') || can(req,'task:manage')`, else allow when `isCrewUser(req.user) && isOnCrew(req.user, t.crew_id)`, else `403`.
 - [ ] Step 2: Confirm `isCrewUser` and `isOnCrew` are already imported/defined in this module (they are used by the state handler).
-- [ ] Step 3: Verify by API: as `ayu` (crew 1) PUT a full check on a task assigned to crew 1 -> 200; PUT on a task of another crew -> 403; as `admin` -> 200.
+- [ ] Step 3: Verify by API: as `ayu` (crew 1) PUT a full check on a task assigned to crew 1 -> 200; PUT on a task of another crew -> 404 (task not visible); as `admin` -> 200.
 
 ## Phase E2 - Frontend
 
