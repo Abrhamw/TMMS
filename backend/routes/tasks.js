@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, list, get, insertRow, updateRow, withTx, parseRow, byClientRef, parsePage, paginate } = require('../util');
+const { db, list, get, insertRow, updateRow, withTx, parseRow, byClientRef, parsePage } = require('../util');
 const { haversine } = require('../geo');
 const { evaluateViolation, flag } = require('../geofence');
 const { can, isGlobal, audit, isCrewUser, isOnCrew, scopeRows } = require('../auth');
@@ -436,18 +436,32 @@ function deriveWorkItems(source) {
 }
 
 function scopedTasks(req) {
-  let rows = list('task').filter((t) => taskVisible(req.user, t));
   const { status, region_id, task_type, priority, overdue, q, crew_id, line_id, tower_id, asset_id, substation_id } = req.query;
-  if (status) rows = rows.filter((t) => t.status === status);
-  if (region_id) rows = rows.filter((t) => t.region_id === Number(region_id));
-  if (task_type) rows = rows.filter((t) => t.task_type === task_type);
-  if (priority) rows = rows.filter((t) => t.priority === priority);
-  if (crew_id) rows = rows.filter((t) => t.crew_id === Number(crew_id));
-  if (line_id) rows = rows.filter((t) => t.line_id === Number(line_id));
-  if (tower_id) rows = rows.filter((t) => t.tower_id === Number(tower_id));
-  if (asset_id) rows = rows.filter((t) => t.asset_id === Number(asset_id));
-  if (substation_id) rows = rows.filter((t) => t.substation_id === Number(substation_id));
-  if (q) rows = rows.filter((t) => (t.title + t.task_number).toLowerCase().includes(q.toLowerCase()));
+  const where = [];
+  const params = [];
+  // Coarse visibility prefilter: every non-global role is bounded to its own
+  // region, so scan only that slice and apply the exact scope rule in JS below.
+  // This keeps the query off a full-table scan without re-implementing the
+  // command/domain scope rules in SQL.
+  if (!isGlobal(req.user) && req.user.region_id != null) {
+    where.push('region_id = ?');
+    params.push(Number(req.user.region_id));
+  }
+  if (status) { where.push('status = ?'); params.push(status); }
+  if (region_id) { where.push('region_id = ?'); params.push(Number(region_id)); }
+  if (task_type) { where.push('task_type = ?'); params.push(task_type); }
+  if (priority) { where.push('priority = ?'); params.push(priority); }
+  if (crew_id) { where.push('crew_id = ?'); params.push(Number(crew_id)); }
+  if (line_id) { where.push('line_id = ?'); params.push(Number(line_id)); }
+  if (tower_id) { where.push('tower_id = ?'); params.push(Number(tower_id)); }
+  if (asset_id) { where.push('asset_id = ?'); params.push(Number(asset_id)); }
+  if (substation_id) { where.push('substation_id = ?'); params.push(Number(substation_id)); }
+  const sql = `SELECT * FROM task${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY id`;
+  let rows = db.prepare(sql).all(...params).filter((t) => taskVisible(req.user, t));
+  if (q) {
+    const needle = String(q).toLowerCase();
+    rows = rows.filter((t) => (t.title + t.task_number).toLowerCase().includes(needle));
+  }
   if (overdue === 'true') {
     const now = new Date().toISOString();
     rows = rows.filter((t) => OPEN.includes(t.status) && t.due_date < now);
@@ -457,12 +471,19 @@ function scopedTasks(req) {
 
 router.get('/tasks', (req, res) => {
   const page = parsePage(req.query);
-  let rows = taskDetails(scopedTasks(req));
+  let rows = scopedTasks(req);
   if (page.q) {
     rows = rows.filter((t) => [t.task_number, t.title, t.status, t.task_type, t.priority]
       .some((v) => String(v || '').toLowerCase().includes(page.q)));
   }
-  res.json(paginate(rows, page));
+  // Enrich only the page, not the whole match set: taskDetails batches a dozen
+  // lookups per row, so paginating before it is what keeps this endpoint flat as
+  // the register grows.
+  if (!page.paginated) return res.json(taskDetails(rows));
+  const total = rows.length;
+  const start = (page.page - 1) * page.pageSize;
+  const items = taskDetails(rows.slice(start, start + page.pageSize));
+  res.json({ items, total, page: page.page, page_size: page.pageSize });
 });
 
 function csvField(v) {
