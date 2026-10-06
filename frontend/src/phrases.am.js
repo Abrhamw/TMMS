@@ -1,11 +1,6 @@
 // English -> Amharic UI phrase map for runtime DOM translation.
 // Generated dictionary; keys must match rendered text exactly (whitespace-normalized).
 export default {
-"Equipment":"መሳሪያ",
-"OK":"እሺ",
-"Not OK":"እሺ አይደለም",
-"Done":"ተጠናቀቀ",
-"Upload photos":"ፎቶዎችን ጫን",
 "Dispatch readiness":"የማሰማራት ዝግጁነት",
 "Crew readiness":"የቡድን ዝግጁነት",
 "No checklist template is linked, so no capability requirements were derived.":"ምንም የማረጋገጫ ዝርዝር አብነት አልተገናኘም፤ ስለዚህ የብቃት መስፈርቶች አልተገኙም።",
