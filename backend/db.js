@@ -1170,6 +1170,35 @@ function initSchema() {
   CREATE INDEX IF NOT EXISTS idx_defect_owner ON defect(owner_person_id);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_defect_finding ON defect(finding_id) WHERE finding_id IS NOT NULL;
   CREATE UNIQUE INDEX IF NOT EXISTS idx_defect_client_ref ON defect(client_ref) WHERE client_ref IS NOT NULL;
+
+  -- Budget/cost-center layer: work is attributable to a financial cost center
+  -- so committed and actual spend can be measured against an approved ceiling
+  -- for a reporting period (YYYY-MM).
+  CREATE TABLE IF NOT EXISTS cost_center (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    region_id INTEGER REFERENCES region(id),
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE INDEX IF NOT EXISTS idx_cost_center_region ON cost_center(region_id, active);
+
+  CREATE TABLE IF NOT EXISTS budget (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cost_center_id INTEGER NOT NULL REFERENCES cost_center(id),
+    period TEXT NOT NULL,
+    amount REAL NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    notes TEXT,
+    created_by INTEGER REFERENCES person(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_budget_cc_period ON budget(cost_center_id, period);
   `);
 
   migrate('task', 'tower_id', 'ALTER TABLE task ADD COLUMN tower_id INTEGER REFERENCES tower(id)');
@@ -1274,6 +1303,9 @@ function initSchema() {
   migrate('task', 'management_acceptance_by', 'ALTER TABLE task ADD COLUMN management_acceptance_by INTEGER REFERENCES person(id)');
   migrate('task', 'closed_at', 'ALTER TABLE task ADD COLUMN closed_at TEXT');
   migrate('task', 'closed_by', 'ALTER TABLE task ADD COLUMN closed_by INTEGER REFERENCES person(id)');
+  // Financial attribution: a task resolves to an explicit cost center or to the
+  // default cost center of its region, so spend can be checked against budget.
+  migrate('task', 'cost_center_id', 'ALTER TABLE task ADD COLUMN cost_center_id INTEGER REFERENCES cost_center(id)');
   // Performance-aware condition snapshots: the asset monitor records how much
   // of a suggested rating came from the age baseline versus live performance
   // (loading, faults, thermal), so the change-log can explain a degradation.

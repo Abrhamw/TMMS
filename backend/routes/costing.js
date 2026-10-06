@@ -5,6 +5,7 @@ const { db, get, insertRow, list, byClientRef } = require('../util');
 const { can, audit } = require('../auth');
 const { taskVisible } = require('../authority');
 const { COST_CATEGORIES, COMMITMENT_STATUSES, taskCostSummary, closureGates } = require('../costing');
+const budget = require('../budget');
 
 const router = express.Router();
 
@@ -104,6 +105,18 @@ router.post('/tasks/:id/cost-commitments', (req, res) => {
   if (!COST_CATEGORIES.has(category)) return res.status(400).json({ error: `category must be one of: ${[...COST_CATEGORIES].join(', ')}` });
   const amount = Number(body.amount);
   if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: 'a non-negative amount is required' });
+  // Budget control: a commitment that pushes the cost center past its approved
+  // ceiling is blocked unless management explicitly overrides with a reason.
+  const check = budget.checkCommitment(t, amount);
+  let budgetOverride = null;
+  if (check.over_budget) {
+    const override = body.budget_override === true || body.budget_override === 'true';
+    const reason = String(body.budget_override_reason || '').trim();
+    if (!override || !reason) {
+      return res.status(409).json({ error: 'Budget exceeded for cost center', code: 'BUDGET_EXCEEDED', ...check });
+    }
+    budgetOverride = { reason, ...check };
+  }
   const now = new Date().toISOString();
   const id = insertRow('cost_commitment', {
     task_id: t.id, category, description: body.description || null,
@@ -111,7 +124,7 @@ router.post('/tasks/:id/cost-commitments', (req, res) => {
     reference: body.reference || null, status: body.status || 'OPEN',
     committed_by: req.user.person_id || null, created_at: now, updated_at: now,
   });
-  audit(req.user, 'CREATE', 'cost_commitment', id, { task_id: t.id, category, amount });
+  audit(req.user, 'CREATE', 'cost_commitment', id, { task_id: t.id, category, amount, budget_override: budgetOverride });
   res.status(201).json(get('cost_commitment', id));
 });
 

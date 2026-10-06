@@ -2,6 +2,7 @@
 
 const { db } = require('./util');
 const { dispatchGate } = require('./readiness');
+const { resolveCostCenter, taskBudgetPeriod, budgetAmount } = require('./budget');
 
 const OPEN_STATES = ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION'];
 const CLOSED_STATES = ['COMPLETED', 'CANCELLED', 'FAILED'];
@@ -190,6 +191,58 @@ function laborKpis(taskIds, days) {
   };
 }
 
+function budgetKpis(tasks) {
+  const groups = new Map();
+  for (const t of tasks) {
+    const cc = resolveCostCenter(t);
+    if (!cc) continue;
+    const period = taskBudgetPeriod(t);
+    const key = `${cc.id}|${period}`;
+    if (!groups.has(key)) groups.set(key, { cost_center_id: cc.id, code: cc.code, name: cc.name, period, budgeted: budgetAmount(cc.id, period), task_ids: [] });
+    groups.get(key).task_ids.push(t.id);
+  }
+  let budgetedTotal = 0;
+  let committedTotal = 0;
+  let actualTotal = 0;
+  let over = 0;
+  let unbudgeted = 0;
+  const items = [];
+  for (const g of groups.values()) {
+    const ph = g.task_ids.map(() => '?').join(',');
+    const sum = (sql) => Number(db.prepare(sql).get(...g.task_ids).s) || 0;
+    const committed = round2(sum(`SELECT IFNULL(SUM(amount),0) s FROM cost_commitment WHERE status = 'OPEN' AND task_id IN (${ph})`));
+    const actual = round2(
+      sum(`SELECT IFNULL(SUM(labor_cost),0) s FROM time_entry WHERE status = 'APPROVED' AND task_id IN (${ph})`) +
+      sum(`SELECT IFNULL(SUM(cost),0) s FROM resource_usage WHERE status = 'APPROVED' AND task_id IN (${ph})`) +
+      sum(`SELECT IFNULL(SUM(cost),0) s FROM material_transaction WHERE type IN ('CONSUMPTION','SCRAP') AND task_id IN (${ph})`) +
+      sum(`SELECT IFNULL(SUM(amount),0) s FROM cost_transaction WHERE status = 'APPROVED' AND task_id IN (${ph})`) +
+      sum(`SELECT IFNULL(SUM(cost),0) s FROM asset_maintenance_event WHERE task_id IN (${ph})`)
+    );
+    const exposure = round2(committed + actual);
+    const overBudget = g.budgeted > 0 && exposure > g.budgeted;
+    if (overBudget) over += 1;
+    if (g.budgeted <= 0) unbudgeted += 1;
+    budgetedTotal += g.budgeted;
+    committedTotal += committed;
+    actualTotal += actual;
+    items.push({
+      cost_center_id: g.cost_center_id, cost_center_code: g.code, cost_center_name: g.name, period: g.period,
+      budgeted: g.budgeted, committed, actual, exposure,
+      available: round2(g.budgeted - exposure), over_budget: overBudget, work_packages: g.task_ids.length,
+    });
+  }
+  items.sort((a, b) => (Number(b.over_budget) - Number(a.over_budget)) || (b.exposure - a.exposure));
+  return {
+    budgeted: round2(budgetedTotal),
+    committed: round2(committedTotal),
+    actual: round2(actualTotal),
+    available: round2(budgetedTotal - committedTotal - actualTotal),
+    over_budget_cost_centers: over,
+    unbudgeted_cost_centers: unbudgeted,
+    by_cost_center: items,
+  };
+}
+
 function build(tasks, opts = {}) {
   const days = Number(opts.days) > 0 ? Number(opts.days) : 30;
   const ids = tasks.map((t) => t.id);
@@ -202,9 +255,10 @@ function build(tasks, opts = {}) {
     materials: materialKpis(),
     defects: defectKpis(),
     costs: costKpis(ids),
+    budgets: budgetKpis(tasks),
     labor: laborKpis(ids, days),
     reliability: reliability(days),
   };
 }
 
-module.exports = { OPEN_STATES, CLOSED_STATES, taskKpis, readiness, resourceKpis, materialKpis, defectKpis, costKpis, laborKpis, reliability, build };
+module.exports = { OPEN_STATES, CLOSED_STATES, taskKpis, readiness, resourceKpis, materialKpis, defectKpis, costKpis, budgetKpis, laborKpis, reliability, build };
