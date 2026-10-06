@@ -211,7 +211,6 @@ export default function ExecutiveSummary() {
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [drawer, setDrawer] = useState(null);
-  const [subs, setSubs] = useState(null);
   const [intFilter, setIntFilter] = useState('ALL');
   const [concDim, setConcDim] = useState('category');
   const user = getStoredUser();
@@ -226,16 +225,6 @@ export default function ExecutiveSummary() {
   useEffect(() => {
     api.get('/regions').then(setRegions).catch(() => {});
   }, []);
-
-  useEffect(() => { setSubs(null); }, [region]);
-
-  useEffect(() => {
-    if (drawer !== 'assets' || subs !== null) return;
-    const suffix = region ? `?region_id=${region}` : '';
-    api.get(`/substations${suffix}`)
-      .then((rows) => setSubs(Array.isArray(rows) ? rows : []))
-      .catch(() => setSubs([]));
-  }, [drawer, subs, region]);
 
   const load = useCallback((force) => {
     const qs = new URLSearchParams();
@@ -304,7 +293,6 @@ export default function ExecutiveSummary() {
   const transformerCount = (summary.asset_mix || [])
     .filter((row) => String(row.asset_type || '').toUpperCase().includes('TRANSFORMER'))
     .reduce((n, row) => n + (row.count || 0), 0);
-  const regionName = (id) => regions.find((r) => r.id === id)?.name || `Region ${id}`;
   const interventions = summary.interventions || [];
   const byStatus = summary.tasks?.by_status || {};
 
@@ -329,7 +317,7 @@ export default function ExecutiveSummary() {
   };
 
   const tiles = [
-    { key: 'assets', icon: <Boxes size={13} />, label: 'Assets in service', value: portfolio.assets ?? 0, sub: `${portfolio.regions ?? 0} regions · ${portfolio.lines ?? 0} lines`, open: 'assets' },
+    { key: 'assets', icon: <Boxes size={13} />, label: 'Assets in service', value: portfolio.assets ?? 0, sub: `${portfolio.regions ?? 0} regions · ${portfolio.lines ?? 0} lines · ${fmtNum(portfolio.substations)} substations`, open: 'assets' },
     { key: 'condition', icon: <Activity size={13} />, label: 'Mean condition', value: meanCondition ?? '—', sub: `${condition.assessed ?? 0} assessed`, tone: meanCondition != null && meanCondition <= 5 ? 'bad' : meanCondition != null && meanCondition <= 7 ? 'warn' : undefined, spark: conditionPoints.map((p) => p.value), open: 'condition' },
     { key: 'capital', icon: <CircleDollarSign size={13} />, label: 'Capital value', value: valuation.current ?? 0, sub: `RCN ${fmtMoney(valuation.rcn ?? 0, currency)}`, open: 'assets' },
     { key: 'spend', icon: <Wallet size={13} />, label: '12-month spend', value: summary.maintenance_cost?.totals?.spend ?? 0, sub: `${summary.maintenance_cost?.totals?.count ?? 0} events`, spark: spendPoints.map((p) => p.value), open: 'spend' },
@@ -576,24 +564,6 @@ export default function ExecutiveSummary() {
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Condition mix</h4>
               {CONDITION.map((c) => <Bar key={c.key} label={c.label} value={condition[c.key] || 0} max={portfolio.assets || 1} color={c.color} />)}
-            </div>
-            <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Substations</h4>
-              {subs === null ? (
-                <div className="exec-empty">Loading substations…</div>
-              ) : subs.length ? (
-                <div style={{ maxHeight: 320, overflow: 'auto' }}>
-                  {subs.map((s) => (
-                    <Row
-                      key={s.id}
-                      left={<><b>{s.substation_id}</b> · {s.name}</>}
-                      right={`${regionName(s.region_id)} · ${(s.voltage_levels || []).join(', ') || '—'} · ${String(s.operational_status || '').replace(/_/g, ' ')}`}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div className="exec-empty">No substations in scope</div>
-              )}
             </div>
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Condition-adjusted value</h4>
