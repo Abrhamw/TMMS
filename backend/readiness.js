@@ -193,6 +193,23 @@ function dispatchGate(t) {
     blockers.push({ code: 'EQUIPMENT_UNCONFIRMED', message: `Required equipment not confirmed available: ${item}` });
   }
 
+  // A reserved maintenance resource that is out of service or past calibration
+  // cannot be dispatched. Missing reservations stay advisory: the register does
+  // not yet know which resources a task needs.
+  const now = new Date().toISOString();
+  const reserved = db.prepare(
+    "SELECT r.name, r.status, r.calibration_expiry FROM resource_reservation rv JOIN maintenance_resource r ON r.id = rv.resource_id WHERE rv.task_id = ? AND rv.status = 'RESERVED'"
+  ).all(t.id);
+  for (const r of reserved) {
+    if (r.status === 'OUT_OF_SERVICE' || r.status === 'LOST' || r.status === 'RETIRED') {
+      blockers.push({ code: 'RESOURCE_UNAVAILABLE', message: `Reserved resource is ${r.status.toLowerCase().replace('_', ' ')}: ${r.name}` });
+    } else if (r.status === 'MAINTENANCE') {
+      blockers.push({ code: 'RESOURCE_UNAVAILABLE', message: `Reserved resource is under maintenance: ${r.name}` });
+    } else if (r.calibration_expiry && r.calibration_expiry < now) {
+      blockers.push({ code: 'RESOURCE_CALIBRATION_DUE', message: `Reserved resource calibration lapsed: ${r.name}` });
+    }
+  }
+
   if (t.permit_required && !t.permit_approved_at) {
     blockers.push({ code: 'PERMIT_NOT_APPROVED', message: 'Permit/isolation approval is required before dispatch' });
   }

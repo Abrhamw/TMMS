@@ -101,6 +101,7 @@ app.use('/api', require('./routes/assets'));
 app.use('/api', require('./routes/crews'));
 app.use('/api', require('./routes/tasks'));
 app.use('/api', require('./routes/labor'));
+app.use('/api', require('./routes/resources'));
 app.use('/api', require('./routes/attachments').router);
 app.use('/api', require('./routes/schedules'));
 app.use('/api', require('./routes/checklists'));

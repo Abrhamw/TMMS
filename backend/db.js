@@ -925,6 +925,86 @@ function initSchema() {
   CREATE INDEX IF NOT EXISTS idx_time_entry_person ON time_entry(person_id, work_date);
   CREATE INDEX IF NOT EXISTS idx_time_entry_status ON time_entry(status);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_time_entry_client_ref ON time_entry(client_ref) WHERE client_ref IS NOT NULL;
+
+  -- Maintenance resource register. Vehicles, lifting gear, generators and test
+  -- sets are controlled items in their own right: they carry a custodian, a
+  -- calibration clock and a status, distinct from the electrical assets they
+  -- service.
+  CREATE TABLE IF NOT EXISTS maintenance_resource (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'TOOL',
+    status TEXT NOT NULL DEFAULT 'AVAILABLE',
+    serial_number TEXT,
+    location TEXT,
+    home_region_id INTEGER REFERENCES region(id),
+    custodian_person_id INTEGER REFERENCES person(id),
+    capacity TEXT,
+    calibration_expiry TEXT,
+    certification_required TEXT,
+    operating_hours REAL NOT NULL DEFAULT 0,
+    odometer REAL NOT NULL DEFAULT 0,
+    cost_rate REAL,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    notes TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE INDEX IF NOT EXISTS idx_resource_status ON maintenance_resource(status, category);
+  CREATE INDEX IF NOT EXISTS idx_resource_region ON maintenance_resource(home_region_id);
+
+  -- A reservation locks a resource to a task window and is what stops two crews
+  -- from being dispatched with the same test set.
+  CREATE TABLE IF NOT EXISTS resource_reservation (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource_id INTEGER NOT NULL REFERENCES maintenance_resource(id),
+    task_id INTEGER REFERENCES task(id),
+    reserved_from TEXT NOT NULL,
+    reserved_to TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'RESERVED',
+    reserved_by INTEGER REFERENCES person(id),
+    notes TEXT,
+    client_ref TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_reservation_resource ON resource_reservation(resource_id, reserved_from, reserved_to);
+  CREATE INDEX IF NOT EXISTS idx_reservation_task ON resource_reservation(task_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_reservation_client_ref ON resource_reservation(client_ref) WHERE client_ref IS NOT NULL;
+
+  -- Actual resource usage captured in the field. Approved rows are immutable;
+  -- a correction is a new adjustment entry, never a silent edit.
+  CREATE TABLE IF NOT EXISTS resource_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource_id INTEGER NOT NULL REFERENCES maintenance_resource(id),
+    reservation_id INTEGER REFERENCES resource_reservation(id),
+    task_id INTEGER REFERENCES task(id),
+    crew_id INTEGER REFERENCES crew(id),
+    started_at TEXT,
+    ended_at TEXT,
+    operating_hours REAL NOT NULL DEFAULT 0,
+    odometer_start REAL,
+    odometer_end REAL,
+    cost_rate REAL,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    cost REAL,
+    notes TEXT,
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    approved_by INTEGER REFERENCES person(id),
+    approved_at TEXT,
+    rejected_reason TEXT,
+    client_ref TEXT,
+    created_by INTEGER REFERENCES person(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE INDEX IF NOT EXISTS idx_resource_usage_resource ON resource_usage(resource_id, started_at);
+  CREATE INDEX IF NOT EXISTS idx_resource_usage_task ON resource_usage(task_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_resource_usage_client_ref ON resource_usage(client_ref) WHERE client_ref IS NOT NULL;
   `);
 
   migrate('task', 'tower_id', 'ALTER TABLE task ADD COLUMN tower_id INTEGER REFERENCES tower(id)');
