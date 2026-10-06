@@ -555,7 +555,7 @@ export default function TaskDetail() {
             <div className="box mt">
               <div className="spread" style={{ gap: 8, flexWrap: 'wrap' }}>
                 <b>Recommended equipment availability</b>
-                {(canAssign || canExecute) && ['DRAFT', 'SCHEDULED', 'ASSIGNED'].includes(task.status) && (
+                {canAssign && ['DRAFT', 'SCHEDULED', 'ASSIGNED'].includes(task.status) && (
                   <button className="btn btn-sm btn-primary" disabled={equipmentBusy} onClick={saveEquipmentChecks}>
                     {equipmentBusy ? 'Saving…' : 'Save checks'}
                   </button>
@@ -567,12 +567,12 @@ export default function TaskDetail() {
                     <input
                       type="checkbox"
                       checked={equipmentDraft[item.equipment] === true}
-                      disabled={!(canAssign || canExecute) || !['DRAFT', 'SCHEDULED', 'ASSIGNED'].includes(task.status) || equipmentBusy}
+                      disabled={!canAssign || !['DRAFT', 'SCHEDULED', 'ASSIGNED'].includes(task.status) || equipmentBusy}
                       onChange={(e) => setEquipmentDraft({ ...equipmentDraft, [item.equipment]: e.target.checked })}
                     />
                     <span>{item.equipment}</span>
-                    <span className={equipmentDraft[item.equipment] === true ? 'ok' : item.answered ? 'warn' : 'muted'}>
-                      {equipmentDraft[item.equipment] === true ? 'Available / used' : item.answered ? 'Missed' : 'Unanswered'}
+                    <span className={equipmentDraft[item.equipment] === true ? 'ok' : 'warn'}>
+                      {equipmentDraft[item.equipment] === true ? 'Available / used' : 'Missed'}
                     </span>
                   </label>
                 ))}

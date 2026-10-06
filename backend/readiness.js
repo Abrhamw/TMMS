@@ -75,26 +75,6 @@ function taskRequirements(t) {
   return mergeRequirements(reqs);
 }
 
-// The required equipment names that have no recorded availability answer yet.
-function missingEquipmentNames(required, recorded) {
-  const have = new Set(recorded || []);
-  return (required || []).filter((name) => !have.has(name)).sort();
-}
-
-// Whether a task's pre-start equipment check is complete: every item its
-// checklist requires must carry a recorded availability answer. Returns the
-// missing names, or null when nothing is outstanding. A task whose checklist
-// requires no equipment has nothing to check and never blocks.
-function equipmentCheckBlocker(t) {
-  if (!t) return null;
-  const required = (taskRequirements(t) || {}).equipment || [];
-  if (!required.length) return null;
-  const recorded = db.prepare('SELECT equipment_name FROM task_equipment_check WHERE task_id = ?')
-    .all(t.id).map((r) => r.equipment_name);
-  const missing = missingEquipmentNames(required, recorded);
-  return missing.length ? missing : null;
-}
-
 // A crew shaped for the dispatch evaluator (crew_type + members + valid certs)
 // plus the roster/certification detail the readiness views render.
 function crewSnapshot(crewId) {
@@ -175,7 +155,6 @@ function taskReadiness(t) {
     equipment_checks: equipmentList.map((name) => ({
       equipment: name,
       available: equipmentChecks.get(name) === true,
-      answered: equipmentChecks.has(name),
       status: equipmentChecks.get(name) === true ? 'USED' : 'MISSED',
     })),
     warnings: evaluation ? evaluation.warnings.map((w) => w.message) : [],
@@ -367,8 +346,6 @@ module.exports = {
   resolveTaskCrewId,
   taskCrewSource,
   taskRequirements,
-  missingEquipmentNames,
-  equipmentCheckBlocker,
   crewSnapshot,
   taskReadiness,
   crewPerformanceRows,

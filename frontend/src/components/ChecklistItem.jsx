@@ -1,7 +1,6 @@
-import { Button } from '../ui/Button';
+import { SearchSelect } from '../components';
 import { getDevicePosition } from './MapPicker';
 import { parseStored } from '../checklistFormat';
-import { t } from '../i18n';
 
 // One checklist step input, shared by every execution surface so PASS/FAIL,
 // numeric, select, GPS and free-text steps behave identically wherever a crew
@@ -11,10 +10,9 @@ export default function ChecklistItem({ item, state, setState }) {
 
   if (item.response_type === 'PASS_FAIL' || item.response_type === 'YES_NO') {
     return (
-      <div className="flex flex-wrap gap-2">
-        <Button variant={state.value === true ? 'primary' : 'outline'} size="lg" onClick={() => set(true)}>{t('ok')}</Button>
-        <Button variant={state.value === false ? 'danger' : 'outline'} size="lg" onClick={() => set(false)}>{t('notOk')}</Button>
-      </div>
+      <SearchSelect value={state.value ?? ''} onChange={(e) => set(e.target.value === 'true' ? true : e.target.value === 'false' ? false : null)}>
+        <option value="">Select…</option><option value="true">Pass / Yes</option><option value="false">Fail / No</option>
+      </SearchSelect>
     );
   }
   if (item.response_type === 'NUMERIC') {
@@ -29,11 +27,10 @@ export default function ChecklistItem({ item, state, setState }) {
   if (item.response_type === 'SELECT') {
     const opts = parseStored(item.pass_criteria)?.options || [];
     return (
-      <div className="flex flex-wrap gap-2">
-        {opts.map((o) => (
-          <Button key={o} variant={state.value === o ? 'primary' : 'outline'} size="lg" onClick={() => set(o)}>{o}</Button>
-        ))}
-      </div>
+      <SearchSelect value={state.value ?? ''} onChange={(e) => set(e.target.value)}>
+        <option value="">Select…</option>
+        {opts.map((o) => <option key={o} value={o}>{o}</option>)}
+      </SearchSelect>
     );
   }
   if (item.response_type === 'GPS_POINT') {

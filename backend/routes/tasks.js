@@ -12,7 +12,7 @@ const { lineCoverageFor } = require('../lineInspection');
 const { projectPointToRoute } = require('../lineGeometry');
 const { maxTaskSeq, formatTaskNumber, nextTaskNumber } = require('../taskNumber');
 const { canAssignCrew, taskVisible, authorizedCrewIds } = require('../authority');
-const { taskReadiness, taskRequirements, equipmentCheckBlocker, resolveTaskCrewId, taskCrewSource } = require('../readiness');
+const { taskReadiness, taskRequirements, resolveTaskCrewId, taskCrewSource } = require('../readiness');
 const { readyCrew, scoreCrewFit } = require('../assignment');
 const { resolveTarget, infraName, assetName } = require('../target');
 const { sendMail, primaryUserForPerson, immediateBossForTask } = require('../mail');
@@ -651,9 +651,8 @@ router.put('/tasks/:id/equipment-checks', (req, res) => {
   const t = get('task', id);
   if (!t) return res.status(404).json({ error: 'Task not found' });
   if (!taskVisible(req.user, t)) return res.status(404).json({ error: 'Task not found' });
-  const crewMayCheck = isCrewUser(req.user) && isOnCrew(req.user, t.crew_id);
-  if (!can(req, 'task:assign') && !can(req, 'task:manage') && !crewMayCheck) {
-    return res.status(403).json({ error: 'Forbidden: requires task:assign, task:manage, or membership of the assigned crew' });
+  if (!can(req, 'task:assign') && !can(req, 'task:manage')) {
+    return res.status(403).json({ error: 'Forbidden: requires task:assign or task:manage' });
   }
   if (!['DRAFT', 'SCHEDULED', 'ASSIGNED'].includes(t.status)) {
     return res.status(409).json({ error: 'Equipment availability must be checked before work starts' });
@@ -1045,20 +1044,6 @@ router.post('/tasks/:id/state', (req, res) => {
     if (blocker) {
       return res.status(409).json({
         error: `Checklist incomplete: ${blocker}. Finish and submit the checklist before ${action === 'verify' ? 'completing' : 'submitting'} the task.`,
-      });
-    }
-  }
-
-  // Before work starts, the assigned crew must have recorded availability for
-  // every item the checklist requires. An item marked unavailable is a valid
-  // answer; only unanswered items block. Supervisors forcing Start are held to
-  // the same gate as the crew.
-  if (action === 'start') {
-    const missing = equipmentCheckBlocker(t);
-    if (missing) {
-      return res.status(409).json({
-        error: `Equipment check incomplete: ${missing.join(', ')}. Record equipment availability before starting work.`,
-        missing_equipment: missing,
       });
     }
   }
