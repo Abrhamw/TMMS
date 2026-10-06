@@ -5,6 +5,7 @@ import { SearchSelect, Page, Pill, Modal, ErrorNote, Loading, PrintButton, Progr
 import { can, getStoredUser, getStoredToken } from '../auth';
 import DocumentReport from '../components/DocumentReport';
 import ExecutionDetail from '../components/ExecutionDetail';
+import ChecklistItem from '../components/ChecklistItem';
 import { t } from '../i18n';
 import { getDevicePosition } from '../components/MapPicker';
 import Comments from '../components/Comments';
@@ -1100,32 +1101,8 @@ function ItemInput({ item, state, setState, target }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
-  if (item.response_type === 'PASS_FAIL' || item.response_type === 'YES_NO') {
-    return (
-      <SearchSelect value={state.value ?? ''} onChange={(e) => set(e.target.value === 'true' ? true : e.target.value === 'false' ? false : null)}>
-        <option value="">Select…</option>
-        <option value="true">Pass / Yes</option>
-        <option value="false">Fail / No</option>
-      </SearchSelect>
-    );
-  }
-  if (item.response_type === 'NUMERIC') {
-    const pc = item.pass_criteria;
-    return (
-      <div className="flex">
-        <input type="number" style={{ width: 180 }} value={state.value ?? ''} onChange={(e) => set(e.target.value === '' ? null : Number(e.target.value))} placeholder="Enter value" />
-        {pc && <span className="muted">Pass range: {pc.min}–{pc.max} {pc.unit || ''}</span>}
-      </div>
-    );
-  }
-  if (item.response_type === 'SELECT') {
-    const opts = item.pass_criteria?.options || [];
-    return (
-      <SearchSelect value={state.value ?? ''} onChange={(e) => set(e.target.value)}>
-        <option value="">Select…</option>
-        {opts.map((o) => <option key={o} value={o}>{o}</option>)}
-      </SearchSelect>
-    );
+  if (item.response_type === 'PASS_FAIL' || item.response_type === 'YES_NO' || item.response_type === 'SELECT' || item.response_type === 'NUMERIC') {
+    return <ChecklistItem item={item} state={state} setState={setState} />;
   }
   if (item.response_type === 'GPS_POINT') {
     let pos = null;

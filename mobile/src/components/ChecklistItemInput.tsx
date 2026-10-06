@@ -81,8 +81,8 @@ export function ChecklistItemInput({ item, value, comment, onValueChange, onComm
           value={value}
           onSelect={onValueChange}
           options={[
-            { label: 'Yes / Pass', value: true },
-            { label: 'No / Fail', value: false },
+            { label: 'OK', value: true },
+            { label: 'Not OK', value: false },
           ]}
         />
       ) : null}
