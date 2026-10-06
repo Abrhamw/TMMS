@@ -874,6 +874,57 @@ function initSchema() {
     created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_key(created_at);
+
+  -- Effective-dated labor rates. Rates are append-only: a new rate is a new
+  -- row, and every time entry keeps the rate basis it was costed with.
+  CREATE TABLE IF NOT EXISTS labor_rate (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id INTEGER REFERENCES person(id),
+    grade TEXT,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    hourly_rate REAL NOT NULL,
+    effective_from TEXT NOT NULL,
+    notes TEXT,
+    created_by INTEGER REFERENCES person(id),
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_labor_rate_person ON labor_rate(person_id, effective_from);
+
+  -- Transaction-level labor capture. Approved rows are immutable; a correction
+  -- is recorded as a new adjustment entry, never a silent edit.
+  CREATE TABLE IF NOT EXISTS time_entry (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES task(id),
+    person_id INTEGER NOT NULL REFERENCES person(id),
+    crew_id INTEGER REFERENCES crew(id),
+    work_date TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'NORMAL',
+    started_at TEXT,
+    ended_at TEXT,
+    break_minutes REAL NOT NULL DEFAULT 0,
+    travel_minutes REAL NOT NULL DEFAULT 0,
+    standby_minutes REAL NOT NULL DEFAULT 0,
+    overtime_minutes REAL NOT NULL DEFAULT 0,
+    hours REAL NOT NULL DEFAULT 0,
+    hourly_rate REAL,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    labor_rate_id INTEGER REFERENCES labor_rate(id),
+    labor_cost REAL,
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    notes TEXT,
+    approved_by INTEGER REFERENCES person(id),
+    approved_at TEXT,
+    rejected_reason TEXT,
+    client_ref TEXT,
+    created_by INTEGER REFERENCES person(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE INDEX IF NOT EXISTS idx_time_entry_task ON time_entry(task_id);
+  CREATE INDEX IF NOT EXISTS idx_time_entry_person ON time_entry(person_id, work_date);
+  CREATE INDEX IF NOT EXISTS idx_time_entry_status ON time_entry(status);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_time_entry_client_ref ON time_entry(client_ref) WHERE client_ref IS NOT NULL;
   `);
 
   migrate('task', 'tower_id', 'ALTER TABLE task ADD COLUMN tower_id INTEGER REFERENCES tower(id)');
