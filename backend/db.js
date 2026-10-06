@@ -1074,6 +1074,63 @@ function initSchema() {
   CREATE INDEX IF NOT EXISTS idx_material_txn_item ON material_transaction(item_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_material_txn_task ON material_transaction(task_id);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_material_txn_client_ref ON material_transaction(client_ref) WHERE client_ref IS NOT NULL;
+
+  -- Planned cost built from standard rates and quantities before approval.
+  CREATE TABLE IF NOT EXISTS cost_estimate (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES task(id),
+    category TEXT NOT NULL DEFAULT 'OTHER',
+    description TEXT,
+    quantity REAL,
+    unit_cost REAL,
+    amount REAL NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    created_by INTEGER REFERENCES person(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE INDEX IF NOT EXISTS idx_cost_estimate_task ON cost_estimate(task_id);
+
+  -- Committed cost: reserved/procured resources or approved external commitments.
+  CREATE TABLE IF NOT EXISTS cost_commitment (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES task(id),
+    category TEXT NOT NULL DEFAULT 'OTHER',
+    description TEXT,
+    amount REAL NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    reference TEXT,
+    status TEXT NOT NULL DEFAULT 'OPEN',
+    committed_by INTEGER REFERENCES person(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE INDEX IF NOT EXISTS idx_cost_commitment_task ON cost_commitment(task_id, status);
+
+  -- Actual direct cost transactions (contractor/service/travel/other) that have
+  -- no labor/resource/material ledger of their own.
+  CREATE TABLE IF NOT EXISTS cost_transaction (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES task(id),
+    category TEXT NOT NULL DEFAULT 'OTHER',
+    description TEXT,
+    amount REAL NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    incurred_on TEXT,
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    approved_by INTEGER REFERENCES person(id),
+    approved_at TEXT,
+    rejected_reason TEXT,
+    client_ref TEXT,
+    created_by INTEGER REFERENCES person(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE INDEX IF NOT EXISTS idx_cost_transaction_task ON cost_transaction(task_id, status);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_cost_transaction_client_ref ON cost_transaction(client_ref) WHERE client_ref IS NOT NULL;
   `);
 
   migrate('task', 'tower_id', 'ALTER TABLE task ADD COLUMN tower_id INTEGER REFERENCES tower(id)');
@@ -1168,6 +1225,16 @@ function initSchema() {
   migrate('task', 'readiness_override_reason', 'ALTER TABLE task ADD COLUMN readiness_override_reason TEXT');
   migrate('task', 'readiness_override_by', 'ALTER TABLE task ADD COLUMN readiness_override_by INTEGER REFERENCES person(id)');
   migrate('task', 'readiness_override_at', 'ALTER TABLE task ADD COLUMN readiness_override_at TEXT');
+  // Financial closure is tracked separately from technical completion: a task
+  // may be technically verified while its cost is still being reconciled.
+  migrate('task', 'closure_state', "ALTER TABLE task ADD COLUMN closure_state TEXT NOT NULL DEFAULT 'OPEN'");
+  migrate('task', 'cost_reconciled_at', 'ALTER TABLE task ADD COLUMN cost_reconciled_at TEXT');
+  migrate('task', 'cost_reconciled_by', 'ALTER TABLE task ADD COLUMN cost_reconciled_by INTEGER REFERENCES person(id)');
+  migrate('task', 'variance_reason', 'ALTER TABLE task ADD COLUMN variance_reason TEXT');
+  migrate('task', 'management_acceptance_at', 'ALTER TABLE task ADD COLUMN management_acceptance_at TEXT');
+  migrate('task', 'management_acceptance_by', 'ALTER TABLE task ADD COLUMN management_acceptance_by INTEGER REFERENCES person(id)');
+  migrate('task', 'closed_at', 'ALTER TABLE task ADD COLUMN closed_at TEXT');
+  migrate('task', 'closed_by', 'ALTER TABLE task ADD COLUMN closed_by INTEGER REFERENCES person(id)');
   // Performance-aware condition snapshots: the asset monitor records how much
   // of a suggested rating came from the age baseline versus live performance
   // (loading, faults, thermal), so the change-log can explain a degradation.

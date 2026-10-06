@@ -103,6 +103,7 @@ app.use('/api', require('./routes/tasks'));
 app.use('/api', require('./routes/labor'));
 app.use('/api', require('./routes/resources'));
 app.use('/api', require('./routes/materials'));
+app.use('/api', require('./routes/costing'));
 app.use('/api', require('./routes/attachments').router);
 app.use('/api', require('./routes/schedules'));
 app.use('/api', require('./routes/checklists'));

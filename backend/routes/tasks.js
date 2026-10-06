@@ -1226,7 +1226,14 @@ router.post('/tasks/:id/state', (req, res) => {
     ).run(toStatus, now, patch.scheduled_start ?? null, patch.crew_id ?? null, patch.assigned_by ?? null, patch.actual_start ?? null, patch.actual_end ?? null, patch.result ?? null, patch.completion_summary ?? null, patch.verified_by ?? null,
       action, patch.cancel_reason ?? null, action, patch.cancelled_by ?? null, action, patch.cancelled_at ?? null, action, patch.status_before_cancel ?? null, id);
     if (action === 'retrieve') db.prepare('UPDATE task SET completion_summary = NULL WHERE id = ?').run(id);
-    if (action === 'verify') applyCompletionSideEffects(req, get('task', id), completionCost);
+    if (action === 'verify') {
+      applyCompletionSideEffects(req, get('task', id), completionCost);
+      // Technical verification does not imply financial closure: leave the task
+      // visibly COST_PENDING until the cost/labor/material gates are reconciled.
+      const evaluation = require('../costing').closureGates(get('task', id));
+      db.prepare('UPDATE task SET closure_state = ? WHERE id = ?')
+        .run(evaluation.ready_to_close ? 'CLOSED' : 'COST_PENDING', id);
+    }
     if (readinessOverride) {
       db.prepare('UPDATE task SET readiness_override_reason = ?, readiness_override_by = ?, readiness_override_at = ? WHERE id = ?')
         .run(readinessOverride.reason, req.user.person_id || null, now, id);
