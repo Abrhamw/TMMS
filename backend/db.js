@@ -1199,6 +1199,65 @@ function initSchema() {
     revision INTEGER NOT NULL DEFAULT 1
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_budget_cc_period ON budget(cost_center_id, period);
+
+  -- Procurement: suppliers and purchase orders commit external spend and, on
+  -- receipt, drive the material stock ledger so stores and finance agree.
+  CREATE TABLE IF NOT EXISTS supplier (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    contact_name TEXT,
+    email TEXT,
+    phone TEXT,
+    address TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1
+  );
+
+  CREATE TABLE IF NOT EXISTS purchase_order (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    po_number TEXT NOT NULL UNIQUE,
+    supplier_id INTEGER NOT NULL REFERENCES supplier(id),
+    cost_center_id INTEGER REFERENCES cost_center(id),
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    order_date TEXT,
+    expected_date TEXT,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    notes TEXT,
+    committed_amount REAL NOT NULL DEFAULT 0,
+    created_by INTEGER REFERENCES person(id),
+    approved_by INTEGER REFERENCES person(id),
+    approved_at TEXT,
+    cancelled_by INTEGER REFERENCES person(id),
+    cancelled_at TEXT,
+    cancel_reason TEXT,
+    client_ref TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE INDEX IF NOT EXISTS idx_po_status ON purchase_order(status, expected_date);
+  CREATE INDEX IF NOT EXISTS idx_po_supplier ON purchase_order(supplier_id);
+  CREATE INDEX IF NOT EXISTS idx_po_cost_center ON purchase_order(cost_center_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_po_client_ref ON purchase_order(client_ref) WHERE client_ref IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS purchase_order_line (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    purchase_order_id INTEGER NOT NULL REFERENCES purchase_order(id),
+    material_item_id INTEGER REFERENCES material_item(id),
+    description TEXT,
+    quantity REAL NOT NULL,
+    unit_cost REAL NOT NULL DEFAULT 0,
+    line_total REAL NOT NULL DEFAULT 0,
+    received_quantity REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE INDEX IF NOT EXISTS idx_po_line_po ON purchase_order_line(purchase_order_id);
   `);
 
   migrate('task', 'tower_id', 'ALTER TABLE task ADD COLUMN tower_id INTEGER REFERENCES tower(id)');
@@ -1306,6 +1365,9 @@ function initSchema() {
   // Financial attribution: a task resolves to an explicit cost center or to the
   // default cost center of its region, so spend can be checked against budget.
   migrate('task', 'cost_center_id', 'ALTER TABLE task ADD COLUMN cost_center_id INTEGER REFERENCES cost_center(id)');
+  // A stock receipt may be traceable to the purchase-order line that ordered it.
+  migrate('material_transaction', 'purchase_order_id', 'ALTER TABLE material_transaction ADD COLUMN purchase_order_id INTEGER REFERENCES purchase_order(id)');
+  migrate('material_transaction', 'purchase_order_line_id', 'ALTER TABLE material_transaction ADD COLUMN purchase_order_line_id INTEGER REFERENCES purchase_order_line(id)');
   // Performance-aware condition snapshots: the asset monitor records how much
   // of a suggested rating came from the age baseline versus live performance
   // (loading, faults, thermal), so the change-log can explain a degradation.

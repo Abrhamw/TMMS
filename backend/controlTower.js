@@ -3,6 +3,7 @@
 const { db } = require('./util');
 const { dispatchGate } = require('./readiness');
 const { resolveCostCenter, taskBudgetPeriod, budgetAmount } = require('./budget');
+const procurement = require('./procurement');
 
 const OPEN_STATES = ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION'];
 const CLOSED_STATES = ['COMPLETED', 'CANCELLED', 'FAILED'];
@@ -203,6 +204,7 @@ function budgetKpis(tasks) {
   }
   let budgetedTotal = 0;
   let committedTotal = 0;
+  let poCommittedTotal = 0;
   let actualTotal = 0;
   let over = 0;
   let unbudgeted = 0;
@@ -219,24 +221,28 @@ function budgetKpis(tasks) {
       sum(`SELECT IFNULL(SUM(cost),0) s FROM asset_maintenance_event WHERE task_id IN (${ph})`)
     );
     const exposure = round2(committed + actual);
-    const overBudget = g.budgeted > 0 && exposure > g.budgeted;
+    const poCommitted = procurement.openCommittedForCostCenter(g.cost_center_id, g.period);
+    const totalExposure = round2(exposure + poCommitted);
+    const overBudget = g.budgeted > 0 && totalExposure > g.budgeted;
     if (overBudget) over += 1;
     if (g.budgeted <= 0) unbudgeted += 1;
     budgetedTotal += g.budgeted;
     committedTotal += committed;
+    poCommittedTotal += poCommitted;
     actualTotal += actual;
     items.push({
       cost_center_id: g.cost_center_id, cost_center_code: g.code, cost_center_name: g.name, period: g.period,
-      budgeted: g.budgeted, committed, actual, exposure,
-      available: round2(g.budgeted - exposure), over_budget: overBudget, work_packages: g.task_ids.length,
+      budgeted: g.budgeted, committed, po_committed: poCommitted, actual, exposure: totalExposure,
+      available: round2(g.budgeted - totalExposure), over_budget: overBudget, work_packages: g.task_ids.length,
     });
   }
   items.sort((a, b) => (Number(b.over_budget) - Number(a.over_budget)) || (b.exposure - a.exposure));
   return {
     budgeted: round2(budgetedTotal),
     committed: round2(committedTotal),
+    po_committed: round2(poCommittedTotal),
     actual: round2(actualTotal),
-    available: round2(budgetedTotal - committedTotal - actualTotal),
+    available: round2(budgetedTotal - committedTotal - poCommittedTotal - actualTotal),
     over_budget_cost_centers: over,
     unbudgeted_cost_centers: unbudgeted,
     by_cost_center: items,
@@ -256,6 +262,7 @@ function build(tasks, opts = {}) {
     defects: defectKpis(),
     costs: costKpis(ids),
     budgets: budgetKpis(tasks),
+    purchasing: procurement.poKpis(),
     labor: laborKpis(ids, days),
     reliability: reliability(days),
   };

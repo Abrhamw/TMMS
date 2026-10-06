@@ -2,6 +2,7 @@
 
 const { db, get, list } = require('./util');
 const { taskCostSummary, plannedCost, committedCost } = require('./costing');
+const procurement = require('./procurement');
 
 function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
@@ -62,7 +63,8 @@ function budgetStatus(costCenterId, period) {
     actual += taskCostSummary(t.id).actual_cost;
   }
   const budgeted = budgetAmount(costCenterId, period);
-  const exposure = round2(committed + actual);
+  const poCommitted = procurement.openCommittedForCostCenter(costCenterId, period);
+  const exposure = round2(committed + actual + poCommitted);
   const available = round2(budgeted - exposure);
   return {
     cost_center_id: cc.id,
@@ -74,6 +76,7 @@ function budgetStatus(costCenterId, period) {
     work_packages: tasks.length,
     planned: round2(planned),
     committed: round2(committed),
+    po_committed: poCommitted,
     actual: round2(actual),
     exposure,
     available,
@@ -115,7 +118,28 @@ function overBudgetCostCenters(period) {
     .filter((s) => s && s.over_budget);
 }
 
+// Evaluate a purchase order about to be committed against its cost center
+// budget. Mirrors checkCommitment so approval and task commitments share one
+// ceiling calculation.
+function checkCommitmentForPo(po, amount) {
+  if (!po || !po.cost_center_id) return { enforced: false, over_budget: false, cost_center: null };
+  const cc = get('cost_center', po.cost_center_id);
+  const period = procurement.poPeriod(po);
+  const status = budgetStatus(cc.id, period);
+  const projected = round2(status.exposure + Number(amount));
+  return {
+    enforced: status.budgeted > 0,
+    cost_center: { id: cc.id, code: cc.code, name: cc.name },
+    period,
+    budgeted: status.budgeted,
+    exposure_before: status.exposure,
+    projected,
+    available_after: round2(status.budgeted - projected),
+    over_budget: status.budgeted > 0 && projected > status.budgeted,
+  };
+}
+
 module.exports = {
   periodOf, taskBudgetPeriod, resolveCostCenter, budgetAmount, budgetStatus,
-  taskBudget, checkCommitment, overBudgetCostCenters,
+  taskBudget, checkCommitment, checkCommitmentForPo, overBudgetCostCenters,
 };
