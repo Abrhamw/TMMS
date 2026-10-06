@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   ClipboardCheck, MapPin, Camera, Flag, Check, ChevronLeft, ChevronRight,
-  Loader2, Upload, Navigation, FileText, PackageCheck,
+  Loader2, Upload, Navigation, FileText, PackageCheck, X,
 } from 'lucide-react';
 import { api, fmtDateTime } from '../api';
 import { Pill, Loading, ErrorNote } from '../components';
@@ -21,6 +21,15 @@ import { t } from '../i18n';
 
 function reduced() {
   return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+}
+
+function readFileData(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+    reader.onerror = () => reject(new Error('Could not read file'));
+    reader.readAsDataURL(file);
+  });
 }
 
 // One guided execution surface for a crew member or lead: start work, run the
@@ -132,22 +141,22 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
     finally { setBusy(false); }
   }
 
-  async function uploadFile(file) {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        setBusy(true);
-        setUploading(file.name);
-        const data = String(reader.result || '').split(',')[1] || '';
+  async function uploadFiles(fileList) {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (!files.length) return;
+    try {
+      setBusy(true);
+      for (let i = 0; i < files.length; i += 1) {
+        const file = files[i];
+        setUploading(`${i + 1}/${files.length}`);
+        const data = await readFileData(file);
         const isImg = String(file.type || '').startsWith('image/');
         await api.post(`/tasks/${taskId}/attachments`, { file_name: file.name, mime: file.type || 'application/octet-stream', kind: isImg ? 'PHOTO' : 'DOC', data, note: '' });
-        await load();
-        if (onChanged) onChanged();
-      } catch (e) { setError(e.message); }
-      finally { setBusy(false); setUploading(null); }
-    };
-    reader.readAsDataURL(file);
+      }
+      await load();
+      if (onChanged) onChanged();
+    } catch (e) { setError(e.message); }
+    finally { setBusy(false); setUploading(null); }
   }
 
   if (error && !task) return <WorkPanelOverlay><div className="p-3"><ErrorNote error={error} /><button className="btn btn-sm mt" onClick={onClose}>{t('cancel')}</button></div></WorkPanelOverlay>;
@@ -258,7 +267,7 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
           <Button variant="outline" size="lg" onClick={() => { setChecklist(null); setTpl(null); }} disabled={busy}>{t('cancel')}</Button>
         </div>
 
-        <CaptureSheets sheet={sheet} setSheet={setSheet} gps={gps} capture={capture} busy={busy} canAttach={canAttach} attachments={attachments} uploadFile={uploadFile} uploading={uploading} />
+        <CaptureSheets sheet={sheet} setSheet={setSheet} gps={gps} capture={capture} busy={busy} canAttach={canAttach} attachments={attachments} uploadFiles={uploadFiles} uploading={uploading} />
       </WorkPanelOverlay>
     );
   }
@@ -276,7 +285,7 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
         <div className="flex items-center gap-2">
           <SyncStatus />
           <a className="btn btn-sm" href={`/tasks/${taskId}`}>{t('openFullTask')}</a>
-          <button className="btn btn-sm" onClick={onClose}>{t('cancel')}</button>
+          <button className="btn btn-sm" aria-label={t('close')} title={t('close')} onClick={onClose}><X size={16} /></button>
         </div>
       </div>
 
@@ -442,6 +451,7 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
                 <Button variant="outline" size="md" onClick={() => act('reopen')} disabled={busy}>{t('reopenTask')}</Button>
               )}
               {done && <span className="muted">{t('result')}: {x.result || statusLabel(x.status)}</span>}
+              <Button variant={x.status === 'IN_PROGRESS' && canLead ? 'outline' : 'primary'} size="lg" onClick={onClose}>{t('done')}</Button>
             </StepBlock>
           )}
         </motion.div>
@@ -478,7 +488,7 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
         busy={busy}
         canAttach={canAttach}
         attachments={attachments}
-        uploadFile={uploadFile}
+        uploadFiles={uploadFiles}
         uploading={uploading}
       />
     </WorkPanelOverlay>
@@ -500,7 +510,7 @@ function StepBlock({ done, title, hint, children }) {
   );
 }
 
-function CaptureSheets({ sheet, setSheet, gps, capture, busy, canAttach, attachments, uploadFile, uploading }) {
+function CaptureSheets({ sheet, setSheet, gps, capture, busy, canAttach, attachments, uploadFiles, uploading }) {
   return (
     <>
       <Sheet open={sheet === 'gps'} onClose={() => setSheet(null)} title={t('captureLocationTitle')} description={t('stepLocation')} side="bottom">
@@ -526,12 +536,19 @@ function CaptureSheets({ sheet, setSheet, gps, capture, busy, canAttach, attachm
       <Sheet open={sheet === 'photo'} onClose={() => setSheet(null)} title={t('capturePhotoTitle')} description={t('capturePhotoHint')} side="bottom">
         <div className="space-y-4">
           {canAttach && (
-            <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-300 py-8 text-center transition-colors hover:border-brand hover:bg-emerald-50/40 dark:border-slate-700 dark:hover:bg-emerald-950/20">
-              <Upload size={26} className="text-brand" />
-              <span className="text-sm font-semibold">{t('capturePhotoTitle')}</span>
-              <span className="muted text-xs">{t('capturePhotoHint')}</span>
-              <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { uploadFile(e.target.files?.[0]); e.target.value = ''; }} />
-            </label>
+            <div className="space-y-3">
+              <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-300 py-6 text-center transition-colors hover:border-brand hover:bg-emerald-50/40 dark:border-slate-700 dark:hover:bg-emerald-950/20">
+                <Camera size={26} className="text-brand" />
+                <span className="text-sm font-semibold">{t('capturePhotoTitle')}</span>
+                <span className="muted text-xs">{t('capturePhotoHint')}</span>
+                <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { uploadFiles(e.target.files); e.target.value = ''; }} />
+              </label>
+              <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-300 py-6 text-center transition-colors hover:border-brand hover:bg-emerald-50/40 dark:border-slate-700 dark:hover:bg-emerald-950/20">
+                <Upload size={26} className="text-brand" />
+                <span className="text-sm font-semibold">{t('uploadPhotos')}</span>
+                <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { uploadFiles(e.target.files); e.target.value = ''; }} />
+              </label>
+            </div>
           )}
           {uploading && (
             <div className="flex items-center gap-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
