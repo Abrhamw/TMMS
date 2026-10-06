@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   ClipboardCheck, MapPin, Camera, Flag, Check, ChevronLeft, ChevronRight,
-  Loader2, Upload, Navigation, FileText,
+  Loader2, Upload, Navigation, FileText, PackageCheck,
 } from 'lucide-react';
 import { api, fmtDateTime } from '../api';
 import { Pill, Loading, ErrorNote } from '../components';
@@ -44,11 +44,18 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
   const [step, setStep] = useState(null);
   const [sheet, setSheet] = useState(null);
   const [uploading, setUploading] = useState(null);
+  const [equipmentDraft, setEquipmentDraft] = useState({});
+  const [equipmentBusy, setEquipmentBusy] = useState(false);
 
-  const load = () => api.get(`/tasks/${taskId}`).then((x) => { setTask(x); setError(null); }).catch((e) => setError(e.message));
+  const load = () => api.get(`/tasks/${taskId}`).then((x) => {
+    setTask(x);
+    const checks = x.readiness?.equipment_checks || [];
+    setEquipmentDraft(Object.fromEntries(checks.map((c) => [c.equipment, c.available])));
+    setError(null);
+  }).catch((e) => setError(e.message));
 
   useEffect(() => {
-    setTask(null); setTpl(null); setChecklist(null); setGps(null); setError(null); setStep(null); setSheet(null);
+    setTask(null); setTpl(null); setChecklist(null); setGps(null); setError(null); setStep(null); setSheet(null); setEquipmentDraft({});
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
@@ -97,6 +104,21 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
       else flash(`${t('result')}: ${res.result}`);
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
+  }
+
+  async function saveEquipment() {
+    try {
+      setEquipmentBusy(true);
+      const checks = (task?.readiness?.equipment_checks || []).map((c) => ({
+        equipment: c.equipment,
+        available: equipmentDraft[c.equipment] === true,
+      }));
+      await api.put(`/tasks/${taskId}/equipment-checks`, { checks });
+      await load();
+      if (onChanged) onChanged();
+      flash(t('updated'));
+    } catch (e) { setError(e.message); }
+    finally { setEquipmentBusy(false); }
   }
 
   async function capture() {
@@ -150,8 +172,12 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
     || executions.some((e) => e.submitted_at && e.result && e.result !== 'INCOMPLETE');
   const locationDone = !!gps || executions.some((e) => e.gps_lat != null);
   const photosDone = attachments.length > 0;
+  const equipmentChecks = x.readiness?.equipment_checks || [];
+  const equipmentDone = equipmentChecks.length === 0 || equipmentChecks.every((c) => c.answered);
+  const canCheckEquipment = canStart || canExecute;
 
   const steps = [
+    ...(equipmentChecks.length ? [{ key: 'equipment', icon: PackageCheck, label: t('stepEquipment'), done: equipmentDone }] : []),
     { key: 'checklist', icon: ClipboardCheck, label: t('stepChecklist'), done: checklistDone },
     { key: 'location', icon: MapPin, label: t('stepLocation'), done: locationDone },
     { key: 'photos', icon: Camera, label: t('stepPhotos'), done: photosDone },
@@ -273,7 +299,7 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
             transition={{ duration: reduced() ? 0 : 0.35, ease: 'easeOut' }}
           />
         </div>
-        <div className="mt-3 grid grid-cols-4 gap-2">
+        <div className={cn('mt-3 grid gap-2', steps.length > 4 ? 'grid-cols-5' : 'grid-cols-4')}>
           {steps.map((s) => {
             const Icon = s.icon;
             const active = s.key === activeKey;
@@ -317,6 +343,39 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
           exit={reduced() ? { opacity: 0 } : { opacity: 0, x: -12 }}
           transition={{ duration: reduced() ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
         >
+          {activeKey === 'equipment' && (
+            <StepBlock
+              done={equipmentDone}
+              title={t('stepEquipment')}
+              hint={`${equipmentChecks.filter((c) => c.answered).length} / ${equipmentChecks.length}`}
+            >
+              <div className="w-full space-y-2">
+                {equipmentChecks.map((c) => {
+                  const checked = equipmentDraft[c.equipment] === true;
+                  return (
+                    <label key={c.equipment} className="flex items-center gap-3 rounded-xl border border-slate-200 p-2 text-sm dark:border-slate-800">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={!canCheckEquipment || equipmentBusy}
+                        onChange={(e) => setEquipmentDraft((prev) => ({ ...prev, [c.equipment]: e.target.checked }))}
+                      />
+                      <span className="flex-1">{c.equipment}</span>
+                      <span className={cn('grid h-5 w-5 place-items-center rounded-full', checked ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400' : 'bg-slate-100 text-slate-400 dark:bg-slate-800')}>
+                        {checked && <Check size={12} />}
+                      </span>
+                    </label>
+                  );
+                })}
+                {canCheckEquipment && (
+                  <Button variant="primary" size="lg" onClick={saveEquipment} disabled={equipmentBusy}>
+                    {equipmentBusy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} {t('save')}
+                  </Button>
+                )}
+              </div>
+            </StepBlock>
+          )}
+
           {activeKey === 'checklist' && (
             <StepBlock
               done={checklistDone}
@@ -324,7 +383,7 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
               hint={templates.map((c) => c.name).join(', ') || t('noData')}
             >
               {x.status === 'ASSIGNED' && canStart && (
-                <Button variant="primary" size="lg" onClick={() => act('start')} disabled={busy}>{t('startWork')}</Button>
+                <Button variant="primary" size="lg" onClick={() => act('start')} disabled={busy || !equipmentDone}>{t('startWork')}</Button>
               )}
               {x.status === 'ASSIGNED' && !canStart && <span className="muted">{t('waitingLead')}</span>}
               {x.status === 'IN_PROGRESS' && canExecute && templates.map((ct) => {
