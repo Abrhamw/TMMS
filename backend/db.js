@@ -1131,6 +1131,45 @@ function initSchema() {
   );
   CREATE INDEX IF NOT EXISTS idx_cost_transaction_task ON cost_transaction(task_id, status);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_cost_transaction_client_ref ON cost_transaction(client_ref) WHERE client_ref IS NOT NULL;
+
+  -- Controlled defect/finding lifecycle. A critical finding becomes a defect
+  -- that stays open until a verified corrective task and a root-cause-based
+  -- disposition close it, so inspection -> corrective work -> cost is traceable.
+  CREATE TABLE IF NOT EXISTS defect (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    defect_number TEXT NOT NULL UNIQUE,
+    task_id INTEGER REFERENCES task(id),
+    finding_id INTEGER REFERENCES task_finding(id),
+    asset_id INTEGER REFERENCES asset(id),
+    region_id INTEGER REFERENCES region(id),
+    title TEXT NOT NULL,
+    description TEXT,
+    severity TEXT NOT NULL DEFAULT 'MEDIUM',
+    likelihood TEXT,
+    risk_score INTEGER,
+    status TEXT NOT NULL DEFAULT 'OPEN',
+    temporary_mitigation TEXT,
+    owner_person_id INTEGER REFERENCES person(id),
+    target_date TEXT,
+    root_cause_category TEXT,
+    root_cause_detail TEXT,
+    corrective_task_id INTEGER REFERENCES task(id),
+    disposition TEXT,
+    verified_at TEXT,
+    closed_at TEXT,
+    closed_by INTEGER REFERENCES person(id),
+    created_by INTEGER REFERENCES person(id),
+    client_ref TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE INDEX IF NOT EXISTS idx_defect_status ON defect(status, severity);
+  CREATE INDEX IF NOT EXISTS idx_defect_task ON defect(task_id);
+  CREATE INDEX IF NOT EXISTS idx_defect_asset ON defect(asset_id);
+  CREATE INDEX IF NOT EXISTS idx_defect_owner ON defect(owner_person_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_defect_finding ON defect(finding_id) WHERE finding_id IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_defect_client_ref ON defect(client_ref) WHERE client_ref IS NOT NULL;
   `);
 
   migrate('task', 'tower_id', 'ALTER TABLE task ADD COLUMN tower_id INTEGER REFERENCES tower(id)');

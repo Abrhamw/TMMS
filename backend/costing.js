@@ -150,13 +150,13 @@ function closureGates(t) {
     detail: !t.asset_id ? 'No asset linked' : assetEvent > 0 ? 'Asset maintenance event recorded' : 'Asset history not updated',
   });
 
-  // Follow-up linkage is tracked but advisory until the defect lifecycle lands;
-  // an incomplete corrective loop should be visible without freezing closure.
-  const linkedFollowUps = count("SELECT COUNT(*) c FROM task_link WHERE task_id = ? AND link_type = 'FOLLOW_UP'", id);
-  const criticalFindings = count("SELECT COUNT(*) c FROM task_finding WHERE task_id = ? AND severity IN ('CRITICAL', 'HIGH')", id);
+  // A defect stays open until its corrective task is verified, so unresolved
+  // defects block closure. The originating inspection remains traceable to the
+  // final corrective action.
+  const openDefects = count("SELECT COUNT(*) c FROM defect WHERE task_id = ? AND status IN ('OPEN', 'IN_PROGRESS', 'MITIGATED', 'RESOLVED')", id);
   gates.push({
-    gate: 'FOLLOW_UP', blocking: false, satisfied: criticalFindings === 0 || linkedFollowUps > 0,
-    detail: criticalFindings === 0 ? 'No critical findings' : linkedFollowUps > 0 ? 'Corrective task linked' : 'Critical findings without a linked corrective task',
+    gate: 'FOLLOW_UP', blocking: true, satisfied: openDefects === 0,
+    detail: openDefects === 0 ? 'No open defects' : `${openDefects} defect(s) still open`,
   });
 
   gates.push({

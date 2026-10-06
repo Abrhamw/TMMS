@@ -16,6 +16,7 @@ const { taskReadiness, taskRequirements, resolveTaskCrewId, taskCrewSource, disp
 const { readyCrew, scoreCrewFit } = require('../assignment');
 const { resolveTarget, infraName, assetName } = require('../target');
 const { sendMail, primaryUserForPerson, immediateBossForTask } = require('../mail');
+const { createDefectFromFinding } = require('../defects');
 
 const router = express.Router();
 
@@ -1336,6 +1337,17 @@ function applyCompletionSideEffects(req, t, cost = null) {
   const created = applyAutoFollowUps(req, t);
   if (created.length) {
     console.log(`[follow-up] auto-created EMERGENCY task(s) ${created.join(', ')} for completed task ${t.task_number} (${t.result || 'FAIL'})`);
+  }
+  // Every critical/high finding becomes a controlled defect, linked to the
+  // corrective task when one was raised, so it cannot be lost once the
+  // originating task completes.
+  const findings = db.prepare('SELECT * FROM task_finding WHERE task_id = ?').all(t.id);
+  for (const f of findings) {
+    try {
+      createDefectFromFinding(f, t, created[0] || null, req.user.person_id || null);
+    } catch (e) {
+      console.error('defect creation failed', e);
+    }
   }
 }
 
