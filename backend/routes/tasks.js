@@ -651,8 +651,9 @@ router.put('/tasks/:id/equipment-checks', (req, res) => {
   const t = get('task', id);
   if (!t) return res.status(404).json({ error: 'Task not found' });
   if (!taskVisible(req.user, t)) return res.status(404).json({ error: 'Task not found' });
-  if (!can(req, 'task:assign') && !can(req, 'task:manage')) {
-    return res.status(403).json({ error: 'Forbidden: requires task:assign or task:manage' });
+  const crewMayCheck = isCrewUser(req.user) && isOnCrew(req.user, t.crew_id);
+  if (!can(req, 'task:assign') && !can(req, 'task:manage') && !crewMayCheck) {
+    return res.status(403).json({ error: 'Forbidden: requires task:assign, task:manage, or membership of the assigned crew' });
   }
   if (!['DRAFT', 'SCHEDULED', 'ASSIGNED'].includes(t.status)) {
     return res.status(409).json({ error: 'Equipment availability must be checked before work starts' });

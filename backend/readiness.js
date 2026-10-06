@@ -155,6 +155,7 @@ function taskReadiness(t) {
     equipment_checks: equipmentList.map((name) => ({
       equipment: name,
       available: equipmentChecks.get(name) === true,
+      answered: equipmentChecks.has(name),
       status: equipmentChecks.get(name) === true ? 'USED' : 'MISSED',
     })),
     warnings: evaluation ? evaluation.warnings.map((w) => w.message) : [],

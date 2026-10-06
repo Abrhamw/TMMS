@@ -1,6 +1,7 @@
 // English -> Amharic UI phrase map for runtime DOM translation.
 // Generated dictionary; keys must match rendered text exactly (whitespace-normalized).
 export default {
+"Equipment":"መሳሪያ",
 "OK":"እሺ",
 "Not OK":"እሺ አይደለም",
 "Done":"ተጠናቀቀ",
