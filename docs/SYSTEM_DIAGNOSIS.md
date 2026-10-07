@@ -144,12 +144,15 @@ P1 — hardening and coverage (all resolved):
 7. `.gitignore` entries for uploads, DB files, design.
    Done: runtime SQLite files/carriers, `backend/uploads/`, `design/` and `mobile/LICENSE` ignored (`f72ba0d`).
 
-P2 — scale and polish:
+P2 — scale and polish (all resolved):
 
 8. Push control-tower/budget aggregation into SQL.
+   Done: `materialKpis` and `budgetKpis` aggregate each ledger in one grouped pass; procurement `openCommittedForCostCenter`/`poKpis` fold received value into a single line query; the control-tower route prefilters by region (`18e20f3`).
 9. Split i18n dictionaries; prune dead code and duplicate routes.
+   Done: locale tables extracted to `frontend/src/i18n/{en,es,zh,am}.js` with a key-superset guard test; five unreferenced frontend modules removed (`1b0ca40`, `61a017b`); no duplicate method+path routes found.
 10. Per-route frontend permission guards.
+    Done: `routeRedirect()` and a generic `RequirePerm` guard gate dashboard, map, assets, work, tasks, crews, schedules, checklists, certifications, gps, reports, settings, organization, model and infrastructure on the mirrored RBAC matrix, preserving the executive briefing redirect (`509685f`).
 
 ## Verdict
 
-The backend domain layer is production-grade in design, and the financial/operational modules are coherent and testable. The operational risks found in the review — credential and session handling, authorization ergonomics, absent CI, and thin HTTP-level coverage — are closed: the four P0 items and the P1 hardening items are done. CI now runs backend tests, the frontend build + unit tests and mobile typecheck/vitest. Remaining work is the P2 scale/polish items.
+The backend domain layer is production-grade in design, and the financial/operational modules are coherent and testable. The operational risks found in the review — credential and session handling, authorization ergonomics, absent CI, and thin HTTP-level coverage — are closed, as are the P2 scale/polish items: the identity of the aggregation work, the i18n/dead-code cleanup and the per-route permission guards. CI runs backend tests, the frontend build + unit tests and mobile typecheck/vitest.
