@@ -13,7 +13,7 @@ const { securityHeaders, assertProductionSecrets } = require('./security');
 const { requestContext, logger, metrics } = require('./logger');
 const { AppError, isAppError, errorPayload } = require('./errors');
 const { stripImmutable } = require('./validation');
-const { rateLimit } = require('./rateLimit');
+const { rateLimit, apiLimiterFromEnv } = require('./rateLimit');
 const jobs = require('./jobs');
 
 const DB_PATH = process.env.TMMS_DB || path.join(__dirname, 'tmms.db');
@@ -90,6 +90,7 @@ app.get('/api/metrics', requireAuth, (req, res) => {
 
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, max: 300, keyFn: (req) => req.ip, message: 'Too many authentication requests. Try again later.' }), require('./routes/auth'));
 
+app.use('/api', apiLimiterFromEnv());
 app.use('/api', requireAuth, auditMiddleware);
 app.use('/api', require('./routes/dashboard'));
 const mailboxRouter = require('./routes/mailbox');

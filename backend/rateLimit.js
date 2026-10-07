@@ -68,4 +68,17 @@ function rateLimit(opts = {}) {
 
 const loginLimiter = new SlidingWindowLimiter({ windowMs: 15 * 60 * 1000, max: 5, blockBaseMs: 30 * 1000, maxBlockMs: 30 * 60 * 1000 });
 
-module.exports = { SlidingWindowLimiter, rateLimit, loginLimiter };
+// Coarse safety net over the whole API: a generous per-IP ceiling that stops a
+// single client from monopolising the process, configurable for tests/deploys.
+function apiLimiterFromEnv(env = process.env) {
+  return rateLimit({
+    windowMs: Number(env.TMMS_RATE_LIMIT_WINDOW_MS) || 60 * 1000,
+    max: Number(env.TMMS_RATE_LIMIT_MAX) || 600,
+    blockBaseMs: 30 * 1000,
+    maxBlockMs: 5 * 60 * 1000,
+    keyFn: (req) => req.ip,
+    message: 'Too many API requests. Please slow down and retry shortly.',
+  });
+}
+
+module.exports = { SlidingWindowLimiter, rateLimit, loginLimiter, apiLimiterFromEnv };

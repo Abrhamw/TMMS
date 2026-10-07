@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { SlidingWindowLimiter, rateLimit, loginLimiter } = require('../rateLimit');
+const { SlidingWindowLimiter, rateLimit, loginLimiter, apiLimiterFromEnv } = require('../rateLimit');
 
 function fakeReqRes(ip) {
   const headers = {};
@@ -77,4 +77,14 @@ test('loginLimiter is configured for five attempts per fifteen minutes', () => {
   assert.strictEqual(loginLimiter.max, 5);
   assert.strictEqual(loginLimiter.windowMs, 15 * 60 * 1000);
   assert.strictEqual(loginLimiter.blockBaseMs, 30 * 1000);
+});
+
+test('apiLimiterFromEnv reads env overrides and blocks past the cap', () => {
+  const middleware = apiLimiterFromEnv({ TMMS_RATE_LIMIT_MAX: '1', TMMS_RATE_LIMIT_WINDOW_MS: '60000' });
+  const pass = (ip) => { const r = fakeReqRes(ip); let err = 'unset'; middleware(r.req, r.res, (e) => { err = e; }); return err; };
+  assert.strictEqual(pass('9.9.9.9'), undefined);
+  assert.strictEqual(pass('9.9.9.9'), undefined);
+  const blocked = pass('9.9.9.9');
+  assert.strictEqual(blocked.code, 'TOO_MANY_REQUESTS');
+  assert.strictEqual(pass('8.8.8.8'), undefined);
 });
