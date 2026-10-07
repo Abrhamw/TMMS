@@ -118,8 +118,8 @@ Findings:
 
 ## Repository hygiene
 
-- Untracked runtime artifacts: `backend/uploads/*`, `design/`, `mobile/LICENSE`, modified `backend/tmms.db`; `.gitignore` does not exclude them.
-- `mobile/App.tsx` and `mobile/index.ts` are dead (entry is `expo-router/entry`).
+- Runtime artifacts (`backend/uploads/*`, `backend/*.db*`, `design/`, `mobile/LICENSE`) are gitignored and no longer tracked (`f72ba0d`, `3ec7f9e`).
+- `mobile/App.tsx` and `mobile/index.ts` (dead — the entry is `expo-router/entry`) removed.
 - Docs present: `SYSTEM_MAP.md`, `CORE_MODULES.md`, `BACKUP_RECOVERY.md`, `FUNCTION_INVENTORY.md`, `TASK_LIFECYCLE.md`, `USER_MANUAL.md`.
 
 ## Prioritized remediation roadmap
