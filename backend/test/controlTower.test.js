@@ -35,6 +35,11 @@ test('control tower aggregates readiness, resources, materials, cost, defects an
   insertRow('resource_reservation', { resource_id: resourceId, reserved_from: new Date(Date.now() + 3600000).toISOString(), reserved_to: new Date(Date.now() + 2 * 86400000).toISOString(), status: 'RESERVED', created_at: NOW, updated_at: NOW });
 
   insertRow('material_item', { code: 'CT-MAT', description: 'Critical spare', unit_cost: 10, criticality: 'CRITICAL', reorder_point: 5, active: 1, created_at: NOW, updated_at: NOW });
+  // A second item with receipts and issues proves the ledger balance is summed
+  // in one grouped pass (8 received - 3 issued = 5).
+  const balancedItem = insertRow('material_item', { code: 'CT-MAT-2', description: 'Balanced', unit_cost: 5, criticality: 'MEDIUM', reorder_point: 5, active: 1, created_at: NOW, updated_at: NOW });
+  insertRow('material_transaction', { item_id: balancedItem, type: 'RECEIPT', quantity: 8, location: 'WH1', cost: 40, status: 'POSTED', created_at: NOW });
+  insertRow('material_transaction', { item_id: balancedItem, type: 'ISSUE', quantity: 3, location: 'WH1', cost: 15, status: 'POSTED', created_at: NOW });
   insertRow('defect', { defect_number: 'DEF-CT-1', title: 'Open defect', severity: 'HIGH', status: 'OPEN', created_at: NOW, updated_at: NOW });
 
   const tasks = list('task');
@@ -56,6 +61,8 @@ test('control tower aggregates readiness, resources, materials, cost, defects an
 
   assert.strictEqual(payload.materials.critical_short, 1);
   assert.ok(payload.materials.below_reorder >= 1);
+  const balanced = payload.materials.below_reorder_items.find((i) => i.item_id === balancedItem);
+  assert.strictEqual(balanced.on_hand, 5);
 
   assert.strictEqual(payload.defects.open, 1);
   assert.strictEqual(payload.costs.planned, 100);

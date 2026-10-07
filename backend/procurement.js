@@ -71,14 +71,18 @@ function poPeriod(po) {
 // excluded to avoid counting the same spend twice.
 function openCommittedForCostCenter(costCenterId, period) {
   if (!costCenterId) return 0;
+  // Received value is folded into the same query so the outstanding commitment
+  // for every open PO is computed without a per-order round trip.
   const rows = db.prepare(
-    `SELECT id, committed_amount, order_date, expected_date, created_at FROM purchase_order
-     WHERE cost_center_id = ? AND status IN ('APPROVED', 'PARTIALLY_RECEIVED')`
+    `SELECT po.id, po.committed_amount, po.order_date, po.expected_date, po.created_at,
+            IFNULL((SELECT SUM(l.received_quantity * l.unit_cost) FROM purchase_order_line l WHERE l.purchase_order_id = po.id), 0) AS received_value
+     FROM purchase_order po
+     WHERE po.cost_center_id = ? AND po.status IN ('APPROVED', 'PARTIALLY_RECEIVED')`
   ).all(Number(costCenterId));
   let total = 0;
   for (const po of rows) {
     if (period && poPeriod(po) !== period) continue;
-    total += Math.max(0, Number(po.committed_amount) - poReceivedValue(po.id));
+    total += Math.max(0, Number(po.committed_amount) - Number(po.received_value));
   }
   return round2(total);
 }
@@ -99,15 +103,21 @@ function poView(po) {
 function poKpis() {
   const now = new Date().toISOString();
   const rows = db.prepare('SELECT * FROM purchase_order').all();
+  // One grouped pass over the lines: received value per PO, no query per order.
+  const receivedByPo = new Map(db.prepare(
+    'SELECT purchase_order_id, IFNULL(SUM(received_quantity * unit_cost), 0) AS s FROM purchase_order_line GROUP BY purchase_order_id'
+  ).all().map((r) => [r.purchase_order_id, round2(r.s)]));
   const open = rows.filter((p) => OPEN_PO_STATUSES.includes(p.status));
   let committed = 0;
   let received = 0;
   const overdue = [];
-  for (const p of rows) received += poReceivedValue(p.id);
+  for (const p of rows) received += receivedByPo.get(p.id) || 0;
   for (const p of open) {
-    committed += Math.max(0, Number(p.committed_amount) - poReceivedValue(p.id));
+    const receivedValue = receivedByPo.get(p.id) || 0;
+    const openCommitment = Math.max(0, Number(p.committed_amount) - receivedValue);
+    committed += openCommitment;
     if (p.expected_date && p.expected_date < now) {
-      overdue.push({ id: p.id, po_number: p.po_number, supplier_id: p.supplier_id, expected_date: p.expected_date, status: p.status, open_commitment: round2(Math.max(0, Number(p.committed_amount) - poReceivedValue(p.id))) });
+      overdue.push({ id: p.id, po_number: p.po_number, supplier_id: p.supplier_id, expected_date: p.expected_date, status: p.status, open_commitment: round2(openCommitment) });
     }
   }
   return {

@@ -2,7 +2,7 @@
 
 const { db } = require('./util');
 const { dispatchGate } = require('./readiness');
-const { resolveCostCenter, taskBudgetPeriod, budgetAmount } = require('./budget');
+const { taskBudgetPeriod } = require('./budget');
 const procurement = require('./procurement');
 
 const OPEN_STATES = ['DRAFT', 'SCHEDULED', 'ASSIGNED', 'IN_PROGRESS', 'ON_HOLD', 'PENDING_VERIFICATION'];
@@ -115,14 +115,17 @@ function resourceKpis() {
 
 function materialKpis() {
   const items = db.prepare('SELECT * FROM material_item WHERE active = 1').all();
-  const balance = (itemId) => db.prepare(
-    `SELECT IFNULL(SUM(CASE WHEN type IN ('RECEIPT','RETURN') THEN quantity WHEN type = 'ISSUE' THEN -quantity WHEN type = 'ADJUSTMENT' THEN quantity ELSE 0 END),0) AS on_hand FROM material_transaction WHERE item_id = ?`
-  ).get(itemId).on_hand;
+  // One grouped pass over the ledger instead of a balance query per item.
+  const balances = db.prepare(
+    `SELECT item_id, IFNULL(SUM(CASE WHEN type IN ('RECEIPT','RETURN') THEN quantity WHEN type = 'ISSUE' THEN -quantity WHEN type = 'ADJUSTMENT' THEN quantity ELSE 0 END), 0) AS on_hand
+     FROM material_transaction GROUP BY item_id`
+  ).all();
+  const handByItem = new Map(balances.map((b) => [b.item_id, Number(b.on_hand)]));
   const belowReorder = [];
   const criticalShort = [];
   let itemsBelowReorder = 0;
   for (const it of items) {
-    const hand = balance(it.id);
+    const hand = handByItem.get(it.id) || 0;
     if (it.reorder_point != null && hand <= Number(it.reorder_point)) {
       itemsBelowReorder += 1;
       belowReorder.push({ item_id: it.id, code: it.code, description: it.description, on_hand: Math.round(hand * 1000) / 1000, reorder_point: it.reorder_point });
@@ -193,15 +196,45 @@ function laborKpis(taskIds, days) {
 }
 
 function budgetKpis(tasks) {
+  // Resolve cost centers/prices from maps loaded once, and aggregate every
+  // ledger by task in a single grouped query, instead of issuing a handful of
+  // SUM queries per cost-center group.
+  const ccById = new Map(db.prepare('SELECT * FROM cost_center').all().map((c) => [c.id, c]));
+  const regionDefault = new Map();
+  for (const c of db.prepare('SELECT * FROM cost_center WHERE region_id IS NOT NULL AND active = 1 ORDER BY id').all()) {
+    if (!regionDefault.has(c.region_id)) regionDefault.set(c.region_id, c);
+  }
+  const budgetByKey = new Map();
+  for (const b of db.prepare('SELECT cost_center_id, period, IFNULL(SUM(amount),0) amount FROM budget GROUP BY cost_center_id, period').all()) {
+    budgetByKey.set(`${b.cost_center_id}|${b.period}`, round2(b.amount));
+  }
+
   const groups = new Map();
   for (const t of tasks) {
-    const cc = resolveCostCenter(t);
+    const cc = (t.cost_center_id && ccById.get(t.cost_center_id)) || (t.region_id ? regionDefault.get(t.region_id) : null) || null;
     if (!cc) continue;
     const period = taskBudgetPeriod(t);
     const key = `${cc.id}|${period}`;
-    if (!groups.has(key)) groups.set(key, { cost_center_id: cc.id, code: cc.code, name: cc.name, period, budgeted: budgetAmount(cc.id, period), task_ids: [] });
+    if (!groups.has(key)) {
+      groups.set(key, { cost_center_id: cc.id, code: cc.code, name: cc.name, period, budgeted: budgetByKey.get(key) || 0, task_ids: [] });
+    }
     groups.get(key).task_ids.push(t.id);
   }
+
+  const ids = tasks.map((t) => t.id);
+  const byTask = (sql) => {
+    if (!ids.length) return new Map();
+    const ph = ids.map(() => '?').join(',');
+    return new Map(db.prepare(sql.replace('/*ph*/', ph)).all(...ids).map((r) => [r.task_id, Number(r.s) || 0]));
+  };
+  const committedByTask = byTask(`SELECT task_id, IFNULL(SUM(amount),0) s FROM cost_commitment WHERE status = 'OPEN' AND task_id IN (/*ph*/) GROUP BY task_id`);
+  const laborByTask = byTask(`SELECT task_id, IFNULL(SUM(labor_cost),0) s FROM time_entry WHERE status = 'APPROVED' AND task_id IN (/*ph*/) GROUP BY task_id`);
+  const equipmentByTask = byTask(`SELECT task_id, IFNULL(SUM(cost),0) s FROM resource_usage WHERE status = 'APPROVED' AND task_id IN (/*ph*/) GROUP BY task_id`);
+  const materialByTask = byTask(`SELECT task_id, IFNULL(SUM(cost),0) s FROM material_transaction WHERE type IN ('CONSUMPTION','SCRAP') AND task_id IN (/*ph*/) GROUP BY task_id`);
+  const directByTask = byTask(`SELECT task_id, IFNULL(SUM(amount),0) s FROM cost_transaction WHERE status = 'APPROVED' AND task_id IN (/*ph*/) GROUP BY task_id`);
+  const verificationByTask = byTask(`SELECT task_id, IFNULL(SUM(cost),0) s FROM asset_maintenance_event WHERE task_id IN (/*ph*/) GROUP BY task_id`);
+  const sumFor = (map, taskIds) => taskIds.reduce((s, id) => s + (map.get(id) || 0), 0);
+
   let budgetedTotal = 0;
   let committedTotal = 0;
   let poCommittedTotal = 0;
@@ -210,15 +243,11 @@ function budgetKpis(tasks) {
   let unbudgeted = 0;
   const items = [];
   for (const g of groups.values()) {
-    const ph = g.task_ids.map(() => '?').join(',');
-    const sum = (sql) => Number(db.prepare(sql).get(...g.task_ids).s) || 0;
-    const committed = round2(sum(`SELECT IFNULL(SUM(amount),0) s FROM cost_commitment WHERE status = 'OPEN' AND task_id IN (${ph})`));
+    const committed = round2(sumFor(committedByTask, g.task_ids));
     const actual = round2(
-      sum(`SELECT IFNULL(SUM(labor_cost),0) s FROM time_entry WHERE status = 'APPROVED' AND task_id IN (${ph})`) +
-      sum(`SELECT IFNULL(SUM(cost),0) s FROM resource_usage WHERE status = 'APPROVED' AND task_id IN (${ph})`) +
-      sum(`SELECT IFNULL(SUM(cost),0) s FROM material_transaction WHERE type IN ('CONSUMPTION','SCRAP') AND task_id IN (${ph})`) +
-      sum(`SELECT IFNULL(SUM(amount),0) s FROM cost_transaction WHERE status = 'APPROVED' AND task_id IN (${ph})`) +
-      sum(`SELECT IFNULL(SUM(cost),0) s FROM asset_maintenance_event WHERE task_id IN (${ph})`)
+      sumFor(laborByTask, g.task_ids) + sumFor(equipmentByTask, g.task_ids) +
+      sumFor(materialByTask, g.task_ids) + sumFor(directByTask, g.task_ids) +
+      sumFor(verificationByTask, g.task_ids)
     );
     const exposure = round2(committed + actual);
     const poCommitted = procurement.openCommittedForCostCenter(g.cost_center_id, g.period);
