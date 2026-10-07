@@ -6,7 +6,7 @@ const { db, initSchema, appliedMigrations } = require('./db');
 const { seedEep, reconcileSeedData } = require('./seed_eep');
 const { ensureAssetCatalog, ensureRegisterDemo, ensureCatalogPrices } = require('./assetCatalog');
 const { backfill, ensureStandardChecklists, ensureWorkbookChecklists, ensureReportTemplates, ensureCostDemo } = require('./seed');
-const { requireAuth, auditMiddleware } = require('./auth');
+const { requireAuth, auditMiddleware, migrateSessionTokens } = require('./auth');
 const { seedTowerComponentStandards } = require('./towerStandards');
 const { reconcileAll } = require('./integrity');
 const { securityHeaders, assertProductionSecrets } = require('./security');
@@ -32,6 +32,7 @@ function ensureSeeded() {
 }
 
 ensureSeeded();
+migrateSessionTokens();
 backfill();
 ensureStandardChecklists();
 ensureWorkbookChecklists();

@@ -1,5 +1,12 @@
 const crypto = require('node:crypto');
-const { db } = require('./db');
+const { db, once } = require('./db');
+
+// Session tokens are opaque 256-bit values handed to the client once. Only the
+// SHA-256 digest is persisted, so a database read cannot be replayed as a live
+// session. Lookups and deletes hash the presented token the same way.
+function hashToken(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
 
 // ---------------------------------------------------------------------------
 // Password hashing (scrypt, salted)
@@ -36,8 +43,18 @@ function createSession(userId) {
     if (stale.length) db.prepare(`DELETE FROM session WHERE id IN (${stale.map(() => '?').join(',')})`).run(...stale);
   }
   db.prepare('INSERT INTO session (token, user_id, created_at, expires_at) VALUES (?,?,?,?)')
-    .run(token, userId, now.toISOString(), expires);
+    .run(hashToken(token), userId, now.toISOString(), expires);
   return token;
+}
+
+// One-time upgrade of pre-existing sessions that stored the raw token: replace
+// each plaintext token with its digest. Runs before the server accepts traffic.
+function migrateSessionTokens() {
+  return once('session_token_hash_v1', () => {
+    const rows = db.prepare('SELECT id, token FROM session').all();
+    const update = db.prepare('UPDATE session SET token = ? WHERE id = ?');
+    for (const row of rows) update.run(hashToken(row.token), row.id);
+  });
 }
 
 function revokeUserSessions(userId) {
@@ -46,12 +63,12 @@ function revokeUserSessions(userId) {
 }
 
 function destroySession(token) {
-  db.prepare('DELETE FROM session WHERE token = ?').run(token);
+  db.prepare('DELETE FROM session WHERE token = ?').run(hashToken(token));
 }
 
 function getUserFromToken(token) {
   if (!token) return null;
-  const s = db.prepare('SELECT * FROM session WHERE token = ? AND expires_at > ?').get(token, new Date().toISOString());
+  const s = db.prepare('SELECT * FROM session WHERE token = ? AND expires_at > ?').get(hashToken(token), new Date().toISOString());
   if (!s) return null;
   const u = db.prepare(
     `SELECT u.id, u.username, u.role, u.region_id, u.person_id, u.active, u.created_at,
@@ -294,7 +311,9 @@ function auditMiddleware(req, res, next) {
 module.exports = {
   hashPassword,
   verifyPassword,
+  hashToken,
   createSession,
+  migrateSessionTokens,
   revokeUserSessions,
   destroySession,
   getUserFromToken,
