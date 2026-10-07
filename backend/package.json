@@ -7,10 +7,12 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
+    "test": "node --test \"test/*.test.js\"",
     "fix-data": "node scripts/fixRuntimeData.js",
     "fix-data:apply": "node scripts/fixRuntimeData.js --apply",
     "db:backup": "node scripts/backup.js",
-    "db:verify": "node scripts/backup.js --test-restore"
+    "db:verify": "node scripts/backup.js --test-restore",
+    "rotate-credentials": "node scripts/rotateCredentials.js"
   },
   "engines": {
     "node": ">=22.5.0"
