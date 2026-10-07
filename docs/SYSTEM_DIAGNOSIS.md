@@ -124,16 +124,21 @@ Findings:
 
 ## Prioritized remediation roadmap
 
-P0 — before production go-live:
+P0 — before production go-live (all resolved):
 
 1. Rotate demo credentials and enforce production secret assertion in the deploy pipeline.
+   Done: `assertProductionSecrets()` refuses to boot with live demo credentials; `npm run rotate-credentials` rotates and revokes sessions; `test/security.test.js` and `.github/workflows/ci.yml`.
 2. Hash session tokens at rest; consider httpOnly cookies for web.
+   Done: SHA-256 token hashing with one-time plaintext migration (`df2dce2`).
 3. Make authorization declarative (`requirePerm` or a route permission table).
+   Done: finance/procurement/costing routers use `requirePerm` / `requireAnyPerm` (`862c322`).
 4. Add a global API rate limiter; persist counters if multi-instance.
+   Done: `apiLimiterFromEnv()` applied to `/api` with env-tunable caps (`760adf4`); counters remain in-process.
 
 P1 — hardening and coverage:
 
 5. HTTP regression tests for auth, tasks writes, admin, attachments; frontend test runner; CI running backend tests, tsc, mobile vitest.
+   Partly done: `.github/workflows/ci.yml` now runs backend tests, the frontend build and mobile typecheck/vitest; HTTP-level auth tests added (`test/financeAuth.test.js`, `test/security.test.js`). Broader task/admin/attachment HTTP coverage and a frontend test runner remain open.
 6. Fix mobile photo MIME and upload cap; per-entity outbox keying and max attempts.
 7. `.gitignore` entries for uploads, DB files, design.
 
@@ -145,4 +150,4 @@ P2 — scale and polish:
 
 ## Verdict
 
-The backend domain layer is production-grade in design, and the financial/operational modules are coherent and testable. The principal risks are operational: credential and session handling, authorization ergonomics, absent CI for web and backend, and thin HTTP-level tests. None block continued development; several should be closed before a real deployment.
+The backend domain layer is production-grade in design, and the financial/operational modules are coherent and testable. The principal risks were operational: credential and session handling, authorization ergonomics, absent CI for web and backend, and thin HTTP-level tests. The four P0 items are now closed (session-token hashing, boot-time secret assertion plus rotation, declarative route permissions, global rate limiting) and CI covers backend, frontend build and mobile. Remaining work is P1/P2 hardening and broader HTTP regression coverage.
