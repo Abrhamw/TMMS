@@ -135,12 +135,14 @@ P0 — before production go-live (all resolved):
 4. Add a global API rate limiter; persist counters if multi-instance.
    Done: `apiLimiterFromEnv()` applied to `/api` with env-tunable caps (`760adf4`); counters remain in-process.
 
-P1 — hardening and coverage:
+P1 — hardening and coverage (all resolved):
 
 5. HTTP regression tests for auth, tasks writes, admin, attachments; frontend test runner; CI running backend tests, tsc, mobile vitest.
-   Partly done: `.github/workflows/ci.yml` now runs backend tests, the frontend build and mobile typecheck/vitest; HTTP-level auth tests added (`test/financeAuth.test.js`, `test/security.test.js`). Broader task/admin/attachment HTTP coverage and a frontend test runner remain open.
+   Done: `test/httpRegression.test.js` exercises task create/update and region scope, ADMIN-only settings/users/audit, and attachment permission/type/idempotency over HTTP; auth/security covered by `test/financeAuth.test.js` and `test/security.test.js`. The frontend has a vitest runner (`frontend/vitest.config.js`, `src/*.test.js`, `npm test`), and `.github/workflows/ci.yml` runs backend tests, the frontend build + tests and mobile typecheck/vitest.
 6. Fix mobile photo MIME and upload cap; per-entity outbox keying and max attempts.
+   Done: `photo.ts` preserves the capture container and reports an accurate MIME; `attachments.ts` rejects payloads over the 8 MB backend limit as permanent; each attachment gets its own outbox entity; transient failures stop after `MAX_OUTBOX_ATTEMPTS` and 415 is permanent (`524d7f3`).
 7. `.gitignore` entries for uploads, DB files, design.
+   Done: runtime SQLite files/carriers, `backend/uploads/`, `design/` and `mobile/LICENSE` ignored (`f72ba0d`).
 
 P2 — scale and polish:
 
@@ -150,4 +152,4 @@ P2 — scale and polish:
 
 ## Verdict
 
-The backend domain layer is production-grade in design, and the financial/operational modules are coherent and testable. The principal risks were operational: credential and session handling, authorization ergonomics, absent CI for web and backend, and thin HTTP-level tests. The four P0 items are now closed (session-token hashing, boot-time secret assertion plus rotation, declarative route permissions, global rate limiting) and CI covers backend, frontend build and mobile. Remaining work is P1/P2 hardening and broader HTTP regression coverage.
+The backend domain layer is production-grade in design, and the financial/operational modules are coherent and testable. The operational risks found in the review — credential and session handling, authorization ergonomics, absent CI, and thin HTTP-level coverage — are closed: the four P0 items and the P1 hardening items are done. CI now runs backend tests, the frontend build + unit tests and mobile typecheck/vitest. Remaining work is the P2 scale/polish items.
