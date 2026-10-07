@@ -141,4 +141,35 @@ describe('sync engine', () => {
     expect(result.sent).toBe(1);
     expect(seen[0]?.client_ref).toBeTruthy();
   });
+
+  it('treats an unsupported media type as permanent', async () => {
+    await enqueue(driver, { type: 'attachment', entity: 'attachment:1:loc-1', payload: { task_id: 1, local_id: 'loc-1' } });
+    const { client } = fakeClient(async () => { throw new ApiError('Unsupported file type', 415); });
+
+    const result = await flush({
+      driver,
+      client,
+      sendAttachmentImpl: async () => { throw new ApiError('Unsupported file type', 415); },
+    });
+
+    expect(result.failed).toBe(1);
+    expect(await listOutbox(driver, ['failed'])).toHaveLength(1);
+  });
+
+  it('parks an item as failed once the retry limit is reached', async () => {
+    await enqueue(driver, { type: 'comment', entity: 'task:9', payload: { entity_type: 'TASK', entity_id: 9, body: 'a' } });
+    const { client } = fakeClient(async () => { throw new Error('Network request failed'); });
+
+    const first = await flush({ driver, client, maxAttempts: 2 });
+    expect(first.failed).toBe(0);
+    expect(first.remaining).toBe(1);
+    const pending = await listOutbox(driver, ['pending']);
+    expect(pending[0]?.attempts).toBe(1);
+
+    const second = await flush({ driver, client, maxAttempts: 2 });
+    expect(second.failed).toBe(1);
+    expect(second.remaining).toBe(0);
+    const failed = await listOutbox(driver, ['failed']);
+    expect(failed[0]?.last_error).toContain('Retry limit reached');
+  });
 });

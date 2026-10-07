@@ -13,6 +13,10 @@ export type OutboxType =
 
 export type OutboxStatus = 'pending' | 'inflight' | 'failed' | 'done';
 
+// Transient failures are retried with backoff until this many attempts, after
+// which the item is parked as 'failed' so one bad capture cannot retry forever.
+export const MAX_OUTBOX_ATTEMPTS = 8;
+
 export interface OutboxItem {
   id: number;
   client_ref: string;

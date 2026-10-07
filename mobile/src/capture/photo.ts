@@ -29,16 +29,29 @@ function attachmentsDir(): Directory {
 export function mimeForName(name: string): string {
   const lower = name.toLowerCase();
   if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.gif')) return 'image/gif';
   if (lower.endsWith('.heic')) return 'image/heic';
+  if (lower.endsWith('.heif')) return 'image/heif';
   if (lower.endsWith('.pdf')) return 'application/pdf';
-  return 'image/jpeg';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  return 'application/octet-stream';
+}
+
+// Keep the camera's own container extension instead of forcing `.jpg`, so a
+// PNG/WebP capture is not mislabelled (the backend sniffs the real MIME from
+// the bytes, but the name and payload should agree with it).
+export function extensionForUri(sourceUri: string): string {
+  const cleaned = sourceUri.split('?')[0].split('#')[0];
+  const match = /\.([a-zA-Z0-9]+)$/.exec(cleaned);
+  return match ? match[1].toLowerCase() : 'jpg';
 }
 
 export async function storePhoto(sourceUri: string): Promise<StoredPhoto> {
   const dir = attachmentsDir();
   dir.create({ intermediates: true, idempotent: true });
   const localId = newLocalId();
-  const name = `${localId}.jpg`;
+  const name = `${localId}.${extensionForUri(sourceUri)}`;
   const destination = new File(dir, name);
   await new File(sourceUri).copy(destination);
   return { localId, uri: destination.uri, name };
@@ -57,7 +70,7 @@ export async function queueAttachment(
   );
   await enqueue(driver, {
     type: 'attachment',
-    entity: `task:${input.taskId}`,
+    entity: `attachment:${input.taskId}:${stored.localId}`,
     payload: {
       task_id: input.taskId,
       local_id: stored.localId,

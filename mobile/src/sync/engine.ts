@@ -7,6 +7,7 @@ import {
   markInflight,
   pendingCount,
   requeue,
+  MAX_OUTBOX_ATTEMPTS,
   type OutboxItem,
 } from '../db/outbox';
 import { sendAttachment } from './attachments';
@@ -29,9 +30,10 @@ export interface FlushDeps {
   client: ApiClient;
   onEvent?: (event: FlushEvent) => void;
   sendAttachmentImpl?: typeof sendAttachment;
+  maxAttempts?: number;
 }
 
-const PERMANENT_STATUS = new Set([400, 403, 404, 409, 410, 413, 422]);
+const PERMANENT_STATUS = new Set([400, 403, 404, 409, 410, 413, 415, 422]);
 
 function isPermanent(error: unknown): boolean {
   return error instanceof ApiError && PERMANENT_STATUS.has(error.status);
@@ -94,6 +96,7 @@ async function sendItem(deps: FlushDeps, item: OutboxItem): Promise<void> {
 
 export async function flush(deps: FlushDeps): Promise<FlushResult> {
   const items = await listOutbox(deps.driver, ['pending', 'inflight']);
+  const maxAttempts = deps.maxAttempts ?? MAX_OUTBOX_ATTEMPTS;
   const blocked = new Set<string>();
   let sent = 0;
   let failed = 0;
@@ -115,10 +118,11 @@ export async function flush(deps: FlushDeps): Promise<FlushResult> {
         deps.onEvent?.({ kind: 'aborted' });
         break;
       }
-      if (isPermanent(error)) {
-        await markFailed(deps.driver, item.id, message);
+      if (isPermanent(error) || item.attempts + 1 >= maxAttempts) {
+        const reason = isPermanent(error) ? message : `Retry limit reached: ${message}`;
+        await markFailed(deps.driver, item.id, reason);
         failed += 1;
-        deps.onEvent?.({ kind: 'failed', item, error: message });
+        deps.onEvent?.({ kind: 'failed', item, error: reason });
       } else {
         await requeue(deps.driver, item.id, message);
         blocked.add(key);
