@@ -239,6 +239,17 @@ function requirePerm(perm) {
   };
 }
 
+// Declarative guard for routes a route table authorizes by any one of several
+// permissions (e.g. cost approval by either 'task:manage' or 'task:verify').
+function requireAnyPerm(...perms) {
+  return (req, res, next) => {
+    if (!perms.some((perm) => hasPerm(req.user, perm))) {
+      return res.status(403).json({ error: `Forbidden: requires any of ${perms.map((p) => `'${p}'`).join(', ')}` });
+    }
+    next();
+  };
+}
+
 function can(req, perm) {
   return hasPerm(req.user, perm);
 }
@@ -328,6 +339,7 @@ module.exports = {
   isCrewRole,
   requireAuth,
   requirePerm,
+  requireAnyPerm,
   can,
   checkRegion,
   scopeRows,

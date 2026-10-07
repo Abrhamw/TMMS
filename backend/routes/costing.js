@@ -2,7 +2,7 @@
 
 const express = require('express');
 const { db, get, insertRow, list, byClientRef } = require('../util');
-const { can, audit } = require('../auth');
+const { requirePerm, requireAnyPerm, audit } = require('../auth');
 const { taskVisible } = require('../authority');
 const { COST_CATEGORIES, COMMITMENT_STATUSES, taskCostSummary, closureGates } = require('../costing');
 const budget = require('../budget');
@@ -11,10 +11,6 @@ const router = express.Router();
 
 function canSeeTask(req, t) {
   return t && taskVisible(req.user, t);
-}
-
-function canManageCost(req) {
-  return req.user.role === 'ADMIN' || can(req, 'task:manage');
 }
 
 function loadTaskFor(req, res) {
@@ -44,10 +40,9 @@ router.get('/tasks/:id/cost-estimates', (req, res) => {
   res.json({ task_id: t.id, planned_cost: taskCostSummary(t.id).planned_cost, estimates: list('cost_estimate', [], 'id').filter((e) => e.task_id === t.id) });
 });
 
-router.post('/tasks/:id/cost-estimates', (req, res) => {
+router.post('/tasks/:id/cost-estimates', requirePerm('task:manage'), (req, res) => {
   const t = loadTaskFor(req, res);
   if (!t) return;
-  if (!canManageCost(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
   const body = req.body || {};
   const category = body.category || 'OTHER';
   if (!COST_CATEGORIES.has(category)) return res.status(400).json({ error: `category must be one of: ${[...COST_CATEGORIES].join(', ')}` });
@@ -66,12 +61,11 @@ router.post('/tasks/:id/cost-estimates', (req, res) => {
   res.status(201).json(get('cost_estimate', id));
 });
 
-router.put('/cost-estimates/:id', (req, res) => {
+router.put('/cost-estimates/:id', requirePerm('task:manage'), (req, res) => {
   const e = get('cost_estimate', Number(req.params.id));
   if (!e) return res.status(404).json({ error: 'Estimate not found' });
   const t = get('task', e.task_id);
   if (!canSeeTask(req, t)) return res.status(404).json({ error: 'Estimate not found' });
-  if (!canManageCost(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
   const body = req.body || {};
   const patch = {
     category: body.category, description: body.description,
@@ -96,10 +90,9 @@ router.get('/tasks/:id/cost-commitments', (req, res) => {
   res.json({ task_id: t.id, committed_cost: taskCostSummary(t.id).committed_cost, commitments: list('cost_commitment', [], 'id').filter((c) => c.task_id === t.id) });
 });
 
-router.post('/tasks/:id/cost-commitments', (req, res) => {
+router.post('/tasks/:id/cost-commitments', requirePerm('task:manage'), (req, res) => {
   const t = loadTaskFor(req, res);
   if (!t) return;
-  if (!canManageCost(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
   const body = req.body || {};
   const category = body.category || 'OTHER';
   if (!COST_CATEGORIES.has(category)) return res.status(400).json({ error: `category must be one of: ${[...COST_CATEGORIES].join(', ')}` });
@@ -128,12 +121,11 @@ router.post('/tasks/:id/cost-commitments', (req, res) => {
   res.status(201).json(get('cost_commitment', id));
 });
 
-router.post('/cost-commitments/:id/status', (req, res) => {
+router.post('/cost-commitments/:id/status', requirePerm('task:manage'), (req, res) => {
   const c = get('cost_commitment', Number(req.params.id));
   if (!c) return res.status(404).json({ error: 'Commitment not found' });
   const t = get('task', c.task_id);
   if (!canSeeTask(req, t)) return res.status(404).json({ error: 'Commitment not found' });
-  if (!canManageCost(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
   const status = req.body && req.body.status;
   if (!COMMITMENT_STATUSES.has(status)) return res.status(400).json({ error: `status must be one of: ${[...COMMITMENT_STATUSES].join(', ')}` });
   db.prepare('UPDATE cost_commitment SET status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?').run(status, new Date().toISOString(), c.id);
@@ -149,10 +141,9 @@ router.get('/tasks/:id/cost-transactions', (req, res) => {
   res.json({ task_id: t.id, transactions: list('cost_transaction', [], 'id').filter((c) => c.task_id === t.id) });
 });
 
-router.post('/tasks/:id/cost-transactions', (req, res) => {
+router.post('/tasks/:id/cost-transactions', requireAnyPerm('task:manage', 'task:verify'), (req, res) => {
   const t = loadTaskFor(req, res);
   if (!t) return;
-  if (!canManageCost(req) && !can(req, 'task:verify')) return res.status(403).json({ error: "Forbidden: requires 'task:manage', 'task:verify' or ADMIN" });
   const body = req.body || {};
   if (body.client_ref) {
     const existing = byClientRef('cost_transaction', body.client_ref);
@@ -179,7 +170,6 @@ function decideCost(req, res, status) {
   if (!c) return res.status(404).json({ error: 'Cost transaction not found' });
   const t = get('task', c.task_id);
   if (!canSeeTask(req, t)) return res.status(404).json({ error: 'Cost transaction not found' });
-  if (!canManageCost(req) && !can(req, 'task:verify')) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or 'task:verify'" });
   if (c.status !== 'DRAFT') return res.status(409).json({ error: `Cannot decide a ${c.status} transaction` });
   if (status === 'APPROVED' && req.user.role !== 'ADMIN' && req.user.person_id && c.created_by === req.user.person_id) {
     return res.status(403).json({ error: 'Forbidden: a cost transaction must be approved by someone else' });
@@ -192,15 +182,14 @@ function decideCost(req, res, status) {
   res.json(get('cost_transaction', c.id));
 }
 
-router.post('/cost-transactions/:id/approve', (req, res) => decideCost(req, res, 'APPROVED'));
-router.post('/cost-transactions/:id/reject', (req, res) => decideCost(req, res, 'REJECTED'));
+router.post('/cost-transactions/:id/approve', requireAnyPerm('task:manage', 'task:verify'), (req, res) => decideCost(req, res, 'APPROVED'));
+router.post('/cost-transactions/:id/reject', requireAnyPerm('task:manage', 'task:verify'), (req, res) => decideCost(req, res, 'REJECTED'));
 
 // ---- Reconciliation and closure ----
 
-router.post('/tasks/:id/cost-reconcile', (req, res) => {
+router.post('/tasks/:id/cost-reconcile', requirePerm('task:manage'), (req, res) => {
   const t = loadTaskFor(req, res);
   if (!t) return;
-  if (!canManageCost(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
   const reason = String((req.body && req.body.variance_reason) || '').trim();
   const summary = taskCostSummary(t.id);
   const tolerance = Math.max(1, Math.abs(summary.planned_cost) * 0.05);
@@ -214,10 +203,9 @@ router.post('/tasks/:id/cost-reconcile', (req, res) => {
   res.json({ task_id: t.id, ...taskCostSummary(t.id), closure: closureGates(get('task', t.id)) });
 });
 
-router.post('/tasks/:id/management-acceptance', (req, res) => {
+router.post('/tasks/:id/management-acceptance', requirePerm('task:manage'), (req, res) => {
   const t = loadTaskFor(req, res);
   if (!t) return;
-  if (!canManageCost(req) && req.user.role !== 'EXECUTIVE') return res.status(403).json({ error: "Forbidden: requires 'task:manage' or EXECUTIVE" });
   const now = new Date().toISOString();
   db.prepare('UPDATE task SET management_acceptance_at = ?, management_acceptance_by = ?, updated_at = ?, revision = revision + 1 WHERE id = ?')
     .run(now, req.user.person_id || null, now, t.id);
@@ -225,10 +213,9 @@ router.post('/tasks/:id/management-acceptance', (req, res) => {
   res.json({ task_id: t.id, management_acceptance_at: now, closure: closureGates(get('task', t.id)) });
 });
 
-router.post('/tasks/:id/close', (req, res) => {
+router.post('/tasks/:id/close', requirePerm('task:manage'), (req, res) => {
   const t = loadTaskFor(req, res);
   if (!t) return;
-  if (!canManageCost(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
   const evaluation = closureGates(t);
   const now = new Date().toISOString();
   if (!evaluation.ready_to_close) {

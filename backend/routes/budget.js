@@ -2,16 +2,12 @@
 
 const express = require('express');
 const { db, get, insertRow, list } = require('../util');
-const { can, audit } = require('../auth');
+const { requirePerm, audit } = require('../auth');
 const { taskVisible } = require('../authority');
 const budget = require('../budget');
 
 const router = express.Router();
 const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
-
-function canManageBudget(req) {
-  return req.user.role === 'ADMIN' || can(req, 'task:manage');
-}
 
 function loadTaskFor(req, res) {
   const t = get('task', Number(req.params.id));
@@ -21,13 +17,11 @@ function loadTaskFor(req, res) {
 
 // ---- Cost centers ----
 
-router.get('/cost-centers', (req, res) => {
-  if (!can(req, 'task:read')) return res.status(403).json({ error: "Forbidden: requires 'task:read'" });
+router.get('/cost-centers', requirePerm('task:read'), (req, res) => {
   res.json({ cost_centers: list('cost_center') });
 });
 
-router.post('/cost-centers', (req, res) => {
-  if (!canManageBudget(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
+router.post('/cost-centers', requirePerm('task:manage'), (req, res) => {
   const body = req.body || {};
   const code = String(body.code || '').trim();
   const name = String(body.name || '').trim();
@@ -42,8 +36,7 @@ router.post('/cost-centers', (req, res) => {
   res.status(201).json(get('cost_center', id));
 });
 
-router.put('/cost-centers/:id', (req, res) => {
-  if (!canManageBudget(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
+router.put('/cost-centers/:id', requirePerm('task:manage'), (req, res) => {
   const cc = get('cost_center', Number(req.params.id));
   if (!cc) return res.status(404).json({ error: 'Cost center not found' });
   const body = req.body || {};
@@ -62,8 +55,7 @@ router.put('/cost-centers/:id', (req, res) => {
 
 // ---- Budgets (upsert per cost center + period) ----
 
-router.get('/budgets', (req, res) => {
-  if (!can(req, 'task:read')) return res.status(403).json({ error: "Forbidden: requires 'task:read'" });
+router.get('/budgets', requirePerm('task:read'), (req, res) => {
   const period = req.query.period ? String(req.query.period) : null;
   const ccId = req.query.cost_center_id ? Number(req.query.cost_center_id) : null;
   let rows = list('budget');
@@ -72,8 +64,7 @@ router.get('/budgets', (req, res) => {
   res.json({ budgets: rows });
 });
 
-router.put('/budgets', (req, res) => {
-  if (!canManageBudget(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
+router.put('/budgets', requirePerm('task:manage'), (req, res) => {
   const body = req.body || {};
   const costCenterId = Number(body.cost_center_id);
   const cc = get('cost_center', costCenterId);
@@ -99,8 +90,7 @@ router.put('/budgets', (req, res) => {
   res.status(201).json(get('budget', id));
 });
 
-router.get('/budgets/status', (req, res) => {
-  if (!can(req, 'task:read')) return res.status(403).json({ error: "Forbidden: requires 'task:read'" });
+router.get('/budgets/status', requirePerm('task:read'), (req, res) => {
   const ccId = Number(req.query.cost_center_id);
   const period = String(req.query.period || '');
   if (!ccId || !PERIOD_RE.test(period)) return res.status(400).json({ error: 'cost_center_id and a YYYY-MM period are required' });
@@ -117,10 +107,9 @@ router.get('/tasks/:id/budget', (req, res) => {
   res.json({ task_id: t.id, ...budget.taskBudget(t) });
 });
 
-router.put('/tasks/:id/cost-center', (req, res) => {
+router.put('/tasks/:id/cost-center', requirePerm('task:manage'), (req, res) => {
   const t = loadTaskFor(req, res);
   if (!t) return;
-  if (!canManageBudget(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
   const raw = req.body ? req.body.cost_center_id : undefined;
   const costCenterId = raw === null || raw === '' ? null : Number(raw);
   if (costCenterId !== null) {

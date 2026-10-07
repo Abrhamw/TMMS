@@ -2,15 +2,11 @@
 
 const express = require('express');
 const { db, get, insertRow, list, nextCode, byClientRef, withTx } = require('../util');
-const { can, audit } = require('../auth');
+const { requirePerm, audit } = require('../auth');
 const budget = require('../budget');
 const procurement = require('../procurement');
 
 const router = express.Router();
-
-function canManageProcurement(req) {
-  return req.user.role === 'ADMIN' || can(req, 'task:manage');
-}
 
 function loadPo(req, res) {
   const po = get('purchase_order', Number(req.params.id));
@@ -20,15 +16,13 @@ function loadPo(req, res) {
 
 // ---- Suppliers ----
 
-router.get('/suppliers', (req, res) => {
-  if (!can(req, 'task:read')) return res.status(403).json({ error: "Forbidden: requires 'task:read'" });
+router.get('/suppliers', requirePerm('task:read'), (req, res) => {
   let rows = list('supplier');
   if (req.query.active !== 'all') rows = rows.filter((s) => (req.query.active === '0' ? s.active === 0 : s.active === 1));
   res.json({ suppliers: rows });
 });
 
-router.post('/suppliers', (req, res) => {
-  if (!canManageProcurement(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
+router.post('/suppliers', requirePerm('task:manage'), (req, res) => {
   const body = req.body || {};
   const name = String(body.name || '').trim();
   if (!name) return res.status(400).json({ error: 'name is required' });
@@ -44,8 +38,7 @@ router.post('/suppliers', (req, res) => {
   res.status(201).json(get('supplier', id));
 });
 
-router.put('/suppliers/:id', (req, res) => {
-  if (!canManageProcurement(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
+router.put('/suppliers/:id', requirePerm('task:manage'), (req, res) => {
   const s = get('supplier', Number(req.params.id));
   if (!s) return res.status(404).json({ error: 'Supplier not found' });
   const body = req.body || {};
@@ -65,8 +58,7 @@ router.put('/suppliers/:id', (req, res) => {
 
 // ---- Purchase orders ----
 
-router.get('/purchase-orders', (req, res) => {
-  if (!can(req, 'task:read')) return res.status(403).json({ error: "Forbidden: requires 'task:read'" });
+router.get('/purchase-orders', requirePerm('task:read'), (req, res) => {
   const clauses = [];
   const params = [];
   if (req.query.status) { clauses.push('status = ?'); params.push(String(req.query.status)); }
@@ -76,8 +68,7 @@ router.get('/purchase-orders', (req, res) => {
   res.json({ purchase_orders: db.prepare(sql).all(...params).map(procurement.poView) });
 });
 
-router.post('/purchase-orders', (req, res) => {
-  if (!canManageProcurement(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
+router.post('/purchase-orders', requirePerm('task:manage'), (req, res) => {
   const body = req.body || {};
   if (body.client_ref) {
     const existing = byClientRef('purchase_order', body.client_ref);
@@ -110,8 +101,7 @@ router.get('/purchase-orders/:id', (req, res) => {
   res.json(procurement.poView(po));
 });
 
-router.put('/purchase-orders/:id', (req, res) => {
-  if (!canManageProcurement(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
+router.put('/purchase-orders/:id', requirePerm('task:manage'), (req, res) => {
   const po = loadPo(req, res);
   if (!po) return;
   if (po.status !== 'DRAFT') return res.status(409).json({ error: `Cannot edit a ${po.status} purchase order` });
@@ -130,8 +120,7 @@ router.put('/purchase-orders/:id', (req, res) => {
   res.json(procurement.poView(get('purchase_order', po.id)));
 });
 
-router.post('/purchase-orders/:id/lines', (req, res) => {
-  if (!canManageProcurement(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
+router.post('/purchase-orders/:id/lines', requirePerm('task:manage'), (req, res) => {
   const po = loadPo(req, res);
   if (!po) return;
   if (po.status !== 'DRAFT') return res.status(409).json({ error: `Cannot add lines to a ${po.status} purchase order` });
@@ -156,8 +145,7 @@ router.post('/purchase-orders/:id/lines', (req, res) => {
   res.status(201).json(get('purchase_order_line', id));
 });
 
-router.put('/purchase-orders/:id/lines/:lineId', (req, res) => {
-  if (!canManageProcurement(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
+router.put('/purchase-orders/:id/lines/:lineId', requirePerm('task:manage'), (req, res) => {
   const po = loadPo(req, res);
   if (!po) return;
   if (po.status !== 'DRAFT') return res.status(409).json({ error: `Cannot edit lines on a ${po.status} purchase order` });
@@ -174,8 +162,7 @@ router.put('/purchase-orders/:id/lines/:lineId', (req, res) => {
   res.json(get('purchase_order_line', line.id));
 });
 
-router.post('/purchase-orders/:id/approve', (req, res) => {
-  if (!canManageProcurement(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
+router.post('/purchase-orders/:id/approve', requirePerm('task:manage'), (req, res) => {
   const po = loadPo(req, res);
   if (!po) return;
   if (po.status !== 'DRAFT') return res.status(409).json({ error: `Cannot approve a ${po.status} purchase order` });
@@ -199,8 +186,7 @@ router.post('/purchase-orders/:id/approve', (req, res) => {
   res.json(procurement.poView(get('purchase_order', po.id)));
 });
 
-router.post('/purchase-orders/:id/cancel', (req, res) => {
-  if (!canManageProcurement(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
+router.post('/purchase-orders/:id/cancel', requirePerm('task:manage'), (req, res) => {
   const po = loadPo(req, res);
   if (!po) return;
   if (!['DRAFT', 'APPROVED'].includes(po.status)) return res.status(409).json({ error: `Cannot cancel a ${po.status} purchase order` });
@@ -223,8 +209,7 @@ router.get('/purchase-orders/:id/receipts', (req, res) => {
   res.json({ purchase_order_id: po.id, receipts });
 });
 
-router.post('/purchase-orders/:id/receive', (req, res) => {
-  if (!canManageProcurement(req)) return res.status(403).json({ error: "Forbidden: requires 'task:manage' or ADMIN" });
+router.post('/purchase-orders/:id/receive', requirePerm('task:manage'), (req, res) => {
   const po = loadPo(req, res);
   if (!po) return;
   const body = req.body || {};
