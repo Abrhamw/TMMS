@@ -57,6 +57,17 @@ export function can(user, perm) {
   return perms.includes('*') || perms.includes(perm);
 }
 
+// Pure decision helper for route guards: returns the redirect target when the
+// user may not view a route, or null when access is allowed. Kept separate from
+// the React component so the routing policy is unit-testable.
+export function routeRedirect(user, perm, { any, blockExecutive } = {}) {
+  if (!user) return '/login';
+  if (blockExecutive && user.role === 'EXECUTIVE') return '/executive';
+  const allowed = Array.isArray(any) && any.length ? any.some((p) => can(user, p)) : can(user, perm);
+  if (!allowed) return user.role === 'EXECUTIVE' ? '/executive' : '/home';
+  return null;
+}
+
 export function isGlobal(user) {
   return !!user && GLOBAL_ROLES.includes(user.role);
 }

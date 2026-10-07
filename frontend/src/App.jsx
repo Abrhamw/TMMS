@@ -12,7 +12,7 @@ import Home from './pages/Home';
 import ErrorBoundary from './components/ErrorBoundary';
 import Login from './pages/Login';
 import GlobalSearch from './components/GlobalSearch';
-import { getStoredUser, getStoredToken, logout, can, CREW_ROLES, listOtherAccounts, switchAccount, removeAccount } from './auth';
+import { getStoredUser, getStoredToken, logout, can, routeRedirect, CREW_ROLES, listOtherAccounts, switchAccount, removeAccount } from './auth';
 import { t, LOCALES, getLang, setLanguage, getLocale } from './i18n';
 import { api, setApiLocale } from './api';
 import './styles.css';
@@ -429,6 +429,17 @@ function RequireAuth({ children }) {
   return children;
 }
 
+// Permission-based route guard. Mirrors the backend RBAC matrix so a deep link
+// to a page a role cannot read is redirected instead of rendering an empty or
+// forbidden view. `any` allows a route authorised by any one of several perms.
+// `blockExecutive` keeps the briefing-only surface for EXECUTIVE users.
+function RequirePerm({ perm, any, blockExecutive, children }) {
+  const user = getStoredUser();
+  const to = routeRedirect(user, perm, { any, blockExecutive });
+  if (to) return <Navigate to={to} replace />;
+  return children;
+}
+
 function RequireExecutive({ children }) {
   const user = getStoredUser();
   if (!user || !['ADMIN', 'EXECUTIVE'].includes(user.role)) return <Navigate to="/home" replace />;
@@ -452,15 +463,6 @@ function BlockExecutive({ children }) {
   return children;
 }
 
-// Reports are a management/oversight surface. A role without `report:read`
-// (field crews) is sent home rather than shown an empty, forbidden page.
-function RequireReportAccess({ children }) {
-  const user = getStoredUser();
-  if (user?.role === 'EXECUTIVE') return <Navigate to="/executive" replace />;
-  if (!user || !can(user, 'report:read')) return <Navigate to="/home" replace />;
-  return children;
-}
-
 export default function App() {
   return (
     <BrowserRouter>
@@ -471,34 +473,34 @@ export default function App() {
           <Route path="/home" element={<Home />} />
           <Route path="/mailbox" element={<Suspend><Mailbox /></Suspend>} />
           <Route path="/executive" element={<RequireExecutive><Suspend><ExecutiveSummary /></Suspend></RequireExecutive>} />
-          <Route path="/dashboard" element={<Suspend><Dashboard /></Suspend>} />
+          <Route path="/dashboard" element={<RequirePerm perm="dashboard:read"><Suspend><Dashboard /></Suspend></RequirePerm>} />
           <Route path="/overview" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/map" element={<Suspend><MapPage /></Suspend>} />
+          <Route path="/map" element={<RequirePerm perm="map:read"><Suspend><MapPage /></Suspend></RequirePerm>} />
           <Route path="/regions" element={<BlockExecutive><Navigate to="/assets?area=infrastructure&manage=regions" replace /></BlockExecutive>} />
           <Route path="/substations" element={<BlockExecutive><Navigate to="/assets?area=infrastructure&manage=substations" replace /></BlockExecutive>} />
           <Route path="/lines" element={<BlockExecutive><Navigate to="/assets?area=infrastructure&manage=lines" replace /></BlockExecutive>} />
           <Route path="/towers" element={<BlockExecutive><Navigate to="/assets?area=infrastructure&manage=towers" replace /></BlockExecutive>} />
-          <Route path="/assets" element={<BlockExecutive><Suspend><AssetsHub /></Suspend></BlockExecutive>} />
-          <Route path="/work" element={<BlockExecutive><Suspend><WorkHub /></Suspend></BlockExecutive>} />
-          <Route path="/tasks" element={<BlockExecutive><Suspend><Tasks /></Suspend></BlockExecutive>} />
-          <Route path="/tasks/:id" element={<BlockExecutive><Suspend><TaskDetail /></Suspend></BlockExecutive>} />
-          <Route path="/crews" element={<BlockExecutive><Suspend><Crews /></Suspend></BlockExecutive>} />
-          <Route path="/schedules" element={<BlockExecutive><Suspend><Schedules /></Suspend></BlockExecutive>} />
-          <Route path="/checklists" element={<BlockExecutive><Suspend><Checklists /></Suspend></BlockExecutive>} />
-          <Route path="/certifications" element={<BlockExecutive><Suspend><Certifications /></Suspend></BlockExecutive>} />
+          <Route path="/assets" element={<RequirePerm perm="asset:read" blockExecutive><Suspend><AssetsHub /></Suspend></RequirePerm>} />
+          <Route path="/work" element={<RequirePerm perm="task:read" blockExecutive><Suspend><WorkHub /></Suspend></RequirePerm>} />
+          <Route path="/tasks" element={<RequirePerm perm="task:read" blockExecutive><Suspend><Tasks /></Suspend></RequirePerm>} />
+          <Route path="/tasks/:id" element={<RequirePerm perm="task:read" blockExecutive><Suspend><TaskDetail /></Suspend></RequirePerm>} />
+          <Route path="/crews" element={<RequirePerm perm="crew:read" blockExecutive><Suspend><Crews /></Suspend></RequirePerm>} />
+          <Route path="/schedules" element={<RequirePerm perm="schedule:read" blockExecutive><Suspend><Schedules /></Suspend></RequirePerm>} />
+          <Route path="/checklists" element={<RequirePerm perm="checklist:read" blockExecutive><Suspend><Checklists /></Suspend></RequirePerm>} />
+          <Route path="/certifications" element={<RequirePerm perm="cert:read" blockExecutive><Suspend><Certifications /></Suspend></RequirePerm>} />
           <Route path="/admin" element={<RequireAdmin><Suspend><AdminHub /></Suspend></RequireAdmin>} />
           <Route path="/admin/reports" element={<RequireAdmin><Suspend><Reports /></Suspend></RequireAdmin>} />
           <Route path="/admin/value" element={<RequireAdmin><Suspend><Value /></Suspend></RequireAdmin>} />
           <Route path="/admin/organization" element={<RequireAdmin><Suspend><Organization /></Suspend></RequireAdmin>} />
           <Route path="/admin/settings" element={<RequireAdmin><Suspend><Settings /></Suspend></RequireAdmin>} />
           <Route path="/admin/tools" element={<RequireAdmin><Suspend><OperatingModel /></Suspend></RequireAdmin>} />
-          <Route path="/gps" element={<BlockExecutive><Suspend><Gps /></Suspend></BlockExecutive>} />
-          <Route path="/reports" element={<RequireReportAccess><Suspend><Reports /></Suspend></RequireReportAccess>} />
+          <Route path="/gps" element={<RequirePerm perm="gps:read" blockExecutive><Suspend><Gps /></Suspend></RequirePerm>} />
+          <Route path="/reports" element={<RequirePerm perm="report:read" blockExecutive><Suspend><Reports /></Suspend></RequirePerm>} />
           <Route path="/value" element={<RequireAdmin><Suspend><Value /></Suspend></RequireAdmin>} />
-          <Route path="/settings" element={<BlockExecutive><Suspend><Settings /></Suspend></BlockExecutive>} />
-          <Route path="/organization" element={<BlockExecutive><Suspend><Organization /></Suspend></BlockExecutive>} />
-          <Route path="/model" element={<BlockExecutive><Suspend><OperatingModel /></Suspend></BlockExecutive>} />
-          <Route path="/infrastructure" element={<BlockExecutive><Suspend><Infrastructure /></Suspend></BlockExecutive>} />
+          <Route path="/settings" element={<RequirePerm perm="settings:read" blockExecutive><Suspend><Settings /></Suspend></RequirePerm>} />
+          <Route path="/organization" element={<RequirePerm perm="settings:read" blockExecutive><Suspend><Organization /></Suspend></RequirePerm>} />
+          <Route path="/model" element={<RequirePerm perm="settings:read" blockExecutive><Suspend><OperatingModel /></Suspend></RequirePerm>} />
+          <Route path="/infrastructure" element={<RequirePerm perm="asset:read" blockExecutive><Suspend><Infrastructure /></Suspend></RequirePerm>} />
           <Route path="*" element={<Navigate to="/home" replace />} />
         </Route>
       </Routes>
