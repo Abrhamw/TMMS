@@ -17,10 +17,17 @@ const { readyCrew, scoreCrewFit } = require('../assignment');
 const { resolveTarget, infraName, assetName } = require('../target');
 const { sendMail, primaryUserForPerson, immediateBossForTask } = require('../mail');
 const { createDefectFromFinding } = require('../defects');
+const { isTaskEditable } = require('../taskLifecycle');
 
 const router = express.Router();
 
 const OPEN = ["DRAFT", "SCHEDULED", "ASSIGNED", "IN_PROGRESS", "ON_HOLD", "PENDING_VERIFICATION"];
+
+// Rejection shared by every mutation that must stop once the task is submitted
+// for verification (or completed/cancelled).
+function lockedResponse(res) {
+  return res.status(409).json({ error: 'Task is locked after submission for verification', code: 'TASK_LOCKED' });
+}
 
 // Non-blocking dispatch advisory shown before committing a crew to a
 // checklist-governed task. Null when the task has no checklist template.
@@ -679,9 +686,7 @@ router.post('/tasks/:id/permit', (req, res) => {
   if (!can(req, 'task:manage') && !can(req, 'task:assign')) {
     return res.status(403).json({ error: 'Forbidden: requires task:manage or task:assign' });
   }
-  if (['COMPLETED', 'CANCELLED'].includes(t.status)) {
-    return res.status(409).json({ error: `Cannot change the permit of a ${t.status} task` });
-  }
+  if (!isTaskEditable(t)) return lockedResponse(res);
   const now = new Date().toISOString();
   if (req.body && req.body.revoke) {
     db.prepare('UPDATE task SET permit_reference = NULL, permit_approved_at = NULL, permit_approved_by = NULL, updated_at = ?, revision = revision + 1 WHERE id = ?')
@@ -709,9 +714,7 @@ router.put('/tasks/:id/equipment-checks', (req, res) => {
   if (!can(req, 'task:assign') && !can(req, 'task:manage') && !crewMayCheck) {
     return res.status(403).json({ error: 'Forbidden: requires task:assign, task:manage, or membership of the assigned crew' });
   }
-  if (!['DRAFT', 'SCHEDULED', 'ASSIGNED'].includes(t.status)) {
-    return res.status(409).json({ error: 'Equipment availability must be checked before work starts' });
-  }
+  if (!isTaskEditable(t)) return lockedResponse(res);
   const checks = req.body && req.body.checks;
   if (!Array.isArray(checks)) return res.status(400).json({ error: 'checks must be an array' });
   const required = new Set((taskRequirements(t) || {}).equipment || []);
@@ -853,6 +856,7 @@ router.put('/tasks/:id', (req, res) => {
   if (!t) return res.status(404).json({ error: 'Task not found' });
   if (!taskVisible(req.user, t)) return res.status(404).json({ error: 'Task not found' });
   if (!can(req, 'task:manage')) return res.status(403).json({ error: 'Forbidden: requires task:manage' });
+  if (!isTaskEditable(t)) return lockedResponse(res);
   const fields = pickTaskFields(req.body);
   if (!isGlobal(req.user)) fields.region_id = req.user.region_id;
   if (fields.priority !== undefined && !PRIORITIES.has(fields.priority)) {
@@ -1667,7 +1671,7 @@ router.get('/tasks/:id/checklist', (req, res) => {
   }).filter(Boolean);
   // `template` stays the primary template for callers written against the
   // single-template shape; `templates` carries every governed template.
-  res.json({ task: t, template: templates[0] || null, templates });
+  res.json({ task: t, editable: isTaskEditable(t), template: templates[0] || null, templates });
 });
 
 // Save a partially-filled checklist run without submitting it. The capture is
@@ -1682,6 +1686,7 @@ router.post('/tasks/:id/checklist/draft', (req, res) => {
   if (isCrewUser(req.user) && !isOnCrew(req.user, t.crew_id)) {
     return res.status(403).json({ error: 'Forbidden: not your assigned task' });
   }
+  if (!isTaskEditable(t)) return lockedResponse(res);
   const ids = taskTemplateIds(t.id);
   if (!ids.length) return res.status(400).json({ error: 'Task has no checklist template' });
   const requestedId = (req.body.template_id !== undefined && req.body.template_id !== null && req.body.template_id !== '')
@@ -1733,6 +1738,7 @@ router.post('/tasks/:id/checklist', (req, res) => {
   if (isCrewUser(req.user) && !isOnCrew(req.user, t.crew_id)) {
     return res.status(403).json({ error: 'Forbidden: not your assigned task' });
   }
+  if (!isTaskEditable(t)) return lockedResponse(res);
   const ids = taskTemplateIds(t.id);
   if (!ids.length) return res.status(400).json({ error: 'Task has no checklist template' });
   const requestedId = (req.body.template_id !== undefined && req.body.template_id !== null && req.body.template_id !== '')
@@ -2056,6 +2062,7 @@ router.patch('/tasks/:id/work-items/:itemId', (req, res) => {
   if (isCrewUser(req.user) && !isOnCrew(req.user, t.crew_id)) {
     return res.status(403).json({ error: 'Forbidden: not your assigned task' });
   }
+  if (!isTaskEditable(t)) return lockedResponse(res);
   const item = get('task_work_item', Number(req.params.itemId));
   if (!item || item.task_id !== t.id) return res.status(404).json({ error: 'Work item not found' });
   const status = req.body.status;

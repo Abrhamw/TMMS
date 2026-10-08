@@ -6,6 +6,7 @@ const { db } = require('../db');
 const { get, byClientRef } = require('../util');
 const { can, isCrewUser, isGlobal, isOnCrew, audit } = require('../auth');
 const { taskVisible } = require('../authority');
+const { isTaskEditable } = require('../taskLifecycle');
 const { detectMime, extensionFor, isAllowed } = require('../upload');
 
 const router = express.Router();
@@ -37,6 +38,9 @@ router.post('/tasks/:id/findings', (req, res) => {
   if (!t) return;
   if (isCrewUser(req.user) && !isOnCrew(req.user, t.crew_id)) {
     return res.status(403).json({ error: 'Forbidden: not your assigned task' });
+  }
+  if (!isTaskEditable(t)) {
+    return res.status(409).json({ error: 'Task is locked after submission for verification', code: 'TASK_LOCKED' });
   }
   const title = String(req.body.title || '').trim();
   if (!title) return res.status(400).json({ error: 'Finding title is required' });
