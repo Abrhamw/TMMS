@@ -8,9 +8,10 @@ interface ChoiceProps {
   options: Array<{ label: string; value: unknown }>;
   value: unknown;
   onSelect: (value: unknown) => void;
+  disabled?: boolean;
 }
 
-function Choice({ options, value, onSelect }: ChoiceProps) {
+function Choice({ options, value, onSelect, disabled = false }: ChoiceProps) {
   return (
     <View style={styles.choiceRow}>
       {options.map((option) => {
@@ -19,7 +20,8 @@ function Choice({ options, value, onSelect }: ChoiceProps) {
           <Pressable
             key={String(option.value)}
             onPress={() => onSelect(selected ? null : option.value)}
-            style={[styles.choice, selected && styles.choiceSelected]}
+            disabled={disabled}
+            style={[styles.choice, selected && styles.choiceSelected, disabled && styles.choiceDisabled]}
           >
             <Text style={[styles.choiceText, selected && styles.choiceTextSelected]}>{option.label}</Text>
           </Pressable>
@@ -42,9 +44,10 @@ interface Props {
   comment: string;
   onValueChange: (value: unknown) => void;
   onCommentChange: (comment: string) => void;
+  disabled?: boolean;
 }
 
-export function ChecklistItemInput({ item, value, comment, onValueChange, onCommentChange }: Props) {
+export function ChecklistItemInput({ item, value, comment, onValueChange, onCommentChange, disabled = false }: Props) {
   const [capturing, setCapturing] = useState(false);
   const [gpsError, setGpsError] = useState<string | null>(null);
 
@@ -80,6 +83,7 @@ export function ChecklistItemInput({ item, value, comment, onValueChange, onComm
         <Choice
           value={value}
           onSelect={onValueChange}
+          disabled={disabled}
           options={[
             { label: 'OK', value: true },
             { label: 'Not OK', value: false },
@@ -93,6 +97,7 @@ export function ChecklistItemInput({ item, value, comment, onValueChange, onComm
           keyboardType="numeric"
           placeholder="Enter a number"
           placeholderTextColor={colors.muted}
+          editable={!disabled}
           value={value === null || value === undefined ? '' : String(value)}
           onChangeText={(text) => onValueChange(text === '' ? null : text)}
         />
@@ -104,6 +109,7 @@ export function ChecklistItemInput({ item, value, comment, onValueChange, onComm
           multiline
           placeholder="Enter a response"
           placeholderTextColor={colors.muted}
+          editable={!disabled}
           value={value === null || value === undefined ? '' : String(value)}
           onChangeText={onValueChange}
         />
@@ -113,13 +119,14 @@ export function ChecklistItemInput({ item, value, comment, onValueChange, onComm
         <Choice
           value={value}
           onSelect={onValueChange}
+          disabled={disabled}
           options={options.map((option) => ({ label: option, value: option }))}
         />
       ) : null}
 
       {item.response_type === 'GPS_POINT' ? (
         <View>
-          <Pressable style={styles.gpsButton} onPress={captureGps} disabled={capturing}>
+          <Pressable style={styles.gpsButton} onPress={captureGps} disabled={capturing || disabled}>
             {capturing ? (
               <ActivityIndicator color={colors.primary} />
             ) : (
@@ -140,6 +147,7 @@ export function ChecklistItemInput({ item, value, comment, onValueChange, onComm
         style={[styles.input, styles.note]}
         placeholder="Note (optional)"
         placeholderTextColor={colors.muted}
+        editable={!disabled}
         value={comment}
         onChangeText={onCommentChange}
       />
@@ -173,6 +181,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   choiceSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
+  choiceDisabled: { opacity: 0.5 },
   choiceText: { fontSize: 14, color: colors.text },
   choiceTextSelected: { color: '#ffffff', fontWeight: '600' },
   input: {

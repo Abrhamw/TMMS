@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -18,10 +18,10 @@ import { pullChecklist } from '../../sync/pull';
 import { ChecklistItemInput } from '../../components/ChecklistItemInput';
 import { getCurrentCoords } from '../../capture/location';
 import type {
-  ChecklistResponse,
   ChecklistSubmitItem,
   ChecklistTemplate,
 } from '../../api/checklistTypes';
+import { isTaskLocked } from '../../lib/taskLifecycle';
 import { colors, radius, spacing } from '../../theme';
 
 interface ItemState {
@@ -73,6 +73,10 @@ export default function ChecklistScreen() {
   const [offline, setOffline] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [taskStatus, setTaskStatus] = useState<string | null>(null);
+
+  const locked = isTaskLocked(taskStatus);
+  const dirtyRef = useRef(false);
 
   const active = useMemo(
     () => templates.find((template) => template.id === activeId) ?? templates[0] ?? null,
@@ -83,6 +87,7 @@ export default function ChecklistScreen() {
     setActiveId(template.id);
     setStates(draftItemStates(template));
     setNotes(template.draft?.notes ?? '');
+    dirtyRef.current = false;
   }, []);
 
   useEffect(() => {
@@ -107,6 +112,7 @@ export default function ChecklistScreen() {
         if (!alive) return;
         const loaded = fresh.templates ?? [];
         setTemplates(loaded);
+        setTaskStatus(fresh.task?.status ?? null);
         const preferred =
           loaded.find((template) => String(template.id) === params.templateId) ?? loaded[0];
         if (preferred) {
@@ -139,6 +145,7 @@ export default function ChecklistScreen() {
 
   const saveDraft = useCallback(async () => {
     if (!active) return;
+    dirtyRef.current = false;
     setBusy(true);
     setNotice(null);
     try {
@@ -165,6 +172,14 @@ export default function ChecklistScreen() {
       setBusy(false);
     }
   }, [active, id, notes, submitItems, client]);
+
+  useEffect(() => {
+    if (locked || !active || !dirtyRef.current) return;
+    const handle = setTimeout(() => {
+      void saveDraft();
+    }, 700);
+    return () => clearTimeout(handle);
+  }, [states, notes, locked, active, saveDraft]);
 
   const submitRun = useCallback(async () => {
     if (!active) return;
@@ -241,6 +256,7 @@ export default function ChecklistScreen() {
       ) : null}
 
       {offline ? <Text style={styles.offline}>Offline — showing saved checklist</Text> : null}
+      {locked ? <Text style={styles.locked}>Submitted for verification — locked. This checklist is read-only.</Text> : null}
       {active.draft ? (
         <Text style={styles.draft}>Draft from {active.draft.updated_at?.slice(0, 16).replace('T', ' ')}</Text>
       ) : null}
@@ -249,20 +265,23 @@ export default function ChecklistScreen() {
         <ChecklistItemInput
           key={item.id}
           item={item}
+          disabled={locked}
           value={states[item.id]?.response_value ?? null}
           comment={states[item.id]?.comment ?? ''}
-          onValueChange={(value) =>
+          onValueChange={(value) => {
+            dirtyRef.current = true;
             setStates((prev) => ({
               ...prev,
               [item.id]: { response_value: value, comment: prev[item.id]?.comment ?? '' },
-            }))
-          }
-          onCommentChange={(comment) =>
+            }));
+          }}
+          onCommentChange={(comment) => {
+            dirtyRef.current = true;
             setStates((prev) => ({
               ...prev,
               [item.id]: { response_value: prev[item.id]?.response_value ?? null, comment },
-            }))
-          }
+            }));
+          }}
         />
       ))}
 
@@ -270,22 +289,28 @@ export default function ChecklistScreen() {
       <TextInput
         style={styles.notes}
         multiline
+        editable={!locked}
         placeholder="Notes for the whole run (optional)"
         placeholderTextColor={colors.muted}
         value={notes}
-        onChangeText={setNotes}
+        onChangeText={(text) => {
+          dirtyRef.current = true;
+          setNotes(text);
+        }}
       />
 
       {notice ? <Text style={styles.notice}>{notice}</Text> : null}
 
-      <View style={styles.actions}>
-        <Pressable style={[styles.button, styles.secondary]} onPress={saveDraft} disabled={busy}>
-          <Text style={styles.secondaryText}>Save draft</Text>
-        </Pressable>
-        <Pressable style={[styles.button, styles.primary]} onPress={submitRun} disabled={busy}>
-          <Text style={styles.primaryText}>{busy ? 'Working…' : 'Submit checklist'}</Text>
-        </Pressable>
-      </View>
+      {locked ? null : (
+        <View style={styles.actions}>
+          <Pressable style={[styles.button, styles.secondary]} onPress={saveDraft} disabled={busy}>
+            <Text style={styles.secondaryText}>Save draft</Text>
+          </Pressable>
+          <Pressable style={[styles.button, styles.primary]} onPress={submitRun} disabled={busy}>
+            <Text style={styles.primaryText}>{busy ? 'Working…' : 'Submit checklist'}</Text>
+          </Pressable>
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -315,6 +340,7 @@ const styles = StyleSheet.create({
   tabText: { fontSize: 13, color: colors.text },
   tabTextActive: { color: '#ffffff', fontWeight: '600' },
   offline: { color: colors.warning, fontSize: 12, marginBottom: spacing.sm },
+  locked: { color: colors.danger, fontSize: 12, fontWeight: '600', marginBottom: spacing.sm },
   draft: { color: colors.muted, fontSize: 12, marginBottom: spacing.sm },
   label: { fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: spacing.xs },
   notes: {
