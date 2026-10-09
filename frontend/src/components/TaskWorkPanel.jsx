@@ -7,6 +7,8 @@ import WorkPanelOverlay from './WorkPanelOverlay';
 import ExecutionDetail from './ExecutionDetail';
 import { describeTarget } from '../checklistFormat';
 import { taskTypeLabel, priorityLabel } from '../labels';
+import useChecklistDraft from '../hooks/useChecklistDraft';
+import { isEditable } from '../taskLifecycle';
 
 const GPS_TOLERANCE = 500;
 
@@ -30,12 +32,12 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
   const [crews, setCrews] = useState([]);
   const [error, setError] = useState(null);
   const [notif, setNotif] = useState(null);
-  const [checklist, setChecklist] = useState(null);
-  const [tpl, setTpl] = useState(null);
   const [crewPick, setCrewPick] = useState('');
   const [viewExec, setViewExec] = useState(null);
   const [cancelFlow, setCancelFlow] = useState(null);
   const [verifyForm, setVerifyForm] = useState({ result: 'PASS', summary: '', cost: '' });
+
+  const draft = useChecklistDraft({ taskId, enabled: !readOnly && !!task && isEditable(task.status) });
 
   const assignableCrews = crews.filter((c) => c.assignable !== false);
 
@@ -50,7 +52,8 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
 
   const load = () => api.get(`/tasks/${taskId}`).then((t) => { setTask(t); setError(null); setCrewPick(t.crew_id || ''); }).catch((e) => setError(e.message));
   useEffect(() => {
-    setTask(null); setChecklist(null); setTpl(null); setError(null);
+    setTask(null); setError(null);
+    draft.reset();
     load();
     if (!readOnly) api.get('/crews').then(setCrews).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -75,27 +78,20 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
 
   async function runChecklist(templateId) {
     try {
-      const data = await api.get(`/tasks/${taskId}/checklist`);
-      const list = data.templates || (data.template ? [data.template] : []);
-      const chosen = list.find((y) => y.id === templateId) || list[0];
-      if (!chosen) { setError('Task has no checklist template'); return; }
-      const items = {};
-      chosen.items.forEach((it) => { items[it.id] = { value: null, comment: '' }; });
-      setTpl(chosen);
-      setChecklist(items);
+      await draft.load(templateId);
     } catch (e) { setError(e.message); }
   }
 
   async function submitChecklist() {
     try {
-      const items = Object.entries(checklist).map(([tid, v]) => ({ template_item_id: Number(tid), response_value: v.value, comment: v.comment }));
-      const res = await api.post(`/tasks/${taskId}/checklist`, { template_id: tpl.id, items });
+      const items = Object.entries(draft.items).map(([tid, v]) => ({ template_item_id: Number(tid), response_value: v.value, comment: v.comment }));
+      const res = await api.post(`/tasks/${taskId}/checklist`, { template_id: draft.tpl.id, items });
       setNotif(res.templates_done === false
         ? `Checklist result ${res.result} — other templates still pending, task not advanced`
         : res.advanced === false
           ? `Checklist result ${res.result} — required steps missing, task not advanced`
           : `Checklist submitted — result ${res.result}`);
-      setChecklist(null); setTpl(null);
+      draft.reset();
       await load();
       if (onChanged) onChanged();
       setTimeout(() => setNotif(null), 3000);
@@ -192,7 +188,7 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
         </div>
       )}
 
-      {!readOnly && canAmend && !['COMPLETED', 'CANCELLED', 'FAILED'].includes(t.status) && (
+      {!readOnly && canAmend && isEditable(t.status) && (
         <button className="btn btn-sm btn-primary mt" onClick={() => saveFinding({ severity: 'MEDIUM', title: 'On-site finding', detail: '' })}>+ Quick finding</button>
       )}
 
@@ -229,7 +225,8 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
     </>
   );
 
-  const inChecklist = checklist !== null && !readOnly;
+  const inChecklist = draft.items !== null && !readOnly;
+  const editable = !!t && isEditable(t.status);
 
   const content = (
     <>
@@ -245,18 +242,20 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
 
       {inChecklist ? (
         <div className="work-panel-checklist">
-          <div className="spread"><b>Checklist</b><button className="btn btn-sm" onClick={() => { setChecklist(null); setTpl(null); }}>Cancel</button></div>
-          {tpl.items.map((it) => (
+          <div className="spread"><b>Checklist</b><button className="btn btn-sm" onClick={() => draft.reset()}>Cancel</button></div>
+          {!editable && <div className="alert tone-warn">Submitted for verification — locked. This checklist is read-only.</div>}
+          <div className="muted" style={{ fontSize: 12, minHeight: 16 }}>{draft.saving ? 'Saving…' : draft.savedAt ? 'Draft saved' : ''}</div>
+          {draft.tpl.items.map((it) => (
             <div key={it.id} className="box mt">
               <b>{it.sequence}. {it.instruction}</b>
               <div className="muted" style={{ fontSize: 12 }}>{it.section || '—'}{it.test_equipment ? ` · Equipment: ${it.test_equipment}` : ''}</div>
               <div className="mt">
-                <ChecklistItem item={it} state={checklist[it.id]} setState={(s) => setChecklist({ ...checklist, [it.id]: s })} />
+                <ChecklistItem item={it} state={draft.items[it.id]} disabled={!editable} setState={(s) => draft.setItem(it.id, s)} />
               </div>
             </div>
           ))}
           <div className="work-panel-actions">
-            <button className="btn btn-primary" onClick={submitChecklist}>Submit execution</button>
+            <button className="btn btn-primary" onClick={submitChecklist} disabled={draft.saving || !editable}>Submit execution</button>
           </div>
         </div>
       ) : body}

@@ -18,6 +18,8 @@ import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
+import useChecklistDraft from '../hooks/useChecklistDraft';
+import { isEditable } from '../taskLifecycle';
 
 function reduced() {
   return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -46,8 +48,6 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
   const [task, setTask] = useState(null);
   const [error, setError] = useState(null);
   const [notif, setNotif] = useState(null);
-  const [tpl, setTpl] = useState(null);
-  const [checklist, setChecklist] = useState(null);
   const [gps, setGps] = useState(null);
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState(null);
@@ -55,6 +55,8 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
   const [uploading, setUploading] = useState(null);
   const [equipmentDraft, setEquipmentDraft] = useState({});
   const [equipmentBusy, setEquipmentBusy] = useState(false);
+
+  const draft = useChecklistDraft({ taskId, enabled: !!task && isEditable(task.status) });
 
   const load = () => api.get(`/tasks/${taskId}`).then((x) => {
     setTask(x);
@@ -64,7 +66,8 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
   }).catch((e) => setError(e.message));
 
   useEffect(() => {
-    setTask(null); setTpl(null); setChecklist(null); setGps(null); setError(null); setStep(null); setSheet(null); setEquipmentDraft({});
+    setTask(null); setGps(null); setError(null); setStep(null); setSheet(null); setEquipmentDraft({});
+    draft.reset();
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
@@ -87,25 +90,18 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
 
   async function openChecklist(templateId) {
     try {
-      const data = await api.get(`/tasks/${taskId}/checklist`);
-      const list = data.templates || (data.template ? [data.template] : []);
-      const chosen = list.find((y) => y.id === templateId) || list[0];
-      if (!chosen) { setError(t('noData')); return; }
-      const items = {};
-      chosen.items.forEach((it) => { items[it.id] = { value: null, comment: '' }; });
-      setTpl(chosen);
-      setChecklist(items);
+      await draft.load(templateId);
     } catch (e) { setError(e.message); }
   }
 
   async function submitRun() {
     try {
       setBusy(true);
-      const items = Object.entries(checklist).map(([tid, v]) => ({ template_item_id: Number(tid), response_value: v.value, comment: v.comment }));
-      const body = { template_id: tpl.id, items };
+      const items = Object.entries(draft.items).map(([tid, v]) => ({ template_item_id: Number(tid), response_value: v.value, comment: v.comment }));
+      const body = { template_id: draft.tpl.id, items };
       if (gps) body.finish_gps = gps;
       const res = await api.post(`/tasks/${taskId}/checklist`, body);
-      setTpl(null); setChecklist(null);
+      draft.reset();
       await load();
       if (onChanged) onChanged();
       if (!canLead) flash(t('waitingLead'), 4200);
@@ -167,15 +163,16 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
   const templates = x.checklist_templates?.length ? x.checklist_templates : (x.checklist_template ? [x.checklist_template] : []);
   const executions = x.executions || [];
   const attachments = x.attachments || [];
-  const answered = checklist
-    ? tpl.items.filter((it) => {
-        const v = checklist[it.id]?.value;
+  const answered = draft.items && draft.tpl
+    ? draft.tpl.items.filter((it) => {
+        const v = draft.items[it.id]?.value;
         return v !== null && v !== undefined && v !== '';
       }).length
     : 0;
-  const total = tpl ? tpl.items.length : 0;
+  const total = draft.tpl ? draft.tpl.items.length : 0;
   const done = ['COMPLETED', 'CANCELLED', 'FAILED'].includes(x.status);
-  const inRun = checklist !== null;
+  const inRun = draft.items !== null;
+  const editable = isEditable(x.status);
 
   const checklistDone = templates.length === 0
     || executions.some((e) => e.submitted_at && e.result && e.result !== 'INCOMPLETE');
@@ -184,7 +181,7 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
   const equipmentChecks = x.readiness?.equipment_checks || [];
   const equipmentDone = equipmentChecks.length === 0 || equipmentChecks.every((c) => c.answered);
   const canCheckEquipment = canStart || canExecute;
-  const equipmentEditable = canCheckEquipment && ['DRAFT', 'SCHEDULED', 'ASSIGNED'].includes(x.status);
+  const equipmentEditable = canCheckEquipment && editable;
 
   const steps = [
     ...(equipmentChecks.length ? [{ key: 'equipment', icon: PackageCheck, label: t('stepEquipment'), done: equipmentDone }] : []),
@@ -212,7 +209,7 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
       <WorkPanelOverlay>
         <div className="work-panel-head">
           <div className="min-w-0">
-            <b className="block truncate">{t('runChecklist')}: {tpl.name}</b>
+            <b className="block truncate">{t('runChecklist')}: {draft.tpl.name}</b>
             <div className="muted text-xs">{x.task_number} — {x.title}</div>
           </div>
           <button className="btn btn-sm" onClick={onClose}>{t('cancel')}</button>
@@ -220,6 +217,8 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
 
         {notif && <div className="alert alert-success">{notif}</div>}
         {error && <ErrorNote error={error} />}
+        {!editable && <div className="alert tone-warn">Submitted for verification — locked. This checklist is read-only.</div>}
+        <div className="muted text-xs" style={{ minHeight: 16 }}>{draft.saving ? t('syncSaving') : draft.savedAt ? 'Draft saved' : ''}</div>
 
         <div className="mb-3">
           <div className="mb-1 flex items-center justify-between text-xs">
@@ -237,8 +236,8 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
         </div>
 
         <div className="space-y-3">
-          {tpl.items.map((it) => {
-            const state = checklist[it.id];
+          {draft.tpl.items.map((it) => {
+            const state = draft.items[it.id];
             const filled = state?.value !== null && state?.value !== undefined && state?.value !== '';
             return (
               <div key={it.id} className={cn('rounded-xl border p-3 transition-colors', filled ? 'border-emerald-200 bg-emerald-50/40 dark:border-emerald-900 dark:bg-emerald-950/20' : 'border-slate-200 dark:border-slate-800')}>
@@ -247,7 +246,7 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
                   {filled && <Check size={16} className="mt-0.5 shrink-0 text-emerald-600" />}
                 </div>
                 <div className="muted mb-2 text-xs">{it.section || '—'}{it.test_equipment ? ` · ${it.test_equipment}` : ''}</div>
-                <ChecklistItem item={it} state={state} setState={(s) => setChecklist({ ...checklist, [it.id]: s })} />
+                <ChecklistItem item={it} state={state} disabled={!editable} setState={(s) => draft.setItem(it.id, s)} />
               </div>
             );
           })}
@@ -261,11 +260,11 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
         </div>
 
         <div className="work-panel-actions">
-          <Button variant="primary" size="lg" onClick={submitRun} disabled={busy}>
+          <Button variant="primary" size="lg" onClick={submitRun} disabled={busy || !editable}>
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
             {x.status === 'ASSIGNED' ? t('startWork') : t('submitTask')}
           </Button>
-          <Button variant="outline" size="lg" onClick={() => { setChecklist(null); setTpl(null); }} disabled={busy}>{t('cancel')}</Button>
+          <Button variant="outline" size="lg" onClick={() => draft.reset()} disabled={busy}>{t('cancel')}</Button>
         </div>
 
         <CaptureSheets sheet={sheet} setSheet={setSheet} gps={gps} capture={capture} busy={busy} canAttach={canAttach} attachments={attachments} uploadFiles={uploadFiles} uploading={uploading} />

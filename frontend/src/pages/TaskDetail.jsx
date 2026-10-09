@@ -13,6 +13,8 @@ import ViewMap from '../components/ViewMap';
 import LineWorkspaceMap from '../components/LineWorkspaceMap';
 import { entityColor, maxVoltageKv, isEnergized, parseVoltageLevels, voltageChip, popupRows, boundaryRing } from '../mapFocus';
 import useRouteRecorder from '../useRouteRecorder';
+import useChecklistDraft from '../hooks/useChecklistDraft';
+import { isEditable } from '../taskLifecycle';
 
 const GPS_TOLERANCE = 500;
 const haversineM = (la1, lo1, la2, lo2) => {
@@ -39,10 +41,7 @@ export default function TaskDetail() {
   const canReport = can(me, 'report:write');
   const canCreate = can(me, 'task:create');
   const [task, setTask] = useState(null);
-  const [tpl, setTpl] = useState(null);
   const [error, setError] = useState(null);
-  const [checklist, setChecklist] = useState(null);
-  const [draftBusy, setDraftBusy] = useState(false);
   const [verifyForm, setVerifyForm] = useState({ result: 'PASS', summary: '', cost: '' });
   const [notif, setNotif] = useState(null);
   const [findingForm, setFindingForm] = useState(null);
@@ -66,6 +65,8 @@ export default function TaskDetail() {
   const [editBusy, setEditBusy] = useState(false);
   const [viewExec, setViewExec] = useState(null);
   const [documentBusy, setDocumentBusy] = useState(false);
+
+  const draft = useChecklistDraft({ taskId: id, enabled: !!task && isEditable(task.status) });
 
   const TERMINAL_STATUSES = ['COMPLETED', 'CANCELLED', 'FAILED'];
 
@@ -128,35 +129,17 @@ export default function TaskDetail() {
 
   async function fetchChecklist(templateId) {
     try {
-      const data = await api.get(`/tasks/${id}/checklist`);
-      const list = data.templates || (data.template ? [data.template] : []);
-      const chosen = list.find((x) => x.id === templateId) || list[0];
-      if (!chosen) { setError('Task has no checklist template'); return; }
-      setTpl(chosen);
-      // Resume a previously saved draft: restore each item's captured value and
-      // comment so field crews can carry on where they left off.
-      const draftByItem = new Map((chosen.draft?.items || []).map((d) => [Number(d.template_item_id), d]));
-      const items = {};
-      chosen.items.forEach((it) => {
-        const d = draftByItem.get(it.id);
-        items[it.id] = { value: d ? d.response_value ?? null : null, comment: d?.comment || '' };
-      });
-      setChecklist(items);
+      const { resumed } = await draft.load(templateId);
       setVerifyForm({ ...verifyForm, summary: task?.completion_summary || '' });
-      if (chosen.draft) setNotif('Resumed saved checklist draft');
+      if (resumed) setNotif('Resumed saved checklist draft');
     } catch (e) { setError(e.message); }
   }
 
   // Persist the current checklist capture as a draft (no submit, no advancement).
   async function saveChecklistDraft() {
-    if (!tpl || !checklist) return;
-    setDraftBusy(true);
-    try {
-      const items = Object.entries(checklist).map(([tid, v]) => ({ template_item_id: Number(tid), response_value: v.value, comment: v.comment }));
-      await api.post(`/tasks/${id}/checklist/draft`, { template_id: tpl.id, items });
-      setNotif('Checklist draft saved');
-      setTimeout(() => setNotif(null), 2500);
-    } catch (e) { setError(e.message); } finally { setDraftBusy(false); }
+    await draft.flush();
+    setNotif('Checklist draft saved');
+    setTimeout(() => setNotif(null), 2500);
   }
 
   async function act(action, extra) {
@@ -223,15 +206,14 @@ export default function TaskDetail() {
 
   async function submitChecklist() {
     try {
-      const items = Object.entries(checklist).map(([tid, v]) => ({ template_item_id: Number(tid), response_value: v.value, comment: v.comment }));
-      const res = await api.post(`/tasks/${id}/checklist`, { template_id: tpl.id, items });
+      const items = Object.entries(draft.items).map(([tid, v]) => ({ template_item_id: Number(tid), response_value: v.value, comment: v.comment }));
+      const res = await api.post(`/tasks/${id}/checklist`, { template_id: draft.tpl.id, items });
       setNotif(res.templates_done === false
         ? `Checklist result ${res.result} — other templates still pending, task not advanced`
         : res.advanced === false
           ? `Checklist result ${res.result} — required steps missing, task not advanced`
           : `Checklist submitted — result ${res.result}`);
-      setChecklist(null);
-      setTpl(null);
+      draft.reset();
       load();
       setTimeout(() => setNotif(null), 3000);
     } catch (e) { setError(e.message); }
@@ -273,7 +255,7 @@ export default function TaskDetail() {
     finally { setFuBusyKey(null); }
   }
 
-  const canToggleItems = canExecute || canSubmit || canManage;
+  const canToggleItems = !!task && isEditable(task.status) && (canExecute || canSubmit || canManage);
   async function toggleWorkItem(item, status) {
     try {
       await api.patch(`/tasks/${task.id}/work-items/${item.id}`, { status });
@@ -556,7 +538,7 @@ export default function TaskDetail() {
             <div className="box mt">
               <div className="spread" style={{ gap: 8, flexWrap: 'wrap' }}>
                 <b>Recommended equipment availability</b>
-                {canAssign && ['DRAFT', 'SCHEDULED', 'ASSIGNED'].includes(task.status) && (
+                {(canAssign || canExecute) && isEditable(task.status) && (
                   <button className="btn btn-sm btn-primary" disabled={equipmentBusy} onClick={saveEquipmentChecks}>
                     {equipmentBusy ? 'Saving…' : 'Save checks'}
                   </button>
@@ -568,7 +550,7 @@ export default function TaskDetail() {
                     <input
                       type="checkbox"
                       checked={equipmentDraft[item.equipment] === true}
-                      disabled={!canAssign || !['DRAFT', 'SCHEDULED', 'ASSIGNED'].includes(task.status) || equipmentBusy}
+                      disabled={!isEditable(task.status) || !(canAssign || canExecute) || equipmentBusy}
                       onChange={(e) => setEquipmentDraft({ ...equipmentDraft, [item.equipment]: e.target.checked })}
                     />
                     <span>{item.equipment}</span>
@@ -644,7 +626,7 @@ export default function TaskDetail() {
       </div>
       </div>
 
-      {!TERMINAL_STATUSES.includes(t.status) && (canAssign || canManage) && (
+      {isEditable(t.status) && (canAssign || canManage) && (
         <div className="card card-pad mt">
           <h3 className="section-title">Crew assignment (semi-auto)</h3>
           {assignOptions?.requirements && (
@@ -779,19 +761,23 @@ export default function TaskDetail() {
         </div>
       )}
 
-      {checklist && tpl && (
-        <Modal title={`Checklist — ${tpl.name}`} onClose={() => setChecklist(null)} wide
+      {draft.items && draft.tpl && (
+        <Modal title={`Checklist — ${draft.tpl.name}`} onClose={draft.reset} wide
           footer={<>
-            <button className="btn" onClick={() => setChecklist(null)}>Cancel</button>
-            <button className="btn" onClick={saveChecklistDraft} disabled={draftBusy}>{draftBusy ? 'Saving…' : 'Save draft'}</button>
-            <button className="btn btn-primary" onClick={submitChecklist}>Submit execution</button>
+            <span className="muted" style={{ fontSize: 12, marginRight: 'auto' }}>
+              {draft.saving ? 'Saving…' : draft.savedAt ? 'Draft saved' : ''}
+            </span>
+            <button className="btn" onClick={() => draft.reset()}>Cancel</button>
+            <button className="btn" onClick={saveChecklistDraft} disabled={draft.saving}>Save draft</button>
+            <button className="btn btn-primary" onClick={submitChecklist} disabled={draft.saving}>Submit execution</button>
           </>}>
-          {tpl.draft && <div className="alert" style={{ marginBottom: 10 }}>Resumed a saved draft from {fmtDateTime(tpl.draft.updated_at)}. Save your progress or submit when finished.</div>}
-          <div className="muted mb">Safety: {tpl.safety_notes || '—'}</div>
-          {tpl.materials && <div className="muted mb">Materials: {tpl.materials}</div>}
-          {tpl.required_personnel && <div className="muted mb">Personnel: {tpl.required_personnel}</div>}
-          <div className="muted mb">Est. {tpl.estimated_minutes || '?'} min · v{tpl.version}</div>
-          {tpl.items.map((it) => (
+          {!isEditable(t.status) && <div className="alert tone-warn" style={{ marginBottom: 10 }}>Submitted for verification — locked. This checklist is read-only.</div>}
+          {draft.resumed && <div className="alert" style={{ marginBottom: 10 }}>Resumed a saved draft. Your answers auto-save as you work; submit when finished.</div>}
+          <div className="muted mb">Safety: {draft.tpl.safety_notes || '—'}</div>
+          {draft.tpl.materials && <div className="muted mb">Materials: {draft.tpl.materials}</div>}
+          {draft.tpl.required_personnel && <div className="muted mb">Personnel: {draft.tpl.required_personnel}</div>}
+          <div className="muted mb">Est. {draft.tpl.estimated_minutes || '?'} min · v{draft.tpl.version}</div>
+          {draft.tpl.items.map((it) => (
             <div key={it.id} className="card card-pad mb" style={{ padding: 12 }}>
               <div className="spread">
                 <b>{it.sequence}. {it.instruction}</b>
@@ -799,7 +785,7 @@ export default function TaskDetail() {
               </div>
               <div className="muted" style={{ fontSize: 12 }}>{it.section || '—'}{it.test_equipment ? ` · Equipment: ${it.test_equipment}` : ''}</div>
               <div className="mt">
-                <ItemInput item={it} target={targetPos} state={checklist[it.id]} setState={(s) => setChecklist({ ...checklist, [it.id]: s })} />
+                <ItemInput item={it} target={targetPos} state={draft.items[it.id]} disabled={!isEditable(t.status)} setState={(s) => draft.setItem(it.id, s)} />
               </div>
             </div>
           ))}
@@ -811,7 +797,7 @@ export default function TaskDetail() {
         <div className="card card-pad">
           <div className="card-head">
             <h3 className="card-title">Findings <span className="muted">({(task.findings || []).length})</span></h3>
-            {canAmend && ['COMPLETED', 'CANCELLED', 'FAILED'].includes(t.status) === false && (
+            {canAmend && isEditable(t.status) && (
               <button className="btn btn-sm btn-primary" onClick={() => setFindingForm({ severity: 'MEDIUM', title: '', detail: '', equipment_name: '' })}>+ Record finding</button>
             )}
           </div>
@@ -1096,13 +1082,13 @@ export default function TaskDetail() {
   );
 }
 
-function ItemInput({ item, state, setState, target }) {
-  const set = (value) => setState({ ...state, value });
+function ItemInput({ item, state, setState, target, disabled = false }) {
+  const set = (value) => { if (!disabled) setState({ ...state, value }); };
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
   if (item.response_type === 'PASS_FAIL' || item.response_type === 'YES_NO' || item.response_type === 'SELECT' || item.response_type === 'NUMERIC') {
-    return <ChecklistItem item={item} state={state} setState={setState} />;
+    return <ChecklistItem item={item} state={state} setState={setState} disabled={disabled} />;
   }
   if (item.response_type === 'GPS_POINT') {
     let pos = null;
@@ -1124,7 +1110,7 @@ function ItemInput({ item, state, setState, target }) {
     return (
       <div>
         <div className="flex" style={{ flexWrap: 'wrap' }}>
-          <button className="btn btn-primary" onClick={capture} disabled={busy}>
+          <button className="btn btn-primary" onClick={capture} disabled={busy || disabled}>
             <span aria-hidden style={{ marginRight: 5 }}>◎</span>{busy ? t('loading') : t('captureFromDevice')}
           </button>
           {target && <span className="muted">Target: <b>{target.label}</b></span>}
@@ -1135,7 +1121,7 @@ function ItemInput({ item, state, setState, target }) {
             {t('coordinates')}: <b className="mono">{Number(pos.lat).toFixed(6)}, {Number(pos.lng).toFixed(6)}</b> · {t('accuracy')}: {pos.accuracy_m ?? '?'} m
             {dist !== null && <> · {t('distance')}: {dist} m / {t('tolerance')} {GPS_TOLERANCE} m → <b>{verdict === 'PASS' ? t('pass') : t('fail')}</b></>}
             {verdict === 'FAIL' && <span> — outside tolerance; still captured and sent for verification review.</span>}
-            <button className="btn btn-sm" style={{ marginLeft: 8 }} onClick={() => set(null)}>✕ Clear</button>
+            <button className="btn btn-sm" style={{ marginLeft: 8 }} disabled={disabled} onClick={() => set(null)}>✕ Clear</button>
           </div>
         )}
         {!target && <p className="muted mt">GPS confirmation is captured in the field app at the target coordinates.</p>}
@@ -1143,9 +1129,9 @@ function ItemInput({ item, state, setState, target }) {
     );
   }
   if (item.response_type === 'PHOTO') {
-    return <input value={state.value ?? ''} onChange={(e) => set(e.target.value)} placeholder="Photo reference / attachment id" />;
+    return <input value={state.value ?? ''} disabled={disabled} onChange={(e) => set(e.target.value)} placeholder="Photo reference / attachment id" />;
   }
-  return <input value={state.value ?? ''} onChange={(e) => set(e.target.value)} />;
+  return <input value={state.value ?? ''} disabled={disabled} onChange={(e) => set(e.target.value)} />;
 }
 
 function TaskFileThumb({ a, taskId }) {

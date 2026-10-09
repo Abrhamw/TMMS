@@ -6,14 +6,14 @@ import { t } from '../i18n';
 // One checklist step input, shared by every execution surface so PASS/FAIL,
 // numeric, select, GPS and free-text steps behave identically wherever a crew
 // records a run.
-export default function ChecklistItem({ item, state, setState }) {
-  const set = (value) => setState({ ...state, value });
+export default function ChecklistItem({ item, state, setState, disabled = false }) {
+  const set = (value) => { if (!disabled) setState({ ...state, value }); };
 
   if (item.response_type === 'PASS_FAIL' || item.response_type === 'YES_NO') {
     return (
       <div className="flex flex-wrap gap-2">
-        <Button type="button" variant={state.value === true ? 'primary' : 'outline'} size="lg" onClick={() => set(true)}>{t('ok')}</Button>
-        <Button type="button" variant={state.value === false ? 'danger' : 'outline'} size="lg" onClick={() => set(false)}>{t('notOk')}</Button>
+        <Button type="button" variant={state.value === true ? 'primary' : 'outline'} size="lg" disabled={disabled} onClick={() => set(true)}>{t('ok')}</Button>
+        <Button type="button" variant={state.value === false ? 'danger' : 'outline'} size="lg" disabled={disabled} onClick={() => set(false)}>{t('notOk')}</Button>
       </div>
     );
   }
@@ -21,7 +21,7 @@ export default function ChecklistItem({ item, state, setState }) {
     const pc = parseStored(item.pass_criteria);
     return (
       <div className="flex">
-        <input type="number" style={{ width: 180 }} value={state.value ?? ''} onChange={(e) => set(e.target.value === '' ? null : Number(e.target.value))} placeholder="Enter value" />
+        <input type="number" style={{ width: 180 }} value={state.value ?? ''} disabled={disabled} onChange={(e) => set(e.target.value === '' ? null : Number(e.target.value))} placeholder="Enter value" />
         {pc && Number.isFinite(pc.min) && <span className="muted">Pass range: {pc.min}–{pc.max} {pc.unit || ''}</span>}
       </div>
     );
@@ -31,7 +31,7 @@ export default function ChecklistItem({ item, state, setState }) {
     return (
       <div className="flex flex-wrap gap-2">
         {opts.map((o) => (
-          <Button key={o} type="button" variant={state.value === o ? 'primary' : 'outline'} size="lg" onClick={() => set(o)}>{o}</Button>
+          <Button key={o} type="button" variant={state.value === o ? 'primary' : 'outline'} size="lg" disabled={disabled} onClick={() => set(o)}>{o}</Button>
         ))}
       </div>
     );
@@ -41,7 +41,7 @@ export default function ChecklistItem({ item, state, setState }) {
     try { pos = typeof state.value === 'string' ? JSON.parse(state.value) : state.value; } catch (_) { /* ignore */ }
     return (
       <div>
-        <button className="btn btn-sm" onClick={() => {
+        <button className="btn btn-sm" disabled={disabled} onClick={() => {
           getDevicePosition().then((p) => {
             set(JSON.stringify({ lat: p.lat, lng: p.lng, accuracy_m: p.accuracy }));
           }).catch(() => {});
@@ -50,5 +50,5 @@ export default function ChecklistItem({ item, state, setState }) {
       </div>
     );
   }
-  return <input value={state.value ?? ''} onChange={(e) => set(e.target.value)} />;
+  return <input value={state.value ?? ''} disabled={disabled} onChange={(e) => set(e.target.value)} />;
 }
