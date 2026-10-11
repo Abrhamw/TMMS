@@ -129,3 +129,14 @@ test('an unmapped skill is a warning, not a blocker', () => {
   assert.strictEqual(gate.ready, true);
   assert.ok(gate.warnings.some((w) => w.code === 'UNMAPPED_SKILL'));
 });
+
+test('every blocker carries an actionable recommendation', () => {
+  const tpl = newTemplate();
+  const task = newTask({ checklist_template_id: tpl });
+  const gate = dispatchGate(getTask(task));
+  assert.ok(gate.blockers.length > 0);
+  for (const blocker of gate.blockers) {
+    assert.strictEqual(typeof blocker.recommendation, 'string', `${blocker.code} should have a recommendation`);
+    assert.ok(blocker.recommendation.length > 0, `${blocker.code} recommendation should not be empty`);
+  }
+});

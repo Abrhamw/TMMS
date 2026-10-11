@@ -168,30 +168,52 @@ function taskReadiness(t) {
 // satisfied — or explicitly overridden by an authorised manager with a recorded
 // reason — before a task may start. Everything else stays advisory.
 function dispatchGate(t) {
-  if (!t) return { ready: false, blockers: [{ code: 'NOT_FOUND', message: 'Task not found' }], warnings: [] };
+  if (!t) {
+    return {
+      ready: false,
+      blockers: [{ code: 'NOT_FOUND', message: 'Task not found', recommendation: 'Task not found.' }],
+      warnings: [],
+    };
+  }
   const audit = taskReadiness(t);
   const blockers = [];
   const warnings = [];
 
   const crewId = resolveTaskCrewId(t);
   if (!crewId) {
-    blockers.push({ code: 'NO_CREW', message: 'No crew is assigned or resolvable for this task' });
+    blockers.push({ code: 'NO_CREW', message: 'No crew is assigned or resolvable for this task', recommendation: 'Assign a crew before starting.' });
   } else if (audit && audit.eligible === false) {
     if (audit.team_shortfall > 0) {
-      blockers.push({ code: 'TEAM_SHORTFALL', message: `Crew is short by ${audit.team_shortfall} member(s)` });
+      blockers.push({
+        code: 'TEAM_SHORTFALL',
+        message: `Crew is short by ${audit.team_shortfall} member(s)`,
+        recommendation: 'Add members so the crew meets the required team size.',
+      });
     }
     for (const skill of audit.missing_skills || []) {
-      blockers.push({ code: 'MISSING_SKILL', message: `No crew member covers required skill: ${skill}` });
+      blockers.push({
+        code: 'MISSING_SKILL',
+        message: `No crew member covers required skill: ${skill}`,
+        recommendation: `Assign a member with the required skill: ${skill}.`,
+      });
     }
     for (const cert of audit.missing_certs || []) {
-      blockers.push({ code: 'MISSING_CERT', message: `No crew member holds required certification: ${cert}` });
+      blockers.push({
+        code: 'MISSING_CERT',
+        message: `No crew member holds required certification: ${cert}`,
+        recommendation: `Assign a member holding the required certification: ${cert}.`,
+      });
     }
   }
 
   // A required checklist step's equipment/test instrument must be confirmed
   // available before dispatch; unconfirmed items are hard blockers.
   for (const item of (audit && audit.equipment_to_secure) || []) {
-    blockers.push({ code: 'EQUIPMENT_UNCONFIRMED', message: `Required equipment not confirmed available: ${item}` });
+    blockers.push({
+      code: 'EQUIPMENT_UNCONFIRMED',
+      message: `Required equipment not confirmed available: ${item}`,
+      recommendation: `Confirm this equipment is available: ${item}.`,
+    });
   }
 
   // A reserved maintenance resource that is out of service or past calibration
@@ -203,11 +225,23 @@ function dispatchGate(t) {
   ).all(t.id);
   for (const r of reserved) {
     if (r.status === 'OUT_OF_SERVICE' || r.status === 'LOST' || r.status === 'RETIRED') {
-      blockers.push({ code: 'RESOURCE_UNAVAILABLE', message: `Reserved resource is ${r.status.toLowerCase().replace('_', ' ')}: ${r.name}` });
+      blockers.push({
+        code: 'RESOURCE_UNAVAILABLE',
+        message: `Reserved resource is ${r.status.toLowerCase().replace('_', ' ')}: ${r.name}`,
+        recommendation: `Release or replace the reserved resource: ${r.name}.`,
+      });
     } else if (r.status === 'MAINTENANCE') {
-      blockers.push({ code: 'RESOURCE_UNAVAILABLE', message: `Reserved resource is under maintenance: ${r.name}` });
+      blockers.push({
+        code: 'RESOURCE_UNAVAILABLE',
+        message: `Reserved resource is under maintenance: ${r.name}`,
+        recommendation: `Release or replace the reserved resource: ${r.name}.`,
+      });
     } else if (r.calibration_expiry && r.calibration_expiry < now) {
-      blockers.push({ code: 'RESOURCE_CALIBRATION_DUE', message: `Reserved resource calibration lapsed: ${r.name}` });
+      blockers.push({
+        code: 'RESOURCE_CALIBRATION_DUE',
+        message: `Reserved resource calibration lapsed: ${r.name}`,
+        recommendation: `Recalibrate or replace the reserved resource: ${r.name}.`,
+      });
     }
   }
 
@@ -219,12 +253,20 @@ function dispatchGate(t) {
   for (const s of criticalSpares) {
     const hand = onHand(s.item_id, s.location);
     if (hand + 1e-9 < Number(s.quantity)) {
-      blockers.push({ code: 'CRITICAL_SPARE_SHORT', message: `Critical spare ${s.code || ''} ${s.description} short: need ${s.quantity}, on hand ${hand}`.trim() });
+      blockers.push({
+        code: 'CRITICAL_SPARE_SHORT',
+        message: `Critical spare ${s.code || ''} ${s.description} short: need ${s.quantity}, on hand ${hand}`.trim(),
+        recommendation: `Restock the critical spare or release its reservation: ${s.description}.`,
+      });
     }
   }
 
   if (t.permit_required && !t.permit_approved_at) {
-    blockers.push({ code: 'PERMIT_NOT_APPROVED', message: 'Permit/isolation approval is required before dispatch' });
+    blockers.push({
+      code: 'PERMIT_NOT_APPROVED',
+      message: 'Permit/isolation approval is required before dispatch',
+      recommendation: 'Record the permit/isolation approval.',
+    });
   }
 
   for (const c of (audit && audit.certs_to_obtain) || []) {
@@ -234,7 +276,11 @@ function dispatchGate(t) {
     warnings.push({ code: 'UNMAPPED_SKILL', message: `Skill has no crew mapping: ${skill}` });
   }
 
-  return { ready: blockers.length === 0, blockers, warnings };
+  return {
+    ready: blockers.length === 0,
+    blockers: blockers.map((b) => (b.recommendation ? b : { ...b, recommendation: `Resolve: ${b.message}.` })),
+    warnings,
+  };
 }
 
 // Execution KPIs per crew over an already-scoped task set.

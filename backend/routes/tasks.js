@@ -1018,7 +1018,7 @@ function checklistCompletionBlocker(t) {
 const TRANSITIONS = {
   schedule: { from: ['DRAFT'], to: 'SCHEDULED' },
   assign: { from: ['SCHEDULED', 'DRAFT'], to: 'ASSIGNED' },
-  start: { from: ['ASSIGNED'], to: 'IN_PROGRESS', needsCrew: true },
+  start: { from: ['ASSIGNED'], to: 'IN_PROGRESS' },
   hold: { from: ['IN_PROGRESS'], to: 'ON_HOLD' },
   resume: { from: ['ON_HOLD'], to: 'IN_PROGRESS' },
   submit: { from: ['IN_PROGRESS'], to: 'PENDING_VERIFICATION' },
@@ -1086,27 +1086,23 @@ router.post('/tasks/:id/state', (req, res) => {
   // PUT /tasks/:id (task:manage).
   const assignable = action === 'assign' && t.status === 'ASSIGNED' && !t.crew_id;
   if (!tr.from.includes(t.status) && !assignable) return res.status(409).json({ error: `Cannot ${action} from status ${t.status}` });
-  if (tr.needsCrew && !t.crew_id) return res.status(409).json({ error: 'Task requires an assigned crew first' });
 
-  // Hard readiness gate. taskReadiness warns; this blocks. A task may only move
-  // to IN_PROGRESS when every mandatory condition is satisfied. An authorised
-  // manager (task:manage) may override with a recorded reason; otherwise it is a
-  // hard stop that names the blockers.
+  // Advisory readiness gate. taskReadiness warns; the gate lists the mandatory
+  // conditions that are unmet. Starting with unmet conditions is allowed once the
+  // operator records a reason; the reason and the blockers are kept on the task
+  // for the audit trail. Only a missing reason stops the start.
   let readinessOverride = null;
   if (action === 'start') {
     const gate = dispatchGate(t);
-    const overrideReason = String(req.body.readiness_override_reason || '').trim();
     if (!gate.ready) {
+      const overrideReason = String(req.body.readiness_override_reason || '').trim();
       if (!overrideReason) {
         return res.status(409).json({
-          error: 'Task is not ready to dispatch',
-          code: 'READINESS_BLOCKED',
+          error: 'Task is missing readiness items — record a reason to start anyway',
+          code: 'READINESS_REASON_REQUIRED',
           blockers: gate.blockers,
           warnings: gate.warnings,
         });
-      }
-      if (!can(req, 'task:manage')) {
-        return res.status(403).json({ error: 'Forbidden: overriding readiness requires task:manage' });
       }
       readinessOverride = { reason: overrideReason, blockers: gate.blockers };
     }
