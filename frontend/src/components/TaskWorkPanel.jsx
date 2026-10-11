@@ -5,6 +5,7 @@ import { can, getStoredUser } from '../auth';
 import ChecklistItem from './ChecklistItem';
 import WorkPanelOverlay from './WorkPanelOverlay';
 import ExecutionDetail from './ExecutionDetail';
+import ReadinessNotice from './ReadinessNotice';
 import { describeTarget } from '../checklistFormat';
 import { taskTypeLabel, priorityLabel } from '../labels';
 import useChecklistDraft from '../hooks/useChecklistDraft';
@@ -155,7 +156,9 @@ export default function TaskWorkPanel({ taskId, readOnly = false, reason, onClos
               <button className="btn btn-primary" disabled={!crewPick} onClick={() => act('assign', { crew_id: Number(crewPick) })}>Assign</button>
             </div>
           ) : null}
-          {t.status === 'ASSIGNED' && canStart && <button className="btn btn-primary" onClick={() => act('start')}>Start work</button>}
+          {t.status === 'ASSIGNED' && canStart && (t.dispatch_gate && t.dispatch_gate.ready === false
+            ? <ReadinessNotice gate={t.dispatch_gate} onStart={(reason) => act('start', { readiness_override_reason: reason })} />
+            : <button className="btn btn-primary" onClick={() => act('start')}>Start work</button>)}
           {t.status === 'IN_PROGRESS' && (
             <>
               {canExecute && (t.checklist_templates?.length ? t.checklist_templates : (t.checklist_template ? [t.checklist_template] : [])).map((ct) => {

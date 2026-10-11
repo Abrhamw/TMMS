@@ -37,6 +37,30 @@ function handle401() {
   }
 }
 
+// Build an Error from a failed response, preserving the machine-readable fields
+// (code, blockers, warnings) so callers can render a structured notice instead
+// of only the human message.
+async function errorFromResponse(res) {
+  let msg = `HTTP ${res.status}`;
+  let code;
+  let blockers;
+  let warnings;
+  try {
+    const data = await res.json();
+    if (data && data.error) msg = data.error;
+    if (data && data.code) code = data.code;
+    if (data && Array.isArray(data.blockers)) blockers = data.blockers;
+    if (data && Array.isArray(data.warnings)) warnings = data.warnings;
+  } catch (_) {
+    /* ignore */
+  }
+  const error = new Error(msg);
+  if (code) error.code = code;
+  if (blockers) error.blockers = blockers;
+  if (warnings) error.warnings = warnings;
+  return error;
+}
+
 function fetchGet(path, options, headers) {
   return fetch(`${BASE}${path}`, { headers, ...options }).then(async (res) => {
     if (res.status === 401) {
@@ -44,14 +68,7 @@ function fetchGet(path, options, headers) {
       throw new Error('Session expired. Please sign in again.');
     }
     if (!res.ok) {
-      let msg = `HTTP ${res.status}`;
-      try {
-        const data = await res.json();
-        if (data.error) msg = data.error;
-      } catch (_) {
-        /* ignore */
-      }
-      throw new Error(msg);
+      throw await errorFromResponse(res);
     }
     return res.json();
   });
@@ -122,14 +139,7 @@ async function request(path, options = {}, { skipInvalidate = false } = {}) {
         throw new Error('Session expired. Please sign in again.');
       }
       if (!res.ok) {
-        let msg = `HTTP ${res.status}`;
-        try {
-          const data = await res.json();
-          if (data.error) msg = data.error;
-        } catch (_) {
-          /* ignore */
-        }
-        throw new Error(msg);
+        throw await errorFromResponse(res);
       }
       if (!skipInvalidate) invalidateGetCache();
       const data = await res.json();
@@ -169,14 +179,7 @@ export const api = {
       throw new Error('Session expired. Please sign in again.');
     }
     if (!res.ok) {
-      let msg = `HTTP ${res.status}`;
-      try {
-        const data = await res.json();
-        if (data.error) msg = data.error;
-      } catch (_) {
-        /* ignore */
-      }
-      throw new Error(msg);
+      throw await errorFromResponse(res);
     }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);

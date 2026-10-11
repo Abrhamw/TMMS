@@ -6,6 +6,7 @@ import { can, getStoredUser, getStoredToken } from '../auth';
 import DocumentReport from '../components/DocumentReport';
 import ExecutionDetail from '../components/ExecutionDetail';
 import ChecklistItem from '../components/ChecklistItem';
+import ReadinessNotice from '../components/ReadinessNotice';
 import { t } from '../i18n';
 import { getDevicePosition } from '../components/MapPicker';
 import Comments from '../components/Comments';
@@ -578,7 +579,9 @@ export default function TaskDetail() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {t.status === 'DRAFT' && (canAssign || canManage) && <button className="btn btn-primary" onClick={() => act('schedule')}>Schedule task</button>}
             {(t.status === 'SCHEDULED' || (t.status === 'ASSIGNED' && !t.crew_id)) && canAssign && <button className="btn btn-primary" onClick={() => act('assign')}>Assign (keep/assign crew)</button>}
-            {t.status === 'ASSIGNED' && canStart && <button className="btn btn-primary" onClick={() => act('start')}>Start work</button>}
+            {t.status === 'ASSIGNED' && canStart && (t.dispatch_gate && t.dispatch_gate.ready === false
+              ? <ReadinessNotice gate={t.dispatch_gate} onStart={(reason) => act('start', { readiness_override_reason: reason })} />
+              : <button className="btn btn-primary" onClick={() => act('start')}>Start work</button>)}
             {t.status === 'IN_PROGRESS' && (canExecute || canSubmit) && <>
               {canExecute && (t.checklist_templates?.length ? t.checklist_templates : (t.checklist_template ? [t.checklist_template] : [])).map((ct) => {
                 const done = (t.executions || []).some((e) => e.template_id === ct.id && e.submitted_at && e.result && e.result !== 'INCOMPLETE');

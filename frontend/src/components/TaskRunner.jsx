@@ -11,6 +11,7 @@ import { priorityLabel, taskTypeLabel, statusLabel } from '../labels';
 import { getDevicePosition } from './MapPicker';
 import ChecklistItem from './ChecklistItem';
 import ReadinessNotes from './ReadinessNotes';
+import ReadinessNotice from './ReadinessNotice';
 import SyncStatus from './SyncStatus';
 import WorkPanelOverlay from './WorkPanelOverlay';
 import { Sheet } from '../ui/Sheet';
@@ -392,7 +393,9 @@ export default function TaskRunner({ taskId, onClose, onChanged }) {
               hint={templates.map((c) => c.name).join(', ') || t('noData')}
             >
               {x.status === 'ASSIGNED' && canStart && (
-                <Button variant="primary" size="lg" onClick={() => act('start')} disabled={busy}>{t('startWork')}</Button>
+                x.dispatch_gate && x.dispatch_gate.ready === false
+                  ? <ReadinessNotice gate={x.dispatch_gate} busy={busy} onStart={(reason) => act('start', { readiness_override_reason: reason })} />
+                  : <Button variant="primary" size="lg" onClick={() => act('start')} disabled={busy}>{t('startWork')}</Button>
               )}
               {x.status === 'ASSIGNED' && !canStart && <span className="muted">{t('waitingLead')}</span>}
               {x.status === 'IN_PROGRESS' && canExecute && templates.map((ct) => {
