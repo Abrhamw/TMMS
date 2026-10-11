@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../auth/context';
 import { getDb } from '../../db';
+import { enqueue } from '../../db/outbox';
 import { getTaskDetail } from '../../db/queries';
+import { flush } from '../../sync/engine';
 import { pullTaskDetail } from '../../sync/pull';
 import { StatusChip } from '../../components/StatusChip';
 import { BulletList, Field, Section } from '../../components/Section';
 import { targetLabel, type TaskDetail } from '../../api/taskTypes';
+import { readinessSummary } from '../../lib/readinessNotice';
 import { colors, radius, spacing } from '../../theme';
 
 function fmtDate(iso?: string | null): string | undefined {
@@ -22,6 +25,35 @@ export default function TaskDetailScreen() {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const startWork = useCallback(
+    async (overrideReason?: string) => {
+      setBusy(true);
+      setNotice(null);
+      try {
+        const db = await getDb();
+        await enqueue(db, {
+          type: 'task_state',
+          entity: `task:${id}`,
+          payload: {
+            task_id: id,
+            action: 'start',
+            ...(overrideReason ? { readiness_override_reason: overrideReason } : {}),
+          },
+        });
+        const result = await flush({ driver: db, client });
+        setNotice(result.remaining > 0 ? 'Start queued — it will sync when you reconnect.' : 'Task started.');
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : 'Could not start the task.');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [id, client],
+  );
 
   const loadLocal = useCallback(async () => {
     const db = await getDb();
@@ -63,6 +95,8 @@ export default function TaskDetailScreen() {
 
   const readiness = detail.readiness;
   const templates = detail.checklist_templates ?? [];
+  const gate = readinessSummary(detail.dispatch_gate);
+  const canStart = detail.status === 'ASSIGNED';
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -110,6 +144,46 @@ export default function TaskDetailScreen() {
               <BulletList items={readiness.warnings} />
             </>
           ) : null}
+        </Section>
+      ) : null}
+
+      {canStart ? (
+        <Section title="Start work">
+          {gate.ready ? (
+            <Pressable
+              style={[styles.action, styles.startAction]}
+              onPress={() => void startWork()}
+              disabled={busy}
+            >
+              <Text style={styles.actionText}>{busy ? 'Starting…' : 'Start work'}</Text>
+            </Pressable>
+          ) : (
+            <>
+              <Text style={styles.warn}>This task is not ready to start</Text>
+              {gate.blockers.map((b, i) => (
+                <View key={`${b.code}-${i}`} style={styles.blocker}>
+                  <Text style={styles.blockerText}>• {b.message}</Text>
+                  {gate.recommendations[i] ? <Text style={styles.muted}>{gate.recommendations[i]}</Text> : null}
+                </View>
+              ))}
+              <Text style={styles.subheading}>Reason for starting anyway</Text>
+              <TextInput
+                style={styles.reasonInput}
+                value={reason}
+                onChangeText={setReason}
+                placeholder="Explain why you are starting despite the missing items"
+                multiline
+              />
+              <Pressable
+                style={[styles.action, styles.startAction, (!reason.trim() || busy) && styles.actionDisabled]}
+                onPress={() => void startWork(reason.trim())}
+                disabled={busy || !reason.trim()}
+              >
+                <Text style={styles.actionText}>{busy ? 'Starting…' : 'Start anyway'}</Text>
+              </Pressable>
+            </>
+          )}
+          {notice ? <Text style={styles.notice}>{notice}</Text> : null}
         </Section>
       ) : null}
 
@@ -202,4 +276,22 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   actionText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
+  startAction: { borderColor: colors.primary },
+  actionDisabled: { opacity: 0.5 },
+  warn: { color: colors.warning, fontSize: 13, fontWeight: '600', marginBottom: spacing.xs },
+  blocker: { marginBottom: spacing.xs },
+  blockerText: { fontSize: 14, color: colors.text },
+  reasonInput: {
+    minHeight: 64,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    color: colors.text,
+    textAlignVertical: 'top',
+    marginTop: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  notice: { color: colors.muted, fontSize: 12, marginTop: spacing.xs },
 });

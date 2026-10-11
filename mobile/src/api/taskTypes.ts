@@ -1,3 +1,5 @@
+import type { DispatchGate } from '../lib/readinessNotice';
+
 export interface NamedRef {
   id?: number;
   name?: string | null;
@@ -44,6 +46,7 @@ export interface TaskDetail {
   crew?: NamedRef | null;
   target?: TaskTarget | null;
   readiness?: Readiness | null;
+  dispatch_gate?: DispatchGate | null;
   checklist_templates?: ChecklistTemplateBrief[] | null;
   findings?: unknown[] | null;
   attachments?: unknown[] | null;
