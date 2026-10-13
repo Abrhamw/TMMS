@@ -859,6 +859,13 @@ router.post('/maintenance-events', (req, res) => {
     } else if (body.cost === '') {
       body.cost = null;
     }
+    if (body.condition_after !== undefined && body.condition_after !== null && body.condition_after !== '') {
+      const c = Number(body.condition_after);
+      if (!Number.isFinite(c) || c < 1 || c > 10) return res.status(400).json({ error: 'condition_after must be 1-10' });
+      body.condition_after = c;
+    } else {
+      body.condition_after = null;
+    }
     const id = insertRow('asset_maintenance_event', body);
     if (body.condition_after) {
       const asset = get('asset', body.asset_id);

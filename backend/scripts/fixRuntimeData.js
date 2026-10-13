@@ -151,6 +151,54 @@ function repairLineEndpoints() {
   return { applied, skipped, flagged };
 }
 
+// Condition ratings are a 1-10 index. A rating outside that range (historically
+// writable through maintenance events, whose condition_after was unvalidated)
+// distorts valuation, which scales asset value by condition/10. Repair each
+// offending asset, preferring its tower's corrosion rating.
+function repairConditionRatings(apply = APPLY) {
+  const bad = db.prepare('SELECT id, asset_id, condition_rating FROM asset WHERE condition_rating < 1 OR condition_rating > 10').all();
+  if (!bad.length) return { status: 'ok', count: 0 };
+  if (apply) {
+    db.prepare(
+      `UPDATE asset SET condition_rating = MAX(1, MIN(10, COALESCE(
+         (SELECT corrosion_rating FROM tower WHERE tower.id = asset.tower_id), 7)))
+       WHERE condition_rating < 1 OR condition_rating > 10`
+    ).run();
+  }
+  return {
+    status: apply ? 'applied' : 'would-apply',
+    count: bad.length,
+    assets: bad.slice(0, 20).map((a) => `${a.asset_id}: ${a.condition_rating}`),
+  };
+}
+
+// Tower work completed before completions recorded against the tower's asset
+// mirror left no maintenance history, so completed tower tasks were missing
+// from the Value & Cost counts and spend. Insert one event per completed tower
+// task that has none, dated to its completion. Idempotent.
+function backfillTowerMaintenance(apply = APPLY) {
+  const missing = db.prepare(
+    `SELECT COUNT(*) c FROM task t
+     WHERE t.tower_id IS NOT NULL AND t.status = 'COMPLETED'
+       AND EXISTS (SELECT 1 FROM asset m WHERE m.tower_id = t.tower_id AND m.asset_type IN ('TOWER','POLE'))
+       AND NOT EXISTS (SELECT 1 FROM asset_maintenance_event e WHERE e.task_id = t.id)`
+  ).get().c;
+  if (!missing) return { status: 'ok', count: 0 };
+  if (apply) {
+    db.prepare(
+      `INSERT INTO asset_maintenance_event (asset_id, task_id, event_type, performed_at, crew_id, work_summary, cost)
+       SELECT (SELECT m.id FROM asset m WHERE m.tower_id = t.tower_id AND m.asset_type IN ('TOWER','POLE') ORDER BY m.id LIMIT 1),
+              t.id, t.task_type, COALESCE(t.actual_end, t.updated_at, t.created_at), t.crew_id,
+              COALESCE(t.completion_summary, 'Completed via task ' || t.task_number), NULL
+       FROM task t
+       WHERE t.tower_id IS NOT NULL AND t.status = 'COMPLETED'
+         AND EXISTS (SELECT 1 FROM asset m WHERE m.tower_id = t.tower_id AND m.asset_type IN ('TOWER','POLE'))
+         AND NOT EXISTS (SELECT 1 FROM asset_maintenance_event e WHERE e.task_id = t.id)`
+    ).run();
+  }
+  return { status: apply ? 'applied' : 'would-apply', count: missing };
+}
+
 function main() {
   console.log(`fixRuntimeData — ${APPLY ? 'APPLY' : 'DRY RUN'}`);
 
@@ -166,7 +214,17 @@ function main() {
   console.log(`    manual review — route reaches no substation (${lines.flagged.length})`);
   lines.flagged.forEach((x) => console.log('   ', x));
 
+  const ratings = repairConditionRatings();
+  console.log(`\n[3] Out-of-range asset condition ratings — ${APPLY ? 'applied' : 'would apply'} (${ratings.count})`);
+  (ratings.assets || []).forEach((x) => console.log('   ', x));
+
+  const tower = backfillTowerMaintenance();
+  console.log(`\n[4] Missing tower maintenance history — ${APPLY ? 'applied' : 'would apply'} (${tower.count})`);
+
   if (!APPLY) console.log('\nRe-run with --apply to write these changes.');
 }
 
-main();
+if (require.main === module) main();
+
+module.exports = { fixSulultaPoint, repairLineEndpoints, repairConditionRatings, backfillTowerMaintenance, main };
+

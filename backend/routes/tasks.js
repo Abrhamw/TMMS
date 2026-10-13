@@ -1300,13 +1300,28 @@ function sendExecutionReport(req, t) {
   });
 }
 
+// The asset a completion is recorded against. Most tasks name one directly; a
+// tower task carries only a tower_id, so its own tower register mirror is used
+// as the asset, keeping tower work in asset history and cost reporting.
+function completionAssetId(t) {
+  if (t.asset_id) return t.asset_id;
+  if (t.tower_id) {
+    const mirror = db.prepare(
+      "SELECT id FROM asset WHERE tower_id = ? AND asset_type IN ('TOWER','POLE') ORDER BY id LIMIT 1"
+    ).get(t.tower_id);
+    return mirror ? mirror.id : null;
+  }
+  return null;
+}
+
 function applyCompletionSideEffects(req, t, cost = null) {
   const now = new Date().toISOString();
   try { sendExecutionReport(req, t); } catch (e) { console.error('execution report mail failed', e); }
-  if (t.asset_id) {
-    updateRow('asset', t.asset_id, { last_maintenance_at: now });
+  const assetId = completionAssetId(t);
+  if (assetId) {
+    updateRow('asset', assetId, { last_maintenance_at: now });
     insertRow('asset_maintenance_event', {
-      asset_id: t.asset_id,
+      asset_id: assetId,
       task_id: t.id,
       event_type: t.task_type,
       performed_at: now,
