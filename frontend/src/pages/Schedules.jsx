@@ -5,7 +5,7 @@ import { can, getStoredUser } from '../auth';
 import { assetsInScope, crewsInRegion, linesInRegion, subsInRegion, towersInScope } from '../cascade';
 import { t } from '../i18n';
 
-const SCOPE = ['ASSET', 'SUBSTATION', 'LINE', 'LINE_TOWERS', 'TOWER', 'ASSET_CLASS'];
+const SCOPE = ['ASSET', 'ASSET_CLASS', 'SUBSTATION', 'LINE', 'LINE_TOWERS', 'TOWER', 'REGION'];
 const ASSET_TYPES = ['TRANSFORMER', 'CIRCUIT_BREAKER', 'DISCONNECTOR', 'REACTOR', 'CAPACITOR_BANK', 'LIGHTNING_ARRESTER', 'CT', 'PT', 'BUSBAR', 'PROTECTION_RELAY', 'METER'];
 const TASK_TYPES = ['PREVENTIVE', 'CORRECTIVE', 'EMERGENCY', 'INSPECTION', 'REPLACEMENT', 'TESTING', 'REPAIR'];
 
@@ -76,7 +76,7 @@ const blank = {
   schedule_name: '', schedule_code: '', scope_type: 'ASSET', asset_type: 'TRANSFORMER',
   asset_id: null, substation_id: null, line_id: null, tower_id: null, region_id: null,
   checklist_template_id: null, responsible_crew_id: null,
-  priority: 'MEDIUM', task_type: 'PREVENTIVE', lead_time_days: 7, next_due_date: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10),
+  priority: 'MEDIUM', task_type: 'PREVENTIVE', lead_time_days: 7, batch_size: null, next_due_date: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10),
   expected_duration_hours: null, instructions: '', is_active: 1,
 };
 
@@ -153,7 +153,7 @@ export default function Schedules() {
       const err = res.errors?.[0]?.error;
       setRunMsg(err
         ? `${s.schedule_name}: ${err}`
-        : `${s.schedule_name}: generated ${res.generated} · ${res.skipped_duplicate} skipped · ${res.not_due} not due`);
+        : `${s.schedule_name}: generated ${res.generated} · ${res.skipped_duplicate} skipped · ${res.not_due} not due${res.no_targets ? ` · ${res.no_targets} no targets` : ''}`);
       load();
       if (tab === 'upcoming') loadUpcoming();
     } catch (e) { setError(e.message); }
@@ -163,6 +163,7 @@ export default function Schedules() {
     try {
       const body = {
         ...form,
+        batch_size: form.batch_size === '' || form.batch_size == null ? null : Number(form.batch_size),
         frequency: 'CUSTOM',
         frequency_config: JSON.stringify(uiToRule(rule)),
         next_due_date: new Date(form.next_due_date).toISOString(),
@@ -224,7 +225,7 @@ export default function Schedules() {
                     {fmtDate(s.next_due_date)}
                     {s.due_state && s.due_state !== 'SCHEDULED' && <><br /><span className="sched-state muted">{s.due_state === 'GENERATING' ? `generating since ${fmtDate(s.generate_by)}` : s.due_state.toLowerCase()}</span></>}
                   </td>
-                  <td>{s.target_count ?? s.targets?.length ?? 0}</td>
+                  <td>{(s.target_count ?? s.targets?.length ?? 0)}{(s.target_count ?? 0) === 0 && <><br /><span className="sched-state overdue">{t('schedNoTargets')}</span></>}</td>
                   <td>{s.open_generated_tasks ?? 0}</td>
                   <td>{s.checklist_template?.name || '—'}</td>
                   <td><Pill value={s.is_active ? 'ACTIVE' : 'INACTIVE'} /></td>
@@ -260,6 +261,8 @@ export default function Schedules() {
             <span className="k">{t('schedColTaskType')}</span><span><Pill value={detail.task_type} /></span>
             <span className="k">{t('schedRecurrence')}</span><span>{detail.recurrence_summary || detail.frequency}{detail.occurrences_generated ? ` · ${detail.occurrences_generated} ${t('schedColGenerated').toLowerCase()}` : ''}</span>
             <span className="k">{t('schedResponsibleCrew')}</span><span>{detail.responsible_crew?.name || '—'}</span>
+            <span className="k">{t('schedBatchSize')}</span><span>{detail.batch_size || t('schedNoCap')}</span>
+            {typeof detail.remaining === 'number' && (<><span className="k">{t('schedRemaining')}</span><span>{detail.remaining}</span></>)}
             <span className="k">{t('schedPriorityLabel')}</span><span>{detail.priority}</span>
             <span className="k">{t('schedInstructions')}</span><span>{detail.instructions || '—'}</span>
           </div>
@@ -401,6 +404,7 @@ export default function Schedules() {
               </SearchSelect></div>
             <div className="field"><label>{t('schedNextDueDate')}</label><input type="date" value={form.next_due_date} onChange={(e) => setForm({ ...form, next_due_date: e.target.value })} /></div>
             <div className="field"><label>{t('schedLeadTime')}</label><input type="number" value={form.lead_time_days} onChange={(e) => setForm({ ...form, lead_time_days: Number(e.target.value) })} /></div>
+            <div className="field"><label>{t('schedBatchSize')}</label><input type="number" min="0" placeholder="50" value={form.batch_size ?? ''} onChange={(e) => setForm({ ...form, batch_size: e.target.value === '' ? '' : Number(e.target.value) })} /><span className="muted" style={{ fontSize: 12 }}>{t('schedBatchHint')}</span></div>
             <div className="field"><label>{t('schedChecklistLabel')}</label>
               <SearchSelect value={form.checklist_template_id || ''} onChange={(e) => setForm({ ...form, checklist_template_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">{t('schedNoneOption')}</option>

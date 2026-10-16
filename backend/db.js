@@ -1300,6 +1300,10 @@ function initSchema() {
   migrate('asset', 'km_to', 'ALTER TABLE asset ADD COLUMN km_to REAL');
   migrate('transmission_line', 'joint_box_interval_km', "ALTER TABLE transmission_line ADD COLUMN joint_box_interval_km REAL NOT NULL DEFAULT 5");
   migrate('maintenance_schedule', 'occurrences_generated', 'ALTER TABLE maintenance_schedule ADD COLUMN occurrences_generated INTEGER NOT NULL DEFAULT 0');
+  // Optional per-run batch cap for large expansions (NULL/0 = no cap), and the
+  // occurrence a generated task belongs to so a capped sweep can resume.
+  migrate('maintenance_schedule', 'batch_size', 'ALTER TABLE maintenance_schedule ADD COLUMN batch_size INTEGER');
+  migrate('task', 'schedule_occurrence', 'ALTER TABLE task ADD COLUMN schedule_occurrence INTEGER');
   // Cancellation record: the required comment, who cancelled and when, and the
   // status to restore if an administrator later retrieves the task.
   migrate('task', 'cancel_reason', 'ALTER TABLE task ADD COLUMN cancel_reason TEXT');

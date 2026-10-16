@@ -24,7 +24,17 @@ function resolveTaskType(s) {
   return s.checklist_template_id ? 'INSPECTION' : 'PREVENTIVE';
 }
 
-function scheduleDetail(s) {
+// batch_size is optional: null/blank/0 means no cap. Returns false on invalid input.
+function normalizeBatchSize(body) {
+  if (body.batch_size === undefined) return true;
+  if (body.batch_size === null || body.batch_size === '') { body.batch_size = null; return true; }
+  const n = Number(body.batch_size);
+  if (!Number.isInteger(n) || n < 0) return false;
+  body.batch_size = n;
+  return true;
+}
+
+function scheduleDetail(s, { sample = true } = {}) {
   const out = { ...s };
   out.checklist_template = s.checklist_template_id ? get('checklist_template', s.checklist_template_id) : null;
   out.responsible_crew = s.responsible_crew_id ? get('crew', s.responsible_crew_id) : null;
@@ -34,21 +44,24 @@ function scheduleDetail(s) {
   out.recurrence = rule;
   out.recurrence_summary = rule ? recurrence.describe(rule) : '';
   out.occurrences_generated = s.occurrences_generated || 0;
-  out.targets = expandTargets(s);
-  out.target_count = out.targets.length;
+  out.batch_size = s.batch_size != null ? Number(s.batch_size) : null;
+  // The expanded target list can be huge (a REGION scope covers every asset), so
+  // lists use a COUNT and only the detail view materialises a capped sample.
+  out.target_count = countTargets(s);
+  if (sample) {
+    const { remaining } = remainingTargets(s);
+    out.remaining = remaining.length;
+    out.targets = expandTargets(s).slice(0, 200);
+  }
   const lead = Math.max(0, Number(s.lead_time_days) || 0);
   out.lead_time_days = lead;
   const dueMs = s.next_due_date ? new Date(s.next_due_date).getTime() : NaN;
   if (!Number.isNaN(dueMs)) {
     out.generate_by = new Date(dueMs - lead * 86400000).toISOString();
     out.days_until_due = Math.ceil((dueMs - Date.now()) / 86400000);
-    out.due_state = s.is_active === 0
-      ? 'ENDED'
-      : dueMs < Date.now()
-        ? 'OVERDUE'
-        : dueMs - lead * 86400000 <= Date.now() ? 'GENERATING' : 'SCHEDULED';
     out.next_occurrences = rule ? recurrence.preview(s.next_due_date, rule, 3) : [];
   }
+  out.due_state = computeDueState(s, out, dueMs, lead);
   const open = db.prepare(
     `SELECT COUNT(*) c FROM task WHERE schedule_id = ? AND status IN (${OPEN_STATUSES.map(() => '?').join(',')})`
   ).get(s.id, ...OPEN_STATUSES).c;
@@ -56,17 +69,113 @@ function scheduleDetail(s) {
   return out;
 }
 
+const LIFECYCLE_LIVE = "lifecycle_status IN ('IN_SERVICE','UNDER_MAINTENANCE')";
+
+function countTargets(s) {
+  if (s.scope_type === 'ASSET_CLASS') return db.prepare(`SELECT COUNT(*) c FROM asset WHERE asset_type = ? AND ${LIFECYCLE_LIVE}`).get(s.asset_type).c;
+  if (s.scope_type === 'ASSET') return s.asset_id && get('asset', s.asset_id) ? 1 : 0;
+  if (s.scope_type === 'SUBSTATION') return s.substation_id ? db.prepare(`SELECT COUNT(*) c FROM asset WHERE substation_id = ? AND ${LIFECYCLE_LIVE}`).get(s.substation_id).c : 0;
+  if (s.scope_type === 'LINE') return s.line_id ? db.prepare(`SELECT COUNT(*) c FROM asset WHERE line_id = ? AND ${LIFECYCLE_LIVE}`).get(s.line_id).c : 0;
+  if (s.scope_type === 'LINE_TOWERS') return s.line_id ? db.prepare('SELECT COUNT(*) c FROM tower WHERE line_id = ?').get(s.line_id).c : 0;
+  if (s.scope_type === 'TOWER') return s.tower_id && get('tower', s.tower_id) ? 1 : 0;
+  if (s.scope_type === 'REGION') {
+    return s.region_id
+      ? db.prepare(
+        `SELECT COUNT(*) c FROM asset
+         WHERE ${LIFECYCLE_LIVE} AND (
+           EXISTS (SELECT 1 FROM substation ss WHERE ss.id = asset.substation_id AND ss.region_id = ?)
+           OR EXISTS (SELECT 1 FROM transmission_line l WHERE l.id = asset.line_id AND l.region_id = ?)
+           OR EXISTS (SELECT 1 FROM tower t JOIN transmission_line l ON l.id = t.line_id WHERE t.id = asset.tower_id AND l.region_id = ?)
+         )`
+      ).get(s.region_id, s.region_id, s.region_id).c
+      : 0;
+  }
+  return 0;
+}
+
+function computeDueState(s, out, dueMs, lead) {
+  if (s.is_active === 0) return 'ENDED';
+  if (out.target_count === 0) return 'NO_TARGETS';
+  if (out.remaining > 0) return 'SWEEP_IN_PROGRESS';
+  if (Number.isNaN(dueMs)) return 'SCHEDULED';
+  if (dueMs < Date.now()) return 'OVERDUE';
+  return dueMs - lead * 86400000 <= Date.now() ? 'GENERATING' : 'SCHEDULED';
+}
+
 function expandTargets(s) {
   if (s.scope_type === 'ASSET_CLASS') {
     return db.prepare('SELECT * FROM asset WHERE asset_type = ? AND lifecycle_status IN (?, ?)').all(s.asset_type, 'IN_SERVICE', 'UNDER_MAINTENANCE');
   }
   if (s.scope_type === 'ASSET') return s.asset_id ? [get('asset', s.asset_id)].filter(Boolean) : [];
-  if (s.scope_type === 'SUBSTATION') return s.substation_id ? [get('substation', s.substation_id)].filter(Boolean) : [];
-  if (s.scope_type === 'LINE') return s.line_id ? [get('transmission_line', s.line_id)].filter(Boolean) : [];
+  if (s.scope_type === 'SUBSTATION') {
+    return s.substation_id
+      ? db.prepare("SELECT * FROM asset WHERE substation_id = ? AND lifecycle_status IN ('IN_SERVICE','UNDER_MAINTENANCE')").all(s.substation_id)
+      : [];
+  }
+  if (s.scope_type === 'LINE') {
+    return s.line_id
+      ? db.prepare("SELECT * FROM asset WHERE line_id = ? AND lifecycle_status IN ('IN_SERVICE','UNDER_MAINTENANCE')").all(s.line_id)
+      : [];
+  }
   if (s.scope_type === 'LINE_TOWERS') return s.line_id ? db.prepare('SELECT * FROM tower WHERE line_id = ? ORDER BY km_marker').all(s.line_id) : [];
   if (s.scope_type === 'TOWER') return s.tower_id ? [get('tower', s.tower_id)].filter(Boolean) : [];
-  if (s.scope_type === 'REGION') return db.prepare('SELECT * FROM substation WHERE region_id = ?').all(s.region_id);
+  if (s.scope_type === 'REGION') {
+    return s.region_id
+      ? db.prepare(
+        `SELECT * FROM asset
+         WHERE lifecycle_status IN ('IN_SERVICE','UNDER_MAINTENANCE') AND (
+           EXISTS (SELECT 1 FROM substation ss WHERE ss.id = asset.substation_id AND ss.region_id = ?)
+           OR EXISTS (SELECT 1 FROM transmission_line l WHERE l.id = asset.line_id AND l.region_id = ?)
+           OR EXISTS (SELECT 1 FROM tower t JOIN transmission_line l ON l.id = t.line_id WHERE t.id = asset.tower_id AND l.region_id = ?)
+         )`
+      ).all(s.region_id, s.region_id, s.region_id)
+      : [];
+  }
   return [];
+}
+
+// A target is keyed by the row it anchors to: an asset target by asset_id, a
+// tower target by tower_id.
+function targetKey(target) {
+  return target.asset_type !== undefined ? `a:${target.id}` : `t:${target.id}`;
+}
+
+// The current sweep's targets and those still missing a task. A task with a null
+// occurrence counts as covered for occurrence 0 so schedules authored before the
+// occurrence marker do not regenerate their first sweep.
+function remainingTargets(s) {
+  const occurrence = Number(s.occurrences_generated) || 0;
+  const targets = expandTargets(s);
+  if (!targets.length) return { targets, remaining: [], occurrence };
+  const rows = db.prepare(
+    'SELECT tower_id, asset_id FROM task WHERE schedule_id = ? AND (schedule_occurrence = ? OR (schedule_occurrence IS NULL AND ? = 0))'
+  ).all(s.id, occurrence, occurrence);
+  const covered = new Set();
+  for (const r of rows) {
+    if (r.tower_id != null) covered.add(`t:${r.tower_id}`);
+    if (r.asset_id != null) covered.add(`a:${r.asset_id}`);
+  }
+  return { targets, remaining: targets.filter((t) => !covered.has(targetKey(t))), occurrence };
+}
+
+// Open tasks left behind by earlier occurrences; they block starting a new sweep.
+function sweepBacklog(s, occurrence) {
+  return db.prepare(
+    `SELECT COUNT(*) c FROM task WHERE schedule_id = ? AND status IN (${OPEN_STATUSES.map(() => '?').join(',')})
+       AND (schedule_occurrence IS NULL OR schedule_occurrence < ?)`
+  ).get(s.id, ...OPEN_STATUSES, occurrence).c;
+}
+
+// A sweep is complete only when every target exists; then the recurrence rolls on.
+function advanceSweep(s, now) {
+  const step = recurrence.advanceAfterGeneration(s);
+  updateRow('maintenance_schedule', s.id, {
+    last_generated_at: now,
+    next_due_date: step.next_due_date,
+    occurrences_generated: step.occurrences_generated,
+    is_active: step.is_active,
+    ...(step.frequency ? { frequency: step.frequency, frequency_config: step.frequency_config } : {}),
+  });
 }
 
 // Resolve the region a generated task belongs to. Targets (assets, towers, lines)
@@ -107,7 +216,7 @@ router.get('/schedules', (req, res) => {
   const { is_active, q } = req.query;
   if (is_active !== undefined) rows = rows.filter((s) => s.is_active === Number(is_active));
   if (q) rows = rows.filter((s) => s.schedule_name.toLowerCase().includes(q.toLowerCase()));
-  res.json(rows.map(scheduleDetail));
+  res.json(rows.map((s) => scheduleDetail(s, { sample: false })));
 });
 
 // Calendar/timeline feed: every active schedule's upcoming occurrences inside a
@@ -125,7 +234,7 @@ router.get('/schedules/upcoming', (req, res) => {
     let rule = null;
     try { rule = recurrence.ruleFromSchedule(s); } catch { rule = null; }
     if (!rule) continue;
-    const targets = expandTargets(s);
+    const targetCount = countTargets(s);
     const crew = s.responsible_crew_id ? get('crew', s.responsible_crew_id) : null;
     const lead = Math.max(0, Number(s.lead_time_days) || 0);
     let cursor = s.next_due_date;
@@ -146,7 +255,7 @@ router.get('/schedules/upcoming', (req, res) => {
         generate_by: new Date(generateByMs).toISOString(),
         generate_now: generateByMs <= nowMs,
         overdue: dueMs < nowMs,
-        target_count: targets.length,
+        target_count: targetCount,
         crew_name: crew ? crew.name : null,
         region_id: s.region_id,
       });
@@ -243,6 +352,7 @@ router.post('/schedules', (req, res) => {
   if (!can(req, 'schedule:write')) return res.status(403).json({ error: 'Forbidden: requires schedule:write' });
   const body = { ...req.body, revision: 1 };
   if (body.task_type && !TASK_TYPES.includes(body.task_type)) return res.status(400).json({ error: 'Invalid task_type' });
+  if (!normalizeBatchSize(body)) return res.status(400).json({ error: 'batch_size must be a non-negative integer' });
   if (body.frequency === 'CUSTOM') {
     try { body.frequency_config = JSON.stringify(recurrence.parseRule(body.frequency_config)); }
     catch (e) { return res.status(400).json({ error: e.message }); }
@@ -276,6 +386,7 @@ router.put('/schedules/:id', (req, res) => {
     return res.status(403).json({ error: 'Forbidden: crew is outside your authority' });
   }
   if (req.body.task_type && !TASK_TYPES.includes(req.body.task_type)) return res.status(400).json({ error: 'Invalid task_type' });
+  if (!normalizeBatchSize(req.body)) return res.status(400).json({ error: 'batch_size must be a non-negative integer' });
   const effectiveFrequency = req.body.frequency !== undefined ? req.body.frequency : s.frequency;
   if (effectiveFrequency === 'CUSTOM' && (req.body.frequency !== undefined || req.body.frequency_config !== undefined)) {
     try { req.body.frequency_config = JSON.stringify(recurrence.parseRule(req.body.frequency_config)); }
@@ -294,13 +405,15 @@ router.get('/schedules/:id/preview', (req, res) => {
   if (!scope.global && !scope.scheduleIds.has(s.id)) {
     return res.status(404).json({ error: 'Schedule not found' });
   }
-  const targets = expandTargets(s);
+  const { remaining } = remainingTargets(s);
   let rule = null;
   try { rule = recurrence.ruleFromSchedule(s); } catch { rule = null; }
   res.json({
     schedule: s,
-    target_count: targets.length,
-    targets: targets.map((x) => ({ id: x.id, name: x.name || x.tower_id || x.substation_id || x.line_id || x.asset_id, type: s.scope_type })),
+    target_count: countTargets(s),
+    remaining: remaining.length,
+    batch_size: s.batch_size != null ? Number(s.batch_size) : null,
+    targets: remaining.slice(0, 200).map((x) => ({ id: x.id, name: x.name || x.tower_id || x.substation_id || x.line_id || x.asset_id, type: s.scope_type })),
     next_due_date: s.next_due_date,
     next_occurrences: rule ? recurrence.preview(s.next_due_date, rule, 5) : [],
   });
@@ -311,7 +424,7 @@ router.post('/schedules/run', (req, res) => {
   if (!can(req, 'schedule:run')) return res.status(403).json({ error: 'Forbidden: requires schedule:run' });
   const onlyId = req.body.schedule_id ? Number(req.body.schedule_id) : null;
   const scope = commandScope(req.user);
-  const results = { generated: 0, skipped_duplicate: 0, not_due: 0, tasks: [], errors: [] };
+  const results = { generated: 0, skipped_duplicate: 0, not_due: 0, no_targets: 0, tasks: [], errors: [] };
   let schedules = list('maintenance_schedule').filter((s) => s.is_active === 1);
   if (!scope.global) schedules = schedules.filter((s) => scope.scheduleIds.has(s.id));
   if (onlyId) {
@@ -337,7 +450,6 @@ router.post('/schedules/run', (req, res) => {
         results.errors.push({ schedule_id: s.id, error: 'responsible crew is outside your authority' });
         continue;
       }
-      const targets = expandTargets(s);
       // Requirements are the same for every target of this schedule, so resolve
       // them once and let auto-assignment pick the best eligible crew below.
       const taskType = resolveTaskType(s);
@@ -347,12 +459,21 @@ router.post('/schedules/run', (req, res) => {
       const neededCerts = reqs
         ? reqs.required_certs
         : taskType === 'PREVENTIVE' ? ['SF6_HANDLING'] : taskType === 'INSPECTION' ? [] : ['LIVE_LINE'];
-      // duplicate guard: existing open task for this schedule
-      const existing = db.prepare(
-        `SELECT COUNT(*) c FROM task WHERE schedule_id = ? AND status IN (${OPEN_STATUSES.map(() => '?').join(',')})`
-      ).get(s.id, ...OPEN_STATUSES).c;
-      if (existing > 0) { results.skipped_duplicate++; continue; }
-      for (const target of targets) {
+      const { targets, remaining, occurrence } = remainingTargets(s);
+      // A scope with no register assets cannot be costed or condition-evaluated,
+      // so generate nothing rather than an uncostable placeholder.
+      if (!targets.length) { results.no_targets++; continue; }
+      // Everything for this occurrence is already generated: complete the sweep.
+      if (!remaining.length) { advanceSweep(s, now); results.skipped_duplicate++; continue; }
+      // Backlog guard: never start a fresh sweep while a prior occurrence's tasks
+      // are still open. Resuming a partially generated sweep is always allowed.
+      if (remaining.length === targets.length && sweepBacklog(s, occurrence) > 0) {
+        results.skipped_duplicate++;
+        continue;
+      }
+      const cap = Number(s.batch_size) > 0 ? Number(s.batch_size) : Infinity;
+      const batch = remaining.slice(0, cap);
+      for (const target of batch) {
         // The schedule/asset intends a crew; keep it when it is eligible and
         // otherwise borrow the best eligible crew from the same department. With
         // no intended crew the task stays uncrewed (SCHEDULED) for dispatch.
@@ -379,8 +500,11 @@ router.post('/schedules/run', (req, res) => {
           region_id: targetRegion(target, s.region_id),
           // FKs must be numeric row ids — never the textual business codes
           // (substation_id / line_id / tower_id / asset_id on the parent rows).
-          substation_id: s.scope_type === 'SUBSTATION' ? target.id : (target.substation_id != null ? target.substation_id : null),
-          line_id: isTower ? target.line_id : (s.scope_type === 'LINE' || s.scope_type === 'LINE_TOWERS' ? s.line_id : (target.line_id != null ? target.line_id : null)),
+          // Coarse scopes expand to register assets, so every anchor comes from
+          // the target itself: assets carry substation_id/line_id, towers carry
+          // line_id, and only tower targets set tower_id.
+          substation_id: target.substation_id != null ? target.substation_id : null,
+          line_id: target.line_id != null ? target.line_id : null,
           tower_id: isTower ? target.id : null,
           asset_id: isAsset ? target.id : null,
           checklist_template_id: s.checklist_template_id,
@@ -388,6 +512,7 @@ router.post('/schedules/run', (req, res) => {
           due_date: s.next_due_date,
           source: 'SCHEDULE_GENERATED',
           schedule_id: s.id,
+          schedule_occurrence: occurrence,
           created_by: req.user.person_id || null,
           assigned_by: crewId ? (req.user.person_id || null) : null,
           created_at: now,
@@ -403,14 +528,8 @@ router.post('/schedules/run', (req, res) => {
         results.generated++;
         results.tasks.push(get('task', tid));
       }
-      const step = recurrence.advanceAfterGeneration(s);
-      updateRow('maintenance_schedule', s.id, {
-        last_generated_at: now,
-        next_due_date: step.next_due_date,
-        occurrences_generated: step.occurrences_generated,
-        is_active: step.is_active,
-        ...(step.frequency ? { frequency: step.frequency, frequency_config: step.frequency_config } : {}),
-      });
+      // Only advance the occurrence once every target of this sweep exists.
+      if (batch.length >= remaining.length) advanceSweep(s, now);
     } catch (e) {
       results.errors.push({ schedule_id: s.id, error: e.message });
     }
