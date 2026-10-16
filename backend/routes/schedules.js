@@ -529,7 +529,9 @@ router.post('/schedules/run', (req, res) => {
         results.tasks.push(get('task', tid));
       }
       // Only advance the occurrence once every target of this sweep exists.
-      if (batch.length >= remaining.length) advanceSweep(s, now);
+      // Re-read coverage rather than trusting batch length: a target can be
+      // skipped mid-loop (crew outside authority), leaving the sweep incomplete.
+      if (remainingTargets(s).remaining.length === 0) advanceSweep(s, now);
     } catch (e) {
       results.errors.push({ schedule_id: s.id, error: e.message });
     }
