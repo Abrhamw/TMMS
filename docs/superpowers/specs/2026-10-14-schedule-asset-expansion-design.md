@@ -175,3 +175,13 @@ test`.
 Schema is additive through `migrate()`. Existing schedules are unaffected until
 their next run, when coarse scopes expand. The completed-tower-work reporting fix
 (`fd3cb32`) already shipped and remains the tower-anchored path.
+
+## 7. Known Limitations
+
+- Line-only tasks (tasks carrying a `line_id` but no `tower_id`/`asset_id`)
+  have no costable register anchor, so their completion cost is recorded on the
+  task but does not roll up into the register maintenance-cost totals. This is
+  legacy-only: every scope in this design expands to register assets, so new
+  generated tasks always carry an `asset_id` (or a `tower_id` that resolves to a
+  tower mirror asset). Accepted as-is; revisit only if a reporter needs the
+  legacy rows attributed.
