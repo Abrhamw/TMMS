@@ -48,9 +48,10 @@ function scheduleDetail(s, { sample = true } = {}) {
   // The expanded target list can be huge (a REGION scope covers every asset), so
   // lists use a COUNT and only the detail view materialises a capped sample.
   out.target_count = countTargets(s);
+  // Remaining is computed for every caller (the list needs it for due_state) but
+  // the target sample is only materialised for the detail view.
+  out.remaining = countRemaining(s);
   if (sample) {
-    const { remaining } = remainingTargets(s);
-    out.remaining = remaining.length;
     out.targets = expandTargets(s).slice(0, 200);
   }
   const lead = Math.max(0, Number(s.lead_time_days) || 0);
@@ -71,24 +72,65 @@ function scheduleDetail(s, { sample = true } = {}) {
 
 const LIFECYCLE_LIVE = "lifecycle_status IN ('IN_SERVICE','UNDER_MAINTENANCE')";
 
-function countTargets(s) {
-  if (s.scope_type === 'ASSET_CLASS') return db.prepare(`SELECT COUNT(*) c FROM asset WHERE asset_type = ? AND ${LIFECYCLE_LIVE}`).get(s.asset_type).c;
-  if (s.scope_type === 'ASSET') return s.asset_id && get('asset', s.asset_id) ? 1 : 0;
-  if (s.scope_type === 'SUBSTATION') return s.substation_id ? db.prepare(`SELECT COUNT(*) c FROM asset WHERE substation_id = ? AND ${LIFECYCLE_LIVE}`).get(s.substation_id).c : 0;
-  if (s.scope_type === 'LINE') return s.line_id ? db.prepare(`SELECT COUNT(*) c FROM asset WHERE line_id = ? AND ${LIFECYCLE_LIVE}`).get(s.line_id).c : 0;
-  if (s.scope_type === 'LINE_TOWERS') return s.line_id ? db.prepare('SELECT COUNT(*) c FROM tower WHERE line_id = ?').get(s.line_id).c : 0;
-  if (s.scope_type === 'TOWER') return s.tower_id && get('tower', s.tower_id) ? 1 : 0;
-  if (s.scope_type === 'REGION') {
-    return s.region_id
-      ? db.prepare(
-        `SELECT COUNT(*) c FROM asset
-         WHERE ${LIFECYCLE_LIVE} AND (
+// The `asset` predicate a schedule selects, or null when it targets towers.
+// Shared so counting and expansion agree on what "in scope" means.
+function assetScopeFilter(s) {
+  switch (s.scope_type) {
+    case 'ASSET_CLASS':
+      return s.asset_type ? { sql: `asset_type = ? AND ${LIFECYCLE_LIVE}`, params: [s.asset_type] } : null;
+    case 'ASSET':
+      return s.asset_id ? { sql: 'id = ?', params: [s.asset_id] } : null;
+    case 'SUBSTATION':
+      return s.substation_id ? { sql: `substation_id = ? AND ${LIFECYCLE_LIVE}`, params: [s.substation_id] } : null;
+    case 'LINE':
+      return s.line_id ? { sql: `line_id = ? AND ${LIFECYCLE_LIVE}`, params: [s.line_id] } : null;
+    case 'REGION':
+      return s.region_id ? {
+        sql: `${LIFECYCLE_LIVE} AND (
            EXISTS (SELECT 1 FROM substation ss WHERE ss.id = asset.substation_id AND ss.region_id = ?)
            OR EXISTS (SELECT 1 FROM transmission_line l WHERE l.id = asset.line_id AND l.region_id = ?)
            OR EXISTS (SELECT 1 FROM tower t JOIN transmission_line l ON l.id = t.line_id WHERE t.id = asset.tower_id AND l.region_id = ?)
-         )`
-      ).get(s.region_id, s.region_id, s.region_id).c
-      : 0;
+         )`,
+        params: [s.region_id, s.region_id, s.region_id],
+      } : null;
+    default:
+      return null;
+  }
+}
+
+function towerScopeFilter(s) {
+  if (s.scope_type === 'LINE_TOWERS') return s.line_id ? { sql: 'line_id = ?', params: [s.line_id] } : null;
+  if (s.scope_type === 'TOWER') return s.tower_id ? { sql: 'id = ?', params: [s.tower_id] } : null;
+  return null;
+}
+
+function countTargets(s) {
+  const asset = assetScopeFilter(s);
+  if (asset) return db.prepare(`SELECT COUNT(*) c FROM asset WHERE ${asset.sql}`).get(...asset.params).c;
+  const tower = towerScopeFilter(s);
+  if (tower) return db.prepare(`SELECT COUNT(*) c FROM tower WHERE ${tower.sql}`).get(...tower.params).c;
+  return 0;
+}
+
+// Targets in this sweep that still have no task. Counted in SQL so the list view
+// does not have to materialise a whole region's register just to show a state.
+// A null-occurrence task counts as covered for occurrence 0 (legacy schedules).
+function countRemaining(s) {
+  const occurrence = Number(s.occurrences_generated) || 0;
+  const cover = '(schedule_occurrence = ? OR (schedule_occurrence IS NULL AND ? = 0))';
+  const asset = assetScopeFilter(s);
+  if (asset) {
+    return db.prepare(
+      `SELECT COUNT(*) c FROM asset WHERE ${asset.sql}
+         AND id NOT IN (SELECT asset_id FROM task WHERE schedule_id = ? AND asset_id IS NOT NULL AND ${cover})`
+    ).get(...asset.params, s.id, occurrence, occurrence).c;
+  }
+  const tower = towerScopeFilter(s);
+  if (tower) {
+    return db.prepare(
+      `SELECT COUNT(*) c FROM tower WHERE ${tower.sql}
+         AND id NOT IN (SELECT tower_id FROM task WHERE schedule_id = ? AND tower_id IS NOT NULL AND ${cover})`
+    ).get(...tower.params, s.id, occurrence, occurrence).c;
   }
   return 0;
 }
@@ -96,7 +138,9 @@ function countTargets(s) {
 function computeDueState(s, out, dueMs, lead) {
   if (s.is_active === 0) return 'ENDED';
   if (out.target_count === 0) return 'NO_TARGETS';
-  if (out.remaining > 0) return 'SWEEP_IN_PROGRESS';
+  // Partially generated sweep: some targets already have tasks, others do not.
+  // A sweep that has not started (remaining == target_count) is not "in progress".
+  if (out.remaining > 0 && out.remaining < out.target_count) return 'SWEEP_IN_PROGRESS';
   if (Number.isNaN(dueMs)) return 'SCHEDULED';
   if (dueMs < Date.now()) return 'OVERDUE';
   return dueMs - lead * 86400000 <= Date.now() ? 'GENERATING' : 'SCHEDULED';
@@ -429,10 +473,15 @@ router.post('/schedules/run', (req, res) => {
   if (!scope.global) schedules = schedules.filter((s) => scope.scheduleIds.has(s.id));
   if (onlyId) {
     // A run explicitly targeting one schedule must never silently do nothing:
-    // surface an authority error when the schedule is out of scope.
-    const exists = get('maintenance_schedule', onlyId);
-    if (exists && !schedules.some((s) => s.id === onlyId)) {
-      results.errors.push({ schedule_id: onlyId, error: 'schedule is outside your authority' });
+    // surface why it was skipped (out of authority vs paused) instead of a bare
+    // empty result.
+    const target = get('maintenance_schedule', onlyId);
+    if (target) {
+      if (!scope.global && !scope.scheduleIds.has(target.id)) {
+        results.errors.push({ schedule_id: onlyId, error: 'schedule is outside your authority' });
+      } else if (target.is_active !== 1) {
+        results.errors.push({ schedule_id: onlyId, error: 'schedule is not active' });
+      }
     }
     schedules = schedules.filter((s) => s.id === onlyId);
   }
@@ -474,59 +523,64 @@ router.post('/schedules/run', (req, res) => {
       const cap = Number(s.batch_size) > 0 ? Number(s.batch_size) : Infinity;
       const batch = remaining.slice(0, cap);
       for (const target of batch) {
-        // The schedule/asset intends a crew; keep it when it is eligible and
-        // otherwise borrow the best eligible crew from the same department. With
-        // no intended crew the task stays uncrewed (SCHEDULED) for dispatch.
-        const intendedCrewId = (target.asset_type ? target.default_crew_id || s.responsible_crew_id : s.responsible_crew_id) || null;
-        const crewId = autoAssignCrewId(intendedCrewId, { reqs, neededCerts });
-        if (crewId && !canAssignCrew(req.user, crewId)) {
-          results.errors.push({ schedule_id: s.id, error: 'crew is outside your authority' });
-          continue;
+        try {
+          // The schedule/asset intends a crew; keep it when it is eligible and
+          // otherwise borrow the best eligible crew from the same department. With
+          // no intended crew the task stays uncrewed (SCHEDULED) for dispatch.
+          const intendedCrewId = (target.asset_type ? target.default_crew_id || s.responsible_crew_id : s.responsible_crew_id) || null;
+          const crewId = autoAssignCrewId(intendedCrewId, { reqs, neededCerts });
+          if (crewId && !canAssignCrew(req.user, crewId)) {
+            results.errors.push({ schedule_id: s.id, error: 'crew is outside your authority' });
+            continue;
+          }
+          const taskNumber = robustTaskNumber();
+          // A target is either a register asset or a tower row. Assets anchor by
+          // asset_id; only tower targets set tower_id. Copying an asset's own id
+          // into tower_id pointed at an unrelated/non-existent tower and could fail
+          // the FK, dropping the sweep.
+          const isAsset = target.asset_type !== undefined;
+          const title = `${s.schedule_name} — ${target.name || target.tower_id || target.substation_id || target.line_id || target.asset_id || ''}`.trim();
+          const t = {
+            task_number: taskNumber,
+            title,
+            description: s.instructions || `Auto-generated from schedule ${s.schedule_code}`,
+            task_type: resolveTaskType(s),
+            priority: s.priority,
+            // A schedule that names a responsible crew pre-assigns the work:
+            // generate it ASSIGNED so it does not need a second manual handoff.
+            // Without a crew it stays SCHEDULED awaiting dispatch.
+            status: crewId ? 'ASSIGNED' : 'SCHEDULED',
+            region_id: targetRegion(target, s.region_id),
+            // FKs must be numeric row ids — never the textual business codes
+            // (substation_id / line_id / tower_id / asset_id on the parent rows).
+            substation_id: target.substation_id != null ? target.substation_id : null,
+            line_id: target.line_id != null ? target.line_id : null,
+            tower_id: isAsset ? null : target.id,
+            asset_id: isAsset ? target.id : null,
+            checklist_template_id: s.checklist_template_id,
+            crew_id: crewId,
+            due_date: s.next_due_date,
+            source: 'SCHEDULE_GENERATED',
+            schedule_id: s.id,
+            schedule_occurrence: occurrence,
+            created_by: req.user.person_id || null,
+            assigned_by: crewId ? (req.user.person_id || null) : null,
+            created_at: now,
+            updated_at: now,
+            revision: 1,
+          };
+          const tid = insertRow('task', t);
+          // Mirror the schedule's template into the task's checklist join table so
+          // generated tasks carry the same authoritative selection as manual ones.
+          if (s.checklist_template_id) {
+            db.prepare('INSERT OR IGNORE INTO task_checklist_template (task_id, template_id, sequence) VALUES (?,?,0)').run(tid, s.checklist_template_id);
+          }
+          results.generated++;
+          results.tasks.push(get('task', tid));
+        } catch (e) {
+          // One bad target must not abort the rest of the sweep.
+          results.errors.push({ schedule_id: s.id, error: e.message });
         }
-        const taskNumber = robustTaskNumber();
-        const isTower = target.tower_id != null;
-        const isAsset = target.asset_type !== undefined;
-        const title = `${s.schedule_name} — ${target.name || target.tower_id || target.substation_id || target.line_id || target.asset_id || ''}`.trim();
-        const t = {
-          task_number: taskNumber,
-          title,
-          description: s.instructions || `Auto-generated from schedule ${s.schedule_code}`,
-          task_type: resolveTaskType(s),
-          priority: s.priority,
-          // A schedule that names a responsible crew pre-assigns the work:
-          // generate it ASSIGNED so it does not need a second manual handoff.
-          // Without a crew it stays SCHEDULED awaiting dispatch.
-          status: crewId ? 'ASSIGNED' : 'SCHEDULED',
-          region_id: targetRegion(target, s.region_id),
-          // FKs must be numeric row ids — never the textual business codes
-          // (substation_id / line_id / tower_id / asset_id on the parent rows).
-          // Coarse scopes expand to register assets, so every anchor comes from
-          // the target itself: assets carry substation_id/line_id, towers carry
-          // line_id, and only tower targets set tower_id.
-          substation_id: target.substation_id != null ? target.substation_id : null,
-          line_id: target.line_id != null ? target.line_id : null,
-          tower_id: isTower ? target.id : null,
-          asset_id: isAsset ? target.id : null,
-          checklist_template_id: s.checklist_template_id,
-          crew_id: crewId,
-          due_date: s.next_due_date,
-          source: 'SCHEDULE_GENERATED',
-          schedule_id: s.id,
-          schedule_occurrence: occurrence,
-          created_by: req.user.person_id || null,
-          assigned_by: crewId ? (req.user.person_id || null) : null,
-          created_at: now,
-          updated_at: now,
-          revision: 1,
-        };
-        const tid = insertRow('task', t);
-        // Mirror the schedule's template into the task's checklist join table so
-        // generated tasks carry the same authoritative selection as manual ones.
-        if (s.checklist_template_id) {
-          db.prepare('INSERT OR IGNORE INTO task_checklist_template (task_id, template_id, sequence) VALUES (?,?,0)').run(tid, s.checklist_template_id);
-        }
-        results.generated++;
-        results.tasks.push(get('task', tid));
       }
       // Only advance the occurrence once every target of this sweep exists.
       // Re-read coverage rather than trusting batch length: a target can be

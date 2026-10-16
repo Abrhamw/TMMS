@@ -37,6 +37,13 @@ const jointBox = insertRow('asset', { asset_id: 'JB-ST-1', asset_type: 'JOINT_BO
 const retiredSpan = insertRow('asset', { asset_id: 'CS-ST-OLD', asset_type: 'CONDUCTOR_SPAN', line_id: line, name: 'Retired span', condition_rating: 4, lifecycle_status: 'DECOMMISSIONED' });
 const xfr = insertRow('asset', { asset_id: 'XFR-SS-1', asset_type: 'TRANSFORMER', substation_id: sub1, name: 'Transformer', condition_rating: 5, lifecycle_status: 'IN_SERVICE' });
 const otherAsset = insertRow('asset', { asset_id: 'XFR-SS-O', asset_type: 'TRANSFORMER', substation_id: subOther, name: 'Other region xf', condition_rating: 8, lifecycle_status: 'IN_SERVICE' });
+const lineOther = insertRow('transmission_line', {
+  line_id: 'SL-O', name: 'Other Line', region_id: otherRegion,
+  from_substation_id: subOther, to_substation_id: subOther, voltage_kv: 66,
+});
+const towerOther = insertRow('tower', { tower_id: 'ST-O-1', line_id: lineOther, tower_number: 1, latitude: 5.1, longitude: 5.1, corrosion_rating: 6 });
+// A tower register mirror whose asset id deliberately differs from its tower id.
+const mirrorOther = insertRow('asset', { asset_id: 'TWR-ST-O-1', asset_type: 'TOWER', tower_id: towerOther, line_id: lineOther, name: 'ST-O-1', condition_rating: 6, lifecycle_status: 'IN_SERVICE' });
 
 const personId = insertRow('person', { first_name: 'Sch', last_name: 'Admin', role: 'STAFF', active: 1 });
 const adminId = insertRow('user', { username: 'sch-admin', password_hash: hashPassword('x'), role: 'ADMIN', person_id: personId, active: 1, created_at: NOW });
@@ -175,4 +182,53 @@ test('completing a generated asset task records maintenance history against the 
   assert.strictEqual(events.length, 1);
   assert.strictEqual(events[0].asset_id, xfr);
   assert.ok(get('asset', xfr).last_maintenance_at, 'asset last_maintenance_at updated');
+});
+
+test('an asset target anchors by asset_id and never copies the asset id into tower_id', async () => {
+  // mirrorOther is a TOWER asset whose asset id differs from its tower id, so the
+  // old `tower_id: target.id` bug referenced a non-existent tower (FK failure) or
+  // an unrelated tower.
+  assert.notStrictEqual(mirrorOther, towerOther);
+  const s = makeSchedule({ scope_type: 'ASSET', asset_id: mirrorOther });
+  const r = await run(s);
+  assert.deepStrictEqual(r.errors, []);
+  assert.strictEqual(r.generated, 1);
+  const task = generatedFor(s)[0];
+  assert.strictEqual(task.asset_id, mirrorOther);
+  assert.strictEqual(task.tower_id, null, 'asset targets must not set tower_id');
+});
+
+test('the schedule list reports SWEEP_IN_PROGRESS while a sweep is only partly generated', async () => {
+  const s = makeSchedule({ scope_type: 'LINE', line_id: line, batch_size: 1 });
+  await run(s);
+  await run(s);
+  const res = await call('GET', '/api/schedules');
+  const rows = await res.json();
+  const row = rows.find((x) => x.id === s);
+  assert.strictEqual(row.remaining, 1, 'one target is still ungenerated');
+  assert.strictEqual(row.due_state, 'SWEEP_IN_PROGRESS');
+});
+
+test('running an inactive schedule reports it is inactive, not outside authority', async () => {
+  const s = makeSchedule({ scope_type: 'ASSET', asset_id: xfr });
+  updateRow('maintenance_schedule', s, { is_active: 0 });
+  const r = await run(s);
+  assert.strictEqual(r.generated, 0);
+  assert.strictEqual(r.errors.length, 1);
+  assert.match(r.errors[0].error, /not active/i);
+});
+
+test('one target that fails to insert does not abort the rest of the sweep', async () => {
+  // Corrupt the first target (lowest id) so its task insert is rejected, then
+  // prove the remaining targets still generate instead of the whole run aborting.
+  db.prepare('PRAGMA foreign_keys = OFF').run();
+  db.prepare('UPDATE asset SET substation_id = 999999 WHERE id = ?').run(mirror1);
+  db.prepare('PRAGMA foreign_keys = ON').run();
+
+  const s = makeSchedule({ scope_type: 'LINE', line_id: line });
+  const r = await run(s);
+  assert.ok(r.errors.length >= 1, 'the rejected target is reported');
+  assert.ok(r.generated >= 2, 'the other targets still generate');
+  const ids = generatedFor(s).map((t) => t.asset_id);
+  assert.ok(ids.includes(mirror2) && ids.includes(jointBox));
 });
