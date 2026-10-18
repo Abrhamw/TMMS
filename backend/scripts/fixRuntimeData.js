@@ -221,6 +221,40 @@ function repairScheduleAssetAnchors(apply = APPLY) {
   };
 }
 
+// Older forms stored an asset_type (and, after switching scope, target ids) on
+// schedules where they do not apply. Keep only the target a scope uses, and give
+// tower scopes their parent line. Idempotent.
+function repairScheduleScopeFields(apply = APPLY) {
+  const where = `(scope_type != 'ASSET_CLASS' AND asset_type IS NOT NULL)
+     OR (scope_type != 'ASSET' AND asset_id IS NOT NULL)
+     OR (scope_type != 'SUBSTATION' AND substation_id IS NOT NULL)
+     OR (scope_type NOT IN ('LINE','LINE_TOWERS','TOWER') AND line_id IS NOT NULL)
+     OR (scope_type != 'TOWER' AND tower_id IS NOT NULL)
+     OR (scope_type = 'TOWER' AND tower_id IS NOT NULL AND line_id IS NULL)`;
+  const bad = db.prepare(`SELECT id, scope_type FROM maintenance_schedule WHERE ${where}`).all();
+  if (!bad.length) return { status: 'ok', count: 0 };
+  if (apply) {
+    db.prepare(
+      `UPDATE maintenance_schedule SET
+         asset_type = CASE WHEN scope_type = 'ASSET_CLASS' THEN asset_type ELSE NULL END,
+         asset_id = CASE WHEN scope_type = 'ASSET' THEN asset_id ELSE NULL END,
+         substation_id = CASE WHEN scope_type = 'SUBSTATION' THEN substation_id ELSE NULL END,
+         line_id = CASE WHEN scope_type IN ('LINE','LINE_TOWERS','TOWER') THEN line_id ELSE NULL END,
+         tower_id = CASE WHEN scope_type = 'TOWER' THEN tower_id ELSE NULL END`
+    ).run();
+    db.prepare(
+      `UPDATE maintenance_schedule
+          SET line_id = (SELECT line_id FROM tower WHERE tower.id = maintenance_schedule.tower_id)
+        WHERE scope_type = 'TOWER' AND tower_id IS NOT NULL AND line_id IS NULL`
+    ).run();
+  }
+  return {
+    status: apply ? 'applied' : 'would-apply',
+    count: bad.length,
+    schedules: bad.slice(0, 20).map((s) => `${s.id}: ${s.scope_type}`),
+  };
+}
+
 function main() {
   console.log(`fixRuntimeData — ${APPLY ? 'APPLY' : 'DRY RUN'}`);
   const sululta = fixSulultaPoint();
@@ -246,10 +280,14 @@ function main() {
   console.log(`\n[5] Schedule-generated asset tasks with a stray tower_id — ${APPLY ? 'applied' : 'would apply'} (${anchors.count})`);
   (anchors.tasks || []).forEach((x) => console.log('   ', x));
 
+  const scopeFields = repairScheduleScopeFields();
+  console.log(`\n[6] Schedule target fields that do not match their scope — ${APPLY ? 'applied' : 'would apply'} (${scopeFields.count})`);
+  (scopeFields.schedules || []).forEach((x) => console.log('   ', x));
+
   if (!APPLY) console.log('\nRe-run with --apply to write these changes.');
 }
 
 if (require.main === module) main();
 
-module.exports = { fixSulultaPoint, repairLineEndpoints, repairConditionRatings, backfillTowerMaintenance, repairScheduleAssetAnchors, main };
+module.exports = { fixSulultaPoint, repairLineEndpoints, repairConditionRatings, backfillTowerMaintenance, repairScheduleAssetAnchors, repairScheduleScopeFields, main };
 

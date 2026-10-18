@@ -576,6 +576,7 @@ export default {
     schedTargetSubstation: 'Target substation',
     schedTargetLine: 'Target line',
     schedTargetTower: 'Target tower',
+    schedTargetRegion: 'Target region',
     schedRecurrence: 'Recurrence',
     schedDaysBetween: 'Days between',
     schedWeeksBetween: 'Weeks between',

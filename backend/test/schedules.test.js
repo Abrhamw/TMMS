@@ -232,3 +232,53 @@ test('one target that fails to insert does not abort the rest of the sweep', asy
   const ids = generatedFor(s).map((t) => t.asset_id);
   assert.ok(ids.includes(mirror2) && ids.includes(jointBox));
 });
+
+test('create keeps only the target field that matches the scope', async () => {
+  const res = await call('POST', '/api/schedules', {
+    schedule_name: 'Canonical scope', schedule_code: `CAN-${Date.now()}`,
+    scope_type: 'LINE', line_id: line,
+    asset_type: 'TRANSFORMER', asset_id: xfr, substation_id: sub1, tower_id: tower1,
+    frequency: 'MONTHLY', frequency_config: '{}', next_due_date: PAST, region_id: regionId,
+  });
+  assert.strictEqual(res.status, 201);
+  const row = await res.json();
+  assert.strictEqual(row.scope_type, 'LINE');
+  assert.strictEqual(row.line_id, line);
+  assert.strictEqual(row.asset_type, null);
+  assert.strictEqual(row.asset_id, null);
+  assert.strictEqual(row.substation_id, null);
+  assert.strictEqual(row.tower_id, null);
+});
+
+test('ASSET_CLASS scope requires an asset type', async () => {
+  const res = await call('POST', '/api/schedules', {
+    schedule_name: 'No class', schedule_code: `NOC-${Date.now()}`,
+    scope_type: 'ASSET_CLASS', frequency: 'MONTHLY', frequency_config: '{}',
+    next_due_date: PAST, region_id: regionId,
+  });
+  assert.strictEqual(res.status, 400);
+  assert.match((await res.json()).error, /asset type/i);
+});
+
+test('TOWER scope derives its parent line', async () => {
+  const res = await call('POST', '/api/schedules', {
+    schedule_name: 'Tower scope', schedule_code: `TW-${Date.now()}`,
+    scope_type: 'TOWER', tower_id: tower1, frequency: 'MONTHLY', frequency_config: '{}',
+    next_due_date: PAST, region_id: regionId,
+  });
+  assert.strictEqual(res.status, 201);
+  const row = await res.json();
+  assert.strictEqual(row.tower_id, tower1);
+  assert.strictEqual(row.line_id, line);
+});
+
+test('changing scope clears the previous target fields', async () => {
+  const s = makeSchedule({ scope_type: 'ASSET', asset_id: xfr, asset_type: 'TRANSFORMER' });
+  const res = await call('PUT', `/api/schedules/${s}`, { scope_type: 'LINE', line_id: line });
+  assert.strictEqual(res.status, 200);
+  const row = await res.json();
+  assert.strictEqual(row.scope_type, 'LINE');
+  assert.strictEqual(row.line_id, line);
+  assert.strictEqual(row.asset_id, null);
+  assert.strictEqual(row.asset_type, null);
+});

@@ -8,7 +8,7 @@ const { initSchema, db } = require('../db');
 const { insertRow, get, updateRow } = require('../util');
 const { requireAuth, auditMiddleware, createSession, hashPassword } = require('../auth');
 const { maintenanceCostForRegions } = require('../maintenanceCost');
-const { repairConditionRatings, backfillTowerMaintenance, repairScheduleAssetAnchors } = require('../scripts/fixRuntimeData');
+const { repairConditionRatings, backfillTowerMaintenance, repairScheduleAssetAnchors, repairScheduleScopeFields } = require('../scripts/fixRuntimeData');
 
 initSchema();
 
@@ -152,4 +152,37 @@ test('runtime repair clears a stray tower_id on schedule-generated asset tasks o
 
   assert.strictEqual(get('task', generated).tower_id, null);
   assert.strictEqual(get('task', manual).tower_id, towerId, 'manual tasks are left untouched');
+});
+
+test('runtime repair keeps only the target fields a schedule scope uses', () => {
+  const id = insertRow('maintenance_schedule', {
+    schedule_name: 'Mixed scope', schedule_code: 'REP-SCOPE-1', scope_type: 'LINE', line_id: lineId,
+    asset_type: 'TRANSFORMER', asset_id: mirrorId, substation_id: subA, tower_id: towerId,
+    region_id: regionId, frequency: 'MONTHLY', frequency_config: '{}', next_due_date: NOW, is_active: 1,
+  });
+
+  assert.ok(repairScheduleScopeFields(false).count >= 1);
+  repairScheduleScopeFields(true);
+
+  const s = get('maintenance_schedule', id);
+  assert.strictEqual(s.line_id, lineId, 'the scope target is kept');
+  assert.strictEqual(s.asset_type, null);
+  assert.strictEqual(s.asset_id, null);
+  assert.strictEqual(s.substation_id, null);
+  assert.strictEqual(s.tower_id, null);
+});
+
+test('runtime repair derives the parent line for tower scopes', () => {
+  const id = insertRow('maintenance_schedule', {
+    schedule_name: 'Tower scope', schedule_code: 'REP-SCOPE-2', scope_type: 'TOWER', tower_id: towerId,
+    line_id: null, asset_type: 'TRANSFORMER', region_id: regionId, frequency: 'MONTHLY',
+    frequency_config: '{}', next_due_date: NOW, is_active: 1,
+  });
+
+  repairScheduleScopeFields(true);
+
+  const s = get('maintenance_schedule', id);
+  assert.strictEqual(s.line_id, lineId);
+  assert.strictEqual(s.tower_id, towerId);
+  assert.strictEqual(s.asset_type, null);
 });

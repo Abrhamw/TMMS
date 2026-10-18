@@ -73,12 +73,24 @@ function uiToRule(ui) {
 }
 
 const blank = {
-  schedule_name: '', schedule_code: '', scope_type: 'ASSET', asset_type: 'TRANSFORMER',
+  schedule_name: '', schedule_code: '', scope_type: 'ASSET', asset_type: null,
   asset_id: null, substation_id: null, line_id: null, tower_id: null, region_id: null,
   checklist_template_id: null, responsible_crew_id: null,
   priority: 'MEDIUM', task_type: 'PREVENTIVE', lead_time_days: 7, batch_size: null, next_due_date: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10),
   expected_duration_hours: null, instructions: '', is_active: 1,
 };
+
+// Exactly one target field is meaningful per scope; the backend normalises the
+// row the same way, so send the canonical set rather than stale form leftovers.
+function canonicalScope(form) {
+  const out = { scope_type: form.scope_type, asset_type: null, asset_id: null, substation_id: null, line_id: null, tower_id: null };
+  if (form.scope_type === 'ASSET_CLASS') out.asset_type = form.asset_type || null;
+  else if (form.scope_type === 'ASSET') out.asset_id = form.asset_id || null;
+  else if (form.scope_type === 'SUBSTATION') out.substation_id = form.substation_id || null;
+  else if (form.scope_type === 'LINE' || form.scope_type === 'LINE_TOWERS') out.line_id = form.line_id || null;
+  else if (form.scope_type === 'TOWER') { out.tower_id = form.tower_id || null; out.line_id = form.line_id || null; }
+  return out;
+}
 
 export default function Schedules() {
   const canWrite = can(getStoredUser(), 'schedule:write');
@@ -159,10 +171,17 @@ export default function Schedules() {
     } catch (e) { setError(e.message); }
   }
 
+  function changeScope(next) {
+    // Target fields belong to a scope; drop them all so a scope switch cannot
+    // carry a stale asset/line/tower/asset-type into the saved row.
+    setForm({ ...form, scope_type: next, asset_type: null, asset_id: null, substation_id: null, line_id: null, tower_id: null });
+  }
+
   async function save() {
     try {
       const body = {
         ...form,
+        ...canonicalScope(form),
         batch_size: form.batch_size === '' || form.batch_size == null ? null : Number(form.batch_size),
         frequency: 'CUSTOM',
         frequency_config: JSON.stringify(uiToRule(rule)),
@@ -301,15 +320,17 @@ export default function Schedules() {
             <div className="field full"><label>{t('schedName')}</label><input value={form.schedule_name || ''} onChange={(e) => setForm({ ...form, schedule_name: e.target.value })} /></div>
             <div className="field"><label>{t('schedCode')}</label><input value={form.schedule_code || ''} onChange={(e) => setForm({ ...form, schedule_code: e.target.value })} /></div>
             <div className="field"><label>{t('schedScopeType')}</label>
-              <SearchSelect value={form.scope_type} onChange={(e) => setForm({ ...form, scope_type: e.target.value })}>
+              <SearchSelect value={form.scope_type} onChange={(e) => changeScope(e.target.value)}>
                 {SCOPE.map((s) => <option key={s}>{s}</option>)}
               </SearchSelect></div>
-            <div className="field"><label>{t('schedAssetTypeHint')}</label>
-              <SearchSelect value={form.asset_type || ''} onChange={(e) => setForm({ ...form, asset_type: e.target.value })}>
-                <option value="">—</option>
-                {ASSET_TYPES.map((at) => <option key={at}>{at}</option>)}
-              </SearchSelect></div>
-            <div className="field"><label>Region</label>
+            {form.scope_type === 'ASSET_CLASS' && (
+              <div className="field"><label>{t('schedAssetTypeHint')}</label>
+                <SearchSelect value={form.asset_type || ''} onChange={(e) => setForm({ ...form, asset_type: e.target.value })}>
+                  <option value="">—</option>
+                  {ASSET_TYPES.map((at) => <option key={at}>{at}</option>)}
+                </SearchSelect></div>
+            )}
+            <div className="field"><label>{form.scope_type === 'REGION' ? t('schedTargetRegion') : 'Region'}</label>
               <SearchSelect value={form.region_id || ''} onChange={(e) => setForm({ ...form, region_id: e.target.value ? Number(e.target.value) : null, asset_id: null, substation_id: null, line_id: null, tower_id: null })}>
                 <option value="">—</option>
                 {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}

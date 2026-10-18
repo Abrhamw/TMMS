@@ -34,6 +34,57 @@ function normalizeBatchSize(body) {
   return true;
 }
 
+const SCOPES = ['ASSET', 'ASSET_CLASS', 'SUBSTATION', 'LINE', 'LINE_TOWERS', 'TOWER', 'REGION'];
+const SCOPE_FIELDS = ['asset_type', 'asset_id', 'substation_id', 'line_id', 'tower_id'];
+
+// Keep exactly one canonical target per scope. Every other target field is
+// cleared, and the field that applies is validated, so the stored row, the list
+// and the form can never disagree about what the schedule targets.
+function normalizeScheduleScope(body) {
+  const scope = String(body.scope_type || '').toUpperCase();
+  if (!SCOPES.includes(scope)) return { error: `scope_type must be one of ${SCOPES.join(', ')}` };
+  body.scope_type = scope;
+  const keep = {};
+  for (const f of SCOPE_FIELDS) keep[f] = body[f];
+  for (const f of SCOPE_FIELDS) body[f] = null;
+  switch (scope) {
+    case 'ASSET':
+      if (!keep.asset_id) return { error: 'ASSET scope requires an asset' };
+      if (!get('asset', Number(keep.asset_id))) return { error: 'Asset not found' };
+      body.asset_id = Number(keep.asset_id);
+      break;
+    case 'ASSET_CLASS':
+      if (!keep.asset_type) return { error: 'ASSET_CLASS scope requires an asset type' };
+      body.asset_type = String(keep.asset_type);
+      break;
+    case 'SUBSTATION':
+      if (!keep.substation_id) return { error: 'SUBSTATION scope requires a substation' };
+      if (!get('substation', Number(keep.substation_id))) return { error: 'Substation not found' };
+      body.substation_id = Number(keep.substation_id);
+      break;
+    case 'LINE':
+    case 'LINE_TOWERS':
+      if (!keep.line_id) return { error: `${scope} scope requires a line` };
+      if (!get('transmission_line', Number(keep.line_id))) return { error: 'Line not found' };
+      body.line_id = Number(keep.line_id);
+      break;
+    case 'TOWER': {
+      if (!keep.tower_id) return { error: 'TOWER scope requires a tower' };
+      const tower = get('tower', Number(keep.tower_id));
+      if (!tower) return { error: 'Tower not found' };
+      body.tower_id = Number(keep.tower_id);
+      // The line is derived so tower schedules always carry a consistent parent.
+      body.line_id = tower.line_id;
+      break;
+    }
+    case 'REGION':
+      if (!body.region_id) return { error: 'REGION scope requires a region' };
+      if (!get('region', Number(body.region_id))) return { error: 'Region not found' };
+      break;
+  }
+  return { ok: true };
+}
+
 function scheduleDetail(s, { sample = true } = {}) {
   const out = { ...s };
   out.checklist_template = s.checklist_template_id ? get('checklist_template', s.checklist_template_id) : null;
@@ -401,7 +452,11 @@ router.post('/schedules', (req, res) => {
     try { body.frequency_config = JSON.stringify(recurrence.parseRule(body.frequency_config)); }
     catch (e) { return res.status(400).json({ error: e.message }); }
   }
+  // Region fallback first so a REGION-scoped user can omit region_id; then pin the
+  // single target that matches scope_type.
   if (!body.region_id && !isGlobal(req.user)) body.region_id = req.user.region_id;
+  const scope = normalizeScheduleScope(body);
+  if (scope.error) return res.status(400).json({ error: scope.error });
   if (!body.region_id) {
     const probe = { scope_type: body.scope_type, line_id: body.line_id, tower_id: body.tower_id, substation_id: body.substation_id, asset_id: body.asset_id, asset_type: body.asset_type };
     body.region_id = targetRegion(probe, null) ?? undefined;
@@ -436,7 +491,27 @@ router.put('/schedules/:id', (req, res) => {
     try { req.body.frequency_config = JSON.stringify(recurrence.parseRule(req.body.frequency_config)); }
     catch (e) { return res.status(400).json({ error: e.message }); }
   }
+  // Only re-align the scope when the request actually touches it, so a partial
+  // update (e.g. pause/resume) never rewrites or rejects the existing target.
+  let canonical = null;
+  const touchesScope = ['scope_type', ...SCOPE_FIELDS].some((k) => req.body[k] !== undefined);
+  if (touchesScope) {
+    canonical = { ...s, ...req.body };
+    if (!canonical.region_id && !isGlobal(req.user)) canonical.region_id = req.user.region_id;
+    const norm = normalizeScheduleScope(canonical);
+    if (norm.error) return res.status(400).json({ error: norm.error });
+    if (!canonical.region_id) canonical.region_id = targetRegion(canonical, null) ?? null;
+  }
   updateRow('maintenance_schedule', Number(req.params.id), { ...req.body }, [], 'revision');
+  if (canonical) {
+    // updateRow skips nulls, so write the canonical target set explicitly to clear
+    // fields that no longer apply to the scope.
+    db.prepare(
+      `UPDATE maintenance_schedule
+          SET scope_type = ?, asset_type = ?, asset_id = ?, substation_id = ?, line_id = ?, tower_id = ?, region_id = ?
+        WHERE id = ?`
+    ).run(canonical.scope_type, canonical.asset_type, canonical.asset_id, canonical.substation_id, canonical.line_id, canonical.tower_id, canonical.region_id, s.id);
+  }
   audit(req.user, 'UPDATE', 'schedule', Number(req.params.id), req.body);
   res.json(scheduleDetail(get('maintenance_schedule', Number(req.params.id))));
 });
