@@ -8,7 +8,7 @@ const { initSchema, db } = require('../db');
 const { insertRow, get, updateRow } = require('../util');
 const { requireAuth, auditMiddleware, createSession, hashPassword } = require('../auth');
 const { maintenanceCostForRegions } = require('../maintenanceCost');
-const { repairConditionRatings, backfillTowerMaintenance } = require('../scripts/fixRuntimeData');
+const { repairConditionRatings, backfillTowerMaintenance, repairScheduleAssetAnchors } = require('../scripts/fixRuntimeData');
 
 initSchema();
 
@@ -130,4 +130,26 @@ test('runtime backfill gives completed tower tasks their maintenance history', (
   const events = db.prepare('SELECT * FROM asset_maintenance_event WHERE task_id = ?').all(id);
   assert.strictEqual(events.length, 1);
   assert.strictEqual(events[0].asset_id, mirrorId);
+});
+
+test('runtime repair clears a stray tower_id on schedule-generated asset tasks only', () => {
+  const tower2 = insertRow('tower', {
+    tower_id: 'CM-T-2', line_id: lineId, tower_number: 2, latitude: 1.6, longitude: 1.6, corrosion_rating: 7,
+  });
+  const generated = insertRow('task', {
+    task_number: 'TK-CM-901', title: 'Generated asset work', task_type: 'INSPECTION', priority: 'LOW',
+    status: 'SCHEDULED', region_id: regionId, asset_id: mirrorId, tower_id: tower2,
+    due_date: NOW, created_at: NOW, updated_at: NOW, source: 'SCHEDULE_GENERATED',
+  });
+  const manual = insertRow('task', {
+    task_number: 'TK-CM-902', title: 'Manual tower asset work', task_type: 'INSPECTION', priority: 'LOW',
+    status: 'SCHEDULED', region_id: regionId, asset_id: mirrorId, tower_id: towerId,
+    due_date: NOW, created_at: NOW, updated_at: NOW, source: 'MANUAL',
+  });
+
+  assert.ok(repairScheduleAssetAnchors(false).count >= 1);
+  repairScheduleAssetAnchors(true);
+
+  assert.strictEqual(get('task', generated).tower_id, null);
+  assert.strictEqual(get('task', manual).tower_id, towerId, 'manual tasks are left untouched');
 });

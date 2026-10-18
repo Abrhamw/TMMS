@@ -199,9 +199,30 @@ function backfillTowerMaintenance(apply = APPLY) {
   return { status: apply ? 'applied' : 'would-apply', count: missing };
 }
 
+// Schedule generation used to copy an asset target's own row id into tower_id,
+// so an asset-anchored task could point at an unrelated or non-existent tower.
+// Asset-anchored schedule tasks must carry asset_id only. Idempotent.
+function repairScheduleAssetAnchors(apply = APPLY) {
+  const bad = db.prepare(
+    `SELECT id, asset_id, tower_id FROM task
+     WHERE source = 'SCHEDULE_GENERATED' AND asset_id IS NOT NULL AND tower_id IS NOT NULL`
+  ).all();
+  if (!bad.length) return { status: 'ok', count: 0 };
+  if (apply) {
+    db.prepare(
+      `UPDATE task SET tower_id = NULL
+       WHERE source = 'SCHEDULE_GENERATED' AND asset_id IS NOT NULL AND tower_id IS NOT NULL`
+    ).run();
+  }
+  return {
+    status: apply ? 'applied' : 'would-apply',
+    count: bad.length,
+    tasks: bad.slice(0, 20).map((t) => `${t.id}: asset ${t.asset_id} tower ${t.tower_id}`),
+  };
+}
+
 function main() {
   console.log(`fixRuntimeData — ${APPLY ? 'APPLY' : 'DRY RUN'}`);
-
   const sululta = fixSulultaPoint();
   console.log('\n[1] SS-C1-001 Sululta 400kV device point');
   console.log('   ', JSON.stringify(sululta));
@@ -221,10 +242,14 @@ function main() {
   const tower = backfillTowerMaintenance();
   console.log(`\n[4] Missing tower maintenance history — ${APPLY ? 'applied' : 'would apply'} (${tower.count})`);
 
+  const anchors = repairScheduleAssetAnchors();
+  console.log(`\n[5] Schedule-generated asset tasks with a stray tower_id — ${APPLY ? 'applied' : 'would apply'} (${anchors.count})`);
+  (anchors.tasks || []).forEach((x) => console.log('   ', x));
+
   if (!APPLY) console.log('\nRe-run with --apply to write these changes.');
 }
 
 if (require.main === module) main();
 
-module.exports = { fixSulultaPoint, repairLineEndpoints, repairConditionRatings, backfillTowerMaintenance, main };
+module.exports = { fixSulultaPoint, repairLineEndpoints, repairConditionRatings, backfillTowerMaintenance, repairScheduleAssetAnchors, main };
 
