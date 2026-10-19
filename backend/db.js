@@ -320,6 +320,7 @@ function initSchema() {
     is_active INTEGER NOT NULL DEFAULT 1,
     expected_duration_hours REAL,
     instructions TEXT,
+    scope_filter TEXT,
     revision INTEGER NOT NULL DEFAULT 1
   );
 
@@ -1303,6 +1304,8 @@ function initSchema() {
   // Optional per-run batch cap for large expansions (NULL/0 = no cap), and the
   // occurrence a generated task belongs to so a capped sweep can resume.
   migrate('maintenance_schedule', 'batch_size', 'ALTER TABLE maintenance_schedule ADD COLUMN batch_size INTEGER');
+  // JSON criteria for grouped scopes (line/substation/asset sets).
+  migrate('maintenance_schedule', 'scope_filter', 'ALTER TABLE maintenance_schedule ADD COLUMN scope_filter TEXT');
   migrate('task', 'schedule_occurrence', 'ALTER TABLE task ADD COLUMN schedule_occurrence INTEGER');
   // Cancellation record: the required comment, who cancelled and when, and the
   // status to restore if an administrator later retrieves the task.

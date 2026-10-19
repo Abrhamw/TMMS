@@ -1,7 +1,7 @@
 const express = require('express');
 const { db, list, get, insertRow, updateRow } = require('../util');
 const { can, isGlobal, audit } = require('../auth');
-const { canAssignCrew, commandScope } = require('../authority');
+const { canAssignCrew, commandScope, userHasFunctionalScope } = require('../authority');
 const { taskRequirements } = require('../readiness');
 const { autoAssignCrewId } = require('../assignment');
 const recurrence = require('../recurrence');
@@ -34,19 +34,75 @@ function normalizeBatchSize(body) {
   return true;
 }
 
-const SCOPES = ['ASSET', 'ASSET_CLASS', 'SUBSTATION', 'LINE', 'LINE_TOWERS', 'TOWER', 'REGION'];
+const SCOPES = ['ASSET', 'ASSET_CLASS', 'SUBSTATION', 'LINE', 'LINE_TOWERS', 'TOWER', 'REGION', 'LINE_GROUP', 'SUBSTATION_GROUP', 'ASSET_GROUP'];
+const GROUP_TABLES = { LINE_GROUP: 'transmission_line', SUBSTATION_GROUP: 'substation', ASSET_GROUP: 'asset' };
 const SCOPE_FIELDS = ['asset_type', 'asset_id', 'substation_id', 'line_id', 'tower_id'];
 
-// Keep exactly one canonical target per scope. Every other target field is
-// cleared, and the field that applies is validated, so the stored row, the list
-// and the form can never disagree about what the schedule targets.
-function normalizeScheduleScope(body) {
+function defaultScopeFilter() {
+  return { mode: 'FILTER', voltages: [], ids: [] };
+}
+
+// Accepts a stored JSON string or a request object; returns null when invalid.
+function parseScopeFilterInput(raw) {
+  if (raw == null || raw === '') return defaultScopeFilter();
+  let value = raw;
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value); } catch { return null; }
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const mode = String(value.mode || 'FILTER').toUpperCase();
+  if (!['FILTER', 'SPECIFIC'].includes(mode)) return null;
+  const voltages = Array.isArray(value.voltages) ? [...new Set(value.voltages.map(Number))] : [];
+  if (voltages.some((n) => !Number.isFinite(n) || n <= 0)) return null;
+  voltages.sort((a, b) => b - a);
+  let ids = Array.isArray(value.ids) ? value.ids.map(Number) : [];
+  if (ids.some((n) => !Number.isInteger(n) || n <= 0)) return null;
+  ids = [...new Set(ids)];
+  if (mode === 'FILTER') ids = [];
+  return { mode, voltages: mode === 'SPECIFIC' ? [] : voltages, ids };
+}
+
+function storedFilter(s) {
+  return parseScopeFilterInput(s.scope_filter) || defaultScopeFilter();
+}
+
+// Keep exactly one canonical target per scope. Group scopes instead carry a
+// validated filter object in scope_filter; every other target field is cleared.
+function normalizeScheduleScope(body, user) {
   const scope = String(body.scope_type || '').toUpperCase();
   if (!SCOPES.includes(scope)) return { error: `scope_type must be one of ${SCOPES.join(', ')}` };
   body.scope_type = scope;
   const keep = {};
   for (const f of SCOPE_FIELDS) keep[f] = body[f];
   for (const f of SCOPE_FIELDS) body[f] = null;
+
+  if (GROUP_TABLES[scope]) {
+    if (scope === 'ASSET_GROUP' && !keep.asset_type) return { error: 'ASSET_GROUP scope requires an asset type' };
+    if (keep.asset_type) body.asset_type = String(keep.asset_type);
+    const filter = parseScopeFilterInput(body.scope_filter);
+    if (!filter) return { error: 'scope_filter must contain a valid mode, voltages, and ids' };
+    if (filter.mode === 'SPECIFIC') {
+      if (!filter.ids.length) return { error: 'SPECIFIC mode requires at least one entity' };
+      const table = GROUP_TABLES[scope];
+      const rows = filter.ids.map((id) => get(table, id));
+      if (rows.some((r) => !r)) return { error: `${scope} selection includes an unknown entity` };
+      if (scope === 'ASSET_GROUP' && rows.some((r) => r.asset_type !== body.asset_type)) {
+        return { error: 'Selected assets must match the chosen asset type' };
+      }
+      if (scope === 'ASSET_GROUP' && rows.some((r) => !['IN_SERVICE', 'UNDER_MAINTENANCE'].includes(r.lifecycle_status))) {
+        return { error: 'Selected assets must be in service' };
+      }
+      if (user && !isGlobal(user) && user.region_id && !userHasFunctionalScope(user)) {
+        if (rows.some((r) => targetRegion(r, null) !== user.region_id)) {
+          return { error: 'Selected entities are outside your region' };
+        }
+      }
+    }
+    body.scope_filter = JSON.stringify(filter);
+    return { ok: true };
+  }
+
+  body.scope_filter = null;
   switch (scope) {
     case 'ASSET':
       if (!keep.asset_id) return { error: 'ASSET scope requires an asset' };
@@ -85,6 +141,32 @@ function normalizeScheduleScope(body) {
   return { ok: true };
 }
 
+function scopeSummary(s) {
+  const labels = { LINE_GROUP: 'Lines', SUBSTATION_GROUP: 'Substations', ASSET_GROUP: 'Assets' };
+  const label = labels[s.scope_type];
+  if (!label) {
+    if (s.scope_type === 'ASSET_CLASS') return `Assets · ${s.asset_type || 'all types'}`;
+    if (s.scope_type === 'REGION') {
+      const r = s.region_id ? get('region', s.region_id) : null;
+      return r ? `Region · ${r.name}` : 'Region';
+    }
+    return s.scope_type;
+  }
+  const filter = storedFilter(s);
+  const parts = [label];
+  if (s.scope_type === 'ASSET_GROUP' && s.asset_type) parts.push(s.asset_type);
+  if (filter.mode === 'SPECIFIC') {
+    parts.push(`${filter.ids.length} specific`);
+  } else {
+    if (s.region_id) {
+      const r = get('region', s.region_id);
+      if (r) parts.push(r.name);
+    }
+    if (filter.voltages.length) parts.push(`${filter.voltages.join('/')} kV`);
+  }
+  return parts.join(' · ');
+}
+
 function scheduleDetail(s, { sample = true } = {}) {
   const out = { ...s };
   out.checklist_template = s.checklist_template_id ? get('checklist_template', s.checklist_template_id) : null;
@@ -96,6 +178,8 @@ function scheduleDetail(s, { sample = true } = {}) {
   out.recurrence_summary = rule ? recurrence.describe(rule) : '';
   out.occurrences_generated = s.occurrences_generated || 0;
   out.batch_size = s.batch_size != null ? Number(s.batch_size) : null;
+  out.scope_filter = storedFilter(s);
+  out.scope_summary = scopeSummary(s);
   // The expanded target list can be huge (a REGION scope covers every asset), so
   // lists use a COUNT and only the detail view materialises a capped sample.
   out.target_count = countTargets(s);
@@ -155,35 +239,94 @@ function towerScopeFilter(s) {
   return null;
 }
 
-function countTargets(s) {
+// Predicate for the grouped scopes. FILTER mode uses region + voltage; SPECIFIC
+// mode uses the validated id list. Counting and expansion share this predicate.
+function groupFilter(s, table) {
+  const filter = storedFilter(s);
+  if (filter.mode === 'SPECIFIC') {
+    return { sql: `id IN (${filter.ids.map(() => '?').join(',')})`, params: [...filter.ids] };
+  }
+  const clauses = [];
+  const params = [];
+  if (s.region_id != null) {
+    if (table === 'asset') {
+      clauses.push(`(
+        EXISTS (SELECT 1 FROM substation ss WHERE ss.id = asset.substation_id AND ss.region_id = ?)
+        OR EXISTS (SELECT 1 FROM transmission_line l WHERE l.id = asset.line_id AND l.region_id = ?)
+        OR EXISTS (SELECT 1 FROM tower t JOIN transmission_line l ON l.id = t.line_id WHERE t.id = asset.tower_id AND l.region_id = ?)
+      )`);
+      params.push(s.region_id, s.region_id, s.region_id);
+    } else {
+      clauses.push('region_id = ?');
+      params.push(s.region_id);
+    }
+  }
+  if (table === 'asset') {
+    clauses.push('asset_type = ?');
+    params.push(s.asset_type);
+    clauses.push(LIFECYCLE_LIVE);
+  }
+  if (filter.voltages.length) {
+    const marks = filter.voltages.map(() => '?').join(',');
+    if (table === 'transmission_line') {
+      clauses.push(`voltage_kv IN (${marks})`);
+      params.push(...filter.voltages);
+    } else if (table === 'substation') {
+      clauses.push(`EXISTS (
+        SELECT 1 FROM json_each(CASE WHEN json_valid(voltage_levels) THEN voltage_levels ELSE '[]' END) v
+         WHERE CAST(REPLACE(TRIM(v.value), 'kV', '') AS REAL) IN (${marks}))`);
+      params.push(...filter.voltages);
+    } else {
+      clauses.push(`(
+        EXISTS (SELECT 1 FROM transmission_line l WHERE l.id = asset.line_id AND l.voltage_kv IN (${marks}))
+        OR EXISTS (SELECT 1 FROM substation ss
+                    WHERE ss.id = asset.substation_id
+                      AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(ss.voltage_levels) THEN ss.voltage_levels ELSE '[]' END) v
+                                   WHERE CAST(REPLACE(TRIM(v.value), 'kV', '') AS REAL) IN (${marks})))
+        OR EXISTS (SELECT 1 FROM tower t JOIN transmission_line l ON l.id = t.line_id
+                    WHERE t.id = asset.tower_id AND l.voltage_kv IN (${marks}))
+      )`);
+      params.push(...filter.voltages, ...filter.voltages, ...filter.voltages);
+    }
+  }
+  return { sql: clauses.length ? clauses.join(' AND ') : '1=1', params };
+}
+
+const TARGET_PREFIX = { line: 'l', substation: 's', asset: 'a', tower: 't' };
+const TARGET_ANCHOR = { line: 'line_id', substation: 'substation_id', asset: 'asset_id', tower: 'tower_id' };
+
+// The table, anchor kind, and predicate a schedule selects. Every scope resolves
+// through here so counting, expansion, and coverage cannot drift apart.
+function targetSource(s) {
+  if (s.scope_type === 'LINE_GROUP') return { table: 'transmission_line', kind: 'line', ...groupFilter(s, 'transmission_line') };
+  if (s.scope_type === 'SUBSTATION_GROUP') return { table: 'substation', kind: 'substation', ...groupFilter(s, 'substation') };
+  if (s.scope_type === 'ASSET_GROUP') return { table: 'asset', kind: 'asset', ...groupFilter(s, 'asset') };
   const asset = assetScopeFilter(s);
-  if (asset) return db.prepare(`SELECT COUNT(*) c FROM asset WHERE ${asset.sql}`).get(...asset.params).c;
+  if (asset) return { table: 'asset', kind: 'asset', sql: asset.sql, params: asset.params };
   const tower = towerScopeFilter(s);
-  if (tower) return db.prepare(`SELECT COUNT(*) c FROM tower WHERE ${tower.sql}`).get(...tower.params).c;
-  return 0;
+  if (tower) return { table: 'tower', kind: 'tower', sql: tower.sql, params: tower.params };
+  return null;
+}
+
+function countTargets(s) {
+  const src = targetSource(s);
+  if (!src) return 0;
+  return db.prepare(`SELECT COUNT(*) c FROM ${src.table} WHERE ${src.sql}`).get(...src.params).c;
 }
 
 // Targets in this sweep that still have no task. Counted in SQL so the list view
 // does not have to materialise a whole region's register just to show a state.
 // A null-occurrence task counts as covered for occurrence 0 (legacy schedules).
 function countRemaining(s) {
+  const src = targetSource(s);
+  if (!src) return 0;
   const occurrence = Number(s.occurrences_generated) || 0;
   const cover = '(schedule_occurrence = ? OR (schedule_occurrence IS NULL AND ? = 0))';
-  const asset = assetScopeFilter(s);
-  if (asset) {
-    return db.prepare(
-      `SELECT COUNT(*) c FROM asset WHERE ${asset.sql}
-         AND id NOT IN (SELECT asset_id FROM task WHERE schedule_id = ? AND asset_id IS NOT NULL AND ${cover})`
-    ).get(...asset.params, s.id, occurrence, occurrence).c;
-  }
-  const tower = towerScopeFilter(s);
-  if (tower) {
-    return db.prepare(
-      `SELECT COUNT(*) c FROM tower WHERE ${tower.sql}
-         AND id NOT IN (SELECT tower_id FROM task WHERE schedule_id = ? AND tower_id IS NOT NULL AND ${cover})`
-    ).get(...tower.params, s.id, occurrence, occurrence).c;
-  }
-  return 0;
+  const anchor = TARGET_ANCHOR[src.kind];
+  return db.prepare(
+    `SELECT COUNT(*) c FROM ${src.table} WHERE ${src.sql}
+       AND id NOT IN (SELECT ${anchor} FROM task WHERE schedule_id = ? AND ${anchor} IS NOT NULL AND ${cover})`
+  ).get(...src.params, s.id, occurrence, occurrence).c;
 }
 
 function computeDueState(s, out, dueMs, lead) {
@@ -198,41 +341,15 @@ function computeDueState(s, out, dueMs, lead) {
 }
 
 function expandTargets(s) {
-  if (s.scope_type === 'ASSET_CLASS') {
-    return db.prepare('SELECT * FROM asset WHERE asset_type = ? AND lifecycle_status IN (?, ?)').all(s.asset_type, 'IN_SERVICE', 'UNDER_MAINTENANCE');
-  }
-  if (s.scope_type === 'ASSET') return s.asset_id ? [get('asset', s.asset_id)].filter(Boolean) : [];
-  if (s.scope_type === 'SUBSTATION') {
-    return s.substation_id
-      ? db.prepare("SELECT * FROM asset WHERE substation_id = ? AND lifecycle_status IN ('IN_SERVICE','UNDER_MAINTENANCE')").all(s.substation_id)
-      : [];
-  }
-  if (s.scope_type === 'LINE') {
-    return s.line_id
-      ? db.prepare("SELECT * FROM asset WHERE line_id = ? AND lifecycle_status IN ('IN_SERVICE','UNDER_MAINTENANCE')").all(s.line_id)
-      : [];
-  }
-  if (s.scope_type === 'LINE_TOWERS') return s.line_id ? db.prepare('SELECT * FROM tower WHERE line_id = ? ORDER BY km_marker').all(s.line_id) : [];
-  if (s.scope_type === 'TOWER') return s.tower_id ? [get('tower', s.tower_id)].filter(Boolean) : [];
-  if (s.scope_type === 'REGION') {
-    return s.region_id
-      ? db.prepare(
-        `SELECT * FROM asset
-         WHERE lifecycle_status IN ('IN_SERVICE','UNDER_MAINTENANCE') AND (
-           EXISTS (SELECT 1 FROM substation ss WHERE ss.id = asset.substation_id AND ss.region_id = ?)
-           OR EXISTS (SELECT 1 FROM transmission_line l WHERE l.id = asset.line_id AND l.region_id = ?)
-           OR EXISTS (SELECT 1 FROM tower t JOIN transmission_line l ON l.id = t.line_id WHERE t.id = asset.tower_id AND l.region_id = ?)
-         )`
-      ).all(s.region_id, s.region_id, s.region_id)
-      : [];
-  }
-  return [];
+  const src = targetSource(s);
+  if (!src) return [];
+  const order = src.kind === 'tower' ? 'km_marker' : 'name';
+  return db.prepare(`SELECT * FROM ${src.table} WHERE ${src.sql} ORDER BY ${order}`).all(...src.params);
 }
 
-// A target is keyed by the row it anchors to: an asset target by asset_id, a
-// tower target by tower_id.
-function targetKey(target) {
-  return target.asset_type !== undefined ? `a:${target.id}` : `t:${target.id}`;
+// A target is keyed by the anchor row its task will carry.
+function targetKey(target, kind = 'asset') {
+  return `${TARGET_PREFIX[kind]}:${target.id}`;
 }
 
 // The current sweep's targets and those still missing a task. A task with a null
@@ -240,17 +357,18 @@ function targetKey(target) {
 // occurrence marker do not regenerate their first sweep.
 function remainingTargets(s) {
   const occurrence = Number(s.occurrences_generated) || 0;
+  const src = targetSource(s);
+  if (!src) return { targets: [], remaining: [], occurrence, kind: null };
   const targets = expandTargets(s);
-  if (!targets.length) return { targets, remaining: [], occurrence };
+  if (!targets.length) return { targets, remaining: [], occurrence, kind: src.kind };
+  const anchor = TARGET_ANCHOR[src.kind];
   const rows = db.prepare(
-    'SELECT tower_id, asset_id FROM task WHERE schedule_id = ? AND (schedule_occurrence = ? OR (schedule_occurrence IS NULL AND ? = 0))'
+    `SELECT ${anchor} AS anchor FROM task
+      WHERE schedule_id = ? AND ${anchor} IS NOT NULL
+        AND (schedule_occurrence = ? OR (schedule_occurrence IS NULL AND ? = 0))`
   ).all(s.id, occurrence, occurrence);
-  const covered = new Set();
-  for (const r of rows) {
-    if (r.tower_id != null) covered.add(`t:${r.tower_id}`);
-    if (r.asset_id != null) covered.add(`a:${r.asset_id}`);
-  }
-  return { targets, remaining: targets.filter((t) => !covered.has(targetKey(t))), occurrence };
+  const covered = new Set(rows.map((r) => `${TARGET_PREFIX[src.kind]}:${r.anchor}`));
+  return { targets, remaining: targets.filter((t) => !covered.has(targetKey(t, src.kind))), occurrence, kind: src.kind };
 }
 
 // Open tasks left behind by earlier occurrences; they block starting a new sweep.
@@ -431,6 +549,39 @@ router.get('/schedules/adherence', (req, res) => {
   });
 });
 
+// Live count for the grouped-scope form before the schedule is saved.
+router.get('/schedules/scope-preview', (req, res) => {
+  if (!can(req, 'schedule:read')) return res.status(403).json({ error: 'Forbidden: requires schedule:read' });
+  const list = (v) => {
+    if (v == null || v === '') return [];
+    if (Array.isArray(v)) return v;
+    try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : [parsed]; }
+    catch { return String(v).split(',').map((x) => x.trim()).filter(Boolean); }
+  };
+  const body = {
+    scope_type: String(req.query.scope_type || '').toUpperCase(),
+    region_id: req.query.region_id ? Number(req.query.region_id) : null,
+    asset_type: req.query.asset_type || null,
+    scope_filter: {
+      mode: req.query.mode || 'FILTER',
+      voltages: list(req.query.voltages).map(Number),
+      ids: list(req.query.ids).map(Number),
+    },
+  };
+  if (!GROUP_TABLES[body.scope_type]) return res.status(400).json({ error: 'scope_type must be a grouped scope' });
+  if (!body.region_id && !isGlobal(req.user) && req.user.region_id && !userHasFunctionalScope(req.user)) {
+    body.region_id = req.user.region_id;
+  }
+  const norm = normalizeScheduleScope(body, req.user);
+  if (norm.error) return res.status(400).json({ error: norm.error });
+  res.json({
+    count: countTargets(body),
+    sample: expandTargets(body).slice(0, 10).map((x) => x.name),
+    scope_summary: scopeSummary(body),
+    scope_filter: storedFilter(body),
+  });
+});
+
 router.get('/schedules/:id', (req, res) => {
   const s = get('maintenance_schedule', Number(req.params.id));
   if (!s) return res.status(404).json({ error: 'Schedule not found' });
@@ -455,7 +606,7 @@ router.post('/schedules', (req, res) => {
   // Region fallback first so a REGION-scoped user can omit region_id; then pin the
   // single target that matches scope_type.
   if (!body.region_id && !isGlobal(req.user)) body.region_id = req.user.region_id;
-  const scope = normalizeScheduleScope(body);
+  const scope = normalizeScheduleScope(body, req.user);
   if (scope.error) return res.status(400).json({ error: scope.error });
   if (!body.region_id) {
     const probe = { scope_type: body.scope_type, line_id: body.line_id, tower_id: body.tower_id, substation_id: body.substation_id, asset_id: body.asset_id, asset_type: body.asset_type };
@@ -494,23 +645,25 @@ router.put('/schedules/:id', (req, res) => {
   // Only re-align the scope when the request actually touches it, so a partial
   // update (e.g. pause/resume) never rewrites or rejects the existing target.
   let canonical = null;
-  const touchesScope = ['scope_type', ...SCOPE_FIELDS].some((k) => req.body[k] !== undefined);
+  const touchesScope = ['scope_type', 'scope_filter', ...SCOPE_FIELDS].some((k) => req.body[k] !== undefined);
   if (touchesScope) {
     canonical = { ...s, ...req.body };
     if (!canonical.region_id && !isGlobal(req.user)) canonical.region_id = req.user.region_id;
-    const norm = normalizeScheduleScope(canonical);
+    const norm = normalizeScheduleScope(canonical, req.user);
     if (norm.error) return res.status(400).json({ error: norm.error });
     if (!canonical.region_id) canonical.region_id = targetRegion(canonical, null) ?? null;
   }
-  updateRow('maintenance_schedule', Number(req.params.id), { ...req.body }, [], 'revision');
+  const patch = { ...req.body };
+  if (canonical) delete patch.scope_filter;
+  updateRow('maintenance_schedule', Number(req.params.id), patch, [], 'revision');
   if (canonical) {
     // updateRow skips nulls, so write the canonical target set explicitly to clear
     // fields that no longer apply to the scope.
     db.prepare(
       `UPDATE maintenance_schedule
-          SET scope_type = ?, asset_type = ?, asset_id = ?, substation_id = ?, line_id = ?, tower_id = ?, region_id = ?
+          SET scope_type = ?, asset_type = ?, asset_id = ?, substation_id = ?, line_id = ?, tower_id = ?, region_id = ?, scope_filter = ?
         WHERE id = ?`
-    ).run(canonical.scope_type, canonical.asset_type, canonical.asset_id, canonical.substation_id, canonical.line_id, canonical.tower_id, canonical.region_id, s.id);
+    ).run(canonical.scope_type, canonical.asset_type, canonical.asset_id, canonical.substation_id, canonical.line_id, canonical.tower_id, canonical.region_id, canonical.scope_filter, s.id);
   }
   audit(req.user, 'UPDATE', 'schedule', Number(req.params.id), req.body);
   res.json(scheduleDetail(get('maintenance_schedule', Number(req.params.id))));
@@ -583,7 +736,7 @@ router.post('/schedules/run', (req, res) => {
       const neededCerts = reqs
         ? reqs.required_certs
         : taskType === 'PREVENTIVE' ? ['SF6_HANDLING'] : taskType === 'INSPECTION' ? [] : ['LIVE_LINE'];
-      const { targets, remaining, occurrence } = remainingTargets(s);
+      const { targets, remaining, occurrence, kind } = remainingTargets(s);
       // A scope with no register assets cannot be costed or condition-evaluated,
       // so generate nothing rather than an uncostable placeholder.
       if (!targets.length) { results.no_targets++; continue; }
@@ -609,11 +762,13 @@ router.post('/schedules/run', (req, res) => {
             continue;
           }
           const taskNumber = robustTaskNumber();
-          // A target is either a register asset or a tower row. Assets anchor by
-          // asset_id; only tower targets set tower_id. Copying an asset's own id
-          // into tower_id pointed at an unrelated/non-existent tower and could fail
-          // the FK, dropping the sweep.
-          const isAsset = target.asset_type !== undefined;
+          // A target anchors to exactly one row: a register asset, a tower, a
+          // line, or a substation. Asset and tower targets keep their parent
+          // refs; line and substation targets use their own row id.
+          const isAsset = kind === 'asset';
+          const isTower = kind === 'tower';
+          const isLine = kind === 'line';
+          const isSubstation = kind === 'substation';
           const title = `${s.schedule_name} — ${target.name || target.tower_id || target.substation_id || target.line_id || target.asset_id || ''}`.trim();
           const t = {
             task_number: taskNumber,
@@ -628,9 +783,9 @@ router.post('/schedules/run', (req, res) => {
             region_id: targetRegion(target, s.region_id),
             // FKs must be numeric row ids — never the textual business codes
             // (substation_id / line_id / tower_id / asset_id on the parent rows).
-            substation_id: target.substation_id != null ? target.substation_id : null,
-            line_id: target.line_id != null ? target.line_id : null,
-            tower_id: isAsset ? null : target.id,
+            substation_id: isSubstation ? target.id : (target.substation_id != null ? target.substation_id : null),
+            line_id: isLine ? target.id : (target.line_id != null ? target.line_id : null),
+            tower_id: isTower ? target.id : null,
             asset_id: isAsset ? target.id : null,
             checklist_template_id: s.checklist_template_id,
             crew_id: crewId,

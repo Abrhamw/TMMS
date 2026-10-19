@@ -5,7 +5,8 @@ import { can, getStoredUser } from '../auth';
 import { assetsInScope, crewsInRegion, linesInRegion, subsInRegion, towersInScope } from '../cascade';
 import { t } from '../i18n';
 
-const SCOPE = ['ASSET', 'ASSET_CLASS', 'SUBSTATION', 'LINE', 'LINE_TOWERS', 'TOWER', 'REGION'];
+const SCOPE = ['ASSET', 'ASSET_CLASS', 'SUBSTATION', 'LINE', 'LINE_TOWERS', 'TOWER', 'REGION', 'LINE_GROUP', 'SUBSTATION_GROUP', 'ASSET_GROUP'];
+const GROUP_SCOPES = new Set(['LINE_GROUP', 'SUBSTATION_GROUP', 'ASSET_GROUP']);
 const ASSET_TYPES = ['TRANSFORMER', 'CIRCUIT_BREAKER', 'DISCONNECTOR', 'REACTOR', 'CAPACITOR_BANK', 'LIGHTNING_ARRESTER', 'CT', 'PT', 'BUSBAR', 'PROTECTION_RELAY', 'METER'];
 const TASK_TYPES = ['PREVENTIVE', 'CORRECTIVE', 'EMERGENCY', 'INSPECTION', 'REPLACEMENT', 'TESTING', 'REPAIR'];
 
@@ -77,13 +78,29 @@ const blank = {
   asset_id: null, substation_id: null, line_id: null, tower_id: null, region_id: null,
   checklist_template_id: null, responsible_crew_id: null,
   priority: 'MEDIUM', task_type: 'PREVENTIVE', lead_time_days: 7, batch_size: null, next_due_date: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10),
-  expected_duration_hours: null, instructions: '', is_active: 1,
+  expected_duration_hours: null, instructions: '', is_active: 1, scope_filter: null,
 };
+
+function formFilter(form) {
+  const f = form && form.scope_filter;
+  if (!f || typeof f !== 'object') return { mode: 'FILTER', voltages: [], ids: [] };
+  return {
+    mode: f.mode === 'SPECIFIC' ? 'SPECIFIC' : 'FILTER',
+    voltages: Array.isArray(f.voltages) ? f.voltages.map(Number) : [],
+    ids: Array.isArray(f.ids) ? f.ids.map(Number) : [],
+  };
+}
 
 // Exactly one target field is meaningful per scope; the backend normalises the
 // row the same way, so send the canonical set rather than stale form leftovers.
 function canonicalScope(form) {
-  const out = { scope_type: form.scope_type, asset_type: null, asset_id: null, substation_id: null, line_id: null, tower_id: null };
+  const out = { scope_type: form.scope_type, asset_type: null, asset_id: null, substation_id: null, line_id: null, tower_id: null, scope_filter: null };
+  if (GROUP_SCOPES.has(form.scope_type)) {
+    const f = formFilter(form);
+    out.scope_filter = { mode: f.mode, voltages: f.voltages, ids: f.mode === 'SPECIFIC' ? f.ids : [] };
+    if (form.scope_type === 'ASSET_GROUP') out.asset_type = form.asset_type || null;
+    return out;
+  }
   if (form.scope_type === 'ASSET_CLASS') out.asset_type = form.asset_type || null;
   else if (form.scope_type === 'ASSET') out.asset_id = form.asset_id || null;
   else if (form.scope_type === 'SUBSTATION') out.substation_id = form.substation_id || null;
@@ -113,6 +130,7 @@ export default function Schedules() {
   const [upcoming, setUpcoming] = useState(null);
   const [adhDays, setAdhDays] = useState(90);
   const [adherence, setAdherence] = useState(null);
+  const [scopePreview, setScopePreview] = useState(null);
   const { query, setQuery, results } = useSearchFilter(rows);
 
   const load = () => api.get('/schedules').then(setRows).catch((e) => setError(e.message));
@@ -152,6 +170,52 @@ export default function Schedules() {
   );
   const formCrews = useMemo(() => crewsInRegion(crews, form?.region_id), [crews, form?.region_id]);
 
+  const voltageOptions = useMemo(() => {
+    const values = new Set();
+    (lines || []).forEach((l) => { if (l.voltage_kv != null) values.add(Number(l.voltage_kv)); });
+    (subs || []).forEach((s) => {
+      try {
+        (JSON.parse(s.voltage_levels || '[]') || []).forEach((v) => {
+          const n = parseFloat(String(v));
+          if (Number.isFinite(n)) values.add(n);
+        });
+      } catch { /* ignore malformed levels */ }
+    });
+    return [...values].filter((n) => Number.isFinite(n)).sort((a, b) => b - a);
+  }, [lines, subs]);
+
+  const pickOptions = useMemo(() => {
+    if (!form) return [];
+    if (form.scope_type === 'LINE_GROUP') {
+      return formLines.map((l) => ({ id: l.id, name: l.name, hint: l.voltage_kv != null ? `${l.voltage_kv} kV` : '' }));
+    }
+    if (form.scope_type === 'SUBSTATION_GROUP') return formSubs.map((s) => ({ id: s.id, name: s.name, hint: '' }));
+    if (form.scope_type === 'ASSET_GROUP') {
+      return formAssets.filter((a) => a.asset_type === form.asset_type)
+        .map((a) => ({ id: a.id, name: a.name, hint: a.asset_id || '' }));
+    }
+    return [];
+  }, [form, formLines, formSubs, formAssets]);
+
+  useEffect(() => {
+    if (!form || !GROUP_SCOPES.has(form.scope_type)) { setScopePreview(null); return; }
+    const f = formFilter(form);
+    if (form.scope_type === 'ASSET_GROUP' && !form.asset_type) { setScopePreview(null); return; }
+    if (f.mode === 'SPECIFIC' && !f.ids.length) { setScopePreview(null); return; }
+    const params = new URLSearchParams({ scope_type: form.scope_type, mode: f.mode });
+    if (form.region_id) params.set('region_id', form.region_id);
+    if (form.asset_type) params.set('asset_type', form.asset_type);
+    if (f.mode === 'FILTER' && f.voltages.length) params.set('voltages', JSON.stringify(f.voltages));
+    if (f.mode === 'SPECIFIC') params.set('ids', JSON.stringify(f.ids));
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      api.get(`/schedules/scope-preview?${params.toString()}`)
+        .then((res) => { if (!cancelled) setScopePreview(res); })
+        .catch(() => { if (!cancelled) setScopePreview(null); });
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [form]);
+
   async function toggleActive(s) {
     try {
       await api.put(`/schedules/${s.id}`, { is_active: s.is_active ? 0 : 1 });
@@ -174,11 +238,25 @@ export default function Schedules() {
   function changeScope(next) {
     // Target fields belong to a scope; drop them all so a scope switch cannot
     // carry a stale asset/line/tower/asset-type into the saved row.
-    setForm({ ...form, scope_type: next, asset_type: null, asset_id: null, substation_id: null, line_id: null, tower_id: null });
+    setForm({
+      ...form,
+      scope_type: next,
+      asset_type: null,
+      asset_id: null,
+      substation_id: null,
+      line_id: null,
+      tower_id: null,
+      scope_filter: GROUP_SCOPES.has(next) ? { mode: 'FILTER', voltages: [], ids: [] } : null,
+    });
   }
 
   async function save() {
     try {
+      if (GROUP_SCOPES.has(form.scope_type)) {
+        if (form.scope_type === 'ASSET_GROUP' && !form.asset_type) throw new Error(t('schedAssetTypeRequired'));
+        const f = formFilter(form);
+        if (f.mode === 'SPECIFIC' && !f.ids.length) throw new Error(t('schedScopePickRequired'));
+      }
       const body = {
         ...form,
         ...canonicalScope(form),
@@ -237,7 +315,7 @@ export default function Schedules() {
               {results.map((s) => (
                 <tr key={s.id}>
                   <td><b>{s.schedule_name}</b><br /><span className="mono muted">{s.schedule_code}</span></td>
-                  <td>{s.scope_type}{s.asset_type ? ` · ${s.asset_type}` : ''}</td>
+                  <td>{s.scope_summary || `${s.scope_type}${s.asset_type ? ` · ${s.asset_type}` : ''}`}</td>
                   <td><Pill value={s.task_type} /></td>
                   <td>{s.recurrence_summary || s.frequency}</td>
                   <td className={s.due_state === 'OVERDUE' ? 'overdue' : undefined}>
@@ -276,7 +354,7 @@ export default function Schedules() {
       {detail && detail.targets && (
         <Modal title={`${detail.schedule_name} — ${t('schedColNextDue')} ${fmtDate(detail.next_due_date)}`} onClose={() => setDetail(null)} wide>
           <div className="kv">
-            <span className="k">{t('schedColScope')}</span><span>{detail.scope_type} {detail.asset_type || ''}</span>
+            <span className="k">{t('schedColScope')}</span><span>{detail.scope_summary || `${detail.scope_type} ${detail.asset_type || ''}`}</span>
             <span className="k">{t('schedColTaskType')}</span><span><Pill value={detail.task_type} /></span>
             <span className="k">{t('schedRecurrence')}</span><span>{detail.recurrence_summary || detail.frequency}{detail.occurrences_generated ? ` · ${detail.occurrences_generated} ${t('schedColGenerated').toLowerCase()}` : ''}</span>
             <span className="k">{t('schedResponsibleCrew')}</span><span>{detail.responsible_crew?.name || '—'}</span>
@@ -323,18 +401,76 @@ export default function Schedules() {
               <SearchSelect value={form.scope_type} onChange={(e) => changeScope(e.target.value)}>
                 {SCOPE.map((s) => <option key={s}>{s}</option>)}
               </SearchSelect></div>
-            {form.scope_type === 'ASSET_CLASS' && (
+            {(form.scope_type === 'ASSET_CLASS' || form.scope_type === 'ASSET_GROUP') && (
               <div className="field"><label>{t('schedAssetTypeHint')}</label>
-                <SearchSelect value={form.asset_type || ''} onChange={(e) => setForm({ ...form, asset_type: e.target.value })}>
+                <SearchSelect value={form.asset_type || ''} onChange={(e) => setForm({
+                  ...form,
+                  asset_type: e.target.value,
+                  scope_filter: form.scope_type === 'ASSET_GROUP'
+                    ? { ...formFilter(form), ids: [] }
+                    : form.scope_filter,
+                })}>
                   <option value="">—</option>
                   {ASSET_TYPES.map((at) => <option key={at}>{at}</option>)}
                 </SearchSelect></div>
             )}
-            <div className="field"><label>{form.scope_type === 'REGION' ? t('schedTargetRegion') : 'Region'}</label>
-              <SearchSelect value={form.region_id || ''} onChange={(e) => setForm({ ...form, region_id: e.target.value ? Number(e.target.value) : null, asset_id: null, substation_id: null, line_id: null, tower_id: null })}>
+            <div className="field"><label>{form.scope_type === 'REGION' ? t('schedTargetRegion') : GROUP_SCOPES.has(form.scope_type) ? t('schedScopeRegion') : 'Region'}</label>
+              <SearchSelect value={form.region_id || ''} onChange={(e) => {
+                const next = {
+                  ...form,
+                  region_id: e.target.value ? Number(e.target.value) : null,
+                  asset_id: null, substation_id: null, line_id: null, tower_id: null,
+                };
+                if (GROUP_SCOPES.has(form.scope_type)) next.scope_filter = { ...formFilter(form), ids: [] };
+                setForm(next);
+              }}>
                 <option value="">—</option>
                 {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </SearchSelect></div>
+            {GROUP_SCOPES.has(form.scope_type) && (() => {
+              const f = formFilter(form);
+              const update = (patch) => setForm({ ...form, scope_filter: { ...f, ...patch } });
+              const toggleVoltage = (v) => update({ voltages: f.voltages.includes(v) ? f.voltages.filter((x) => x !== v) : [...f.voltages, v] });
+              const toggleId = (id) => update({ ids: f.ids.includes(id) ? f.ids.filter((x) => x !== id) : [...f.ids, id] });
+              return (<>
+                <div className="field"><label>{t('schedScopeMode')}</label>
+                  <SearchSelect value={f.mode} onChange={(e) => update({ mode: e.target.value, ids: [] })}>
+                    <option value="FILTER">{t('schedScopeModeFilter')}</option>
+                    <option value="SPECIFIC">{t('schedScopeModeSpecific')}</option>
+                  </SearchSelect></div>
+                {f.mode === 'FILTER' && (
+                  <div className="field full"><label>{t('schedScopeVoltage')}</label>
+                    <div className="chip-row">
+                      {voltageOptions.length === 0 && <span className="muted">{t('schedScopeNoVoltages')}</span>}
+                      {voltageOptions.map((v) => (
+                        <button type="button" key={v} className={`chip${f.voltages.includes(v) ? ' chip-on' : ''}`}
+                          onClick={() => toggleVoltage(v)}>{v} kV</button>
+                      ))}
+                    </div>
+                    <span className="muted" style={{ fontSize: 12 }}>{f.voltages.length ? '' : t('schedScopeAllVoltages')}</span>
+                  </div>
+                )}
+                {f.mode === 'SPECIFIC' && (
+                  <div className="field full"><label>{t('schedScopeSpecific')}</label>
+                    <div style={{ maxHeight: 180, overflowY: 'auto', border: '1px solid #ddd', borderRadius: 6, padding: 6 }}>
+                      {pickOptions.length === 0 && <span className="muted">{t('schedScopeNoOptions')}</span>}
+                      {pickOptions.map((o) => (
+                        <label key={o.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '2px 4px' }}>
+                          <input type="checkbox" checked={f.ids.includes(o.id)} onChange={() => toggleId(o.id)} />
+                          <span>{o.name}</span>
+                          {o.hint && <span className="muted" style={{ fontSize: 12 }}>{o.hint}</span>}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="field full"><span className="muted" style={{ fontSize: 12 }}>
+                  {scopePreview
+                    ? `${scopePreview.count} ${t('schedScopeMatches')} · ${scopePreview.scope_summary}`
+                    : t('schedScopePreviewWaiting')}
+                </span></div>
+              </>);
+            })()}
             {form.scope_type === 'ASSET' && (
               <div className="field"><label>{t('schedTargetAsset')}</label>
                 <SearchSelect value={form.asset_id || ''} onChange={(e) => setForm({ ...form, asset_id: e.target.value ? Number(e.target.value) : null })}>

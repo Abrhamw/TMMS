@@ -282,3 +282,149 @@ test('changing scope clears the previous target fields', async () => {
   assert.strictEqual(row.asset_id, null);
   assert.strictEqual(row.asset_type, null);
 });
+
+function filter(mode, voltages = [], ids = []) {
+  return JSON.stringify({ mode, voltages, ids });
+}
+
+test('LINE_GROUP generates one anchored task per matching line', async () => {
+  const s = makeSchedule({
+    scope_type: 'LINE_GROUP', region_id: regionId,
+    scope_filter: filter('FILTER', [132]),
+  });
+  const r = await run(s);
+  assert.strictEqual(r.generated, 1);
+  const tasks = generatedFor(s);
+  assert.strictEqual(tasks[0].line_id, line);
+  assert.strictEqual(tasks[0].asset_id, null);
+  assert.strictEqual(tasks[0].substation_id, null);
+  assert.strictEqual(tasks[0].tower_id, null);
+  assert.strictEqual(tasks[0].region_id, regionId);
+  assert.match(tasks[0].title, /Schedule Line/);
+
+  const again = await run(s);
+  assert.strictEqual(again.generated, 0, 'a completed sweep does not duplicate lines');
+});
+
+test('LINE_GROUP re-evaluates the filter on the next occurrence', async () => {
+  const s = makeSchedule({
+    scope_type: 'LINE_GROUP', region_id: regionId,
+    scope_filter: filter('FILTER', [132]),
+  });
+  const r = await run(s);
+  assert.strictEqual(r.generated, 1);
+
+  const extra = insertRow('transmission_line', {
+    line_id: 'SL-NEW', name: 'New 132 Line', region_id: regionId,
+    from_substation_id: sub1, to_substation_id: sub2, voltage_kv: 132,
+  });
+
+  db.prepare("UPDATE task SET status = 'COMPLETED' WHERE schedule_id = ?").run(s);
+  db.prepare('UPDATE maintenance_schedule SET next_due_date = ? WHERE id = ?').run(PAST, s);
+
+  const r2 = await run(s);
+  assert.strictEqual(r2.generated, 2, 'existing and newly matching lines are both generated');
+  const lineIds = db.prepare('SELECT line_id FROM task WHERE schedule_id = ? AND schedule_occurrence = 1').all(s).map((t) => t.line_id).sort();
+  assert.deepStrictEqual(lineIds, [line, extra].sort());
+});
+
+test('SUBSTATION_GROUP filters substations by region and voltage level', async () => {
+  updateRow('substation', sub1, { voltage_levels: '["132kV","15kV"]' });
+  updateRow('substation', sub2, { voltage_levels: '["33kV"]' });
+
+  const s = makeSchedule({
+    scope_type: 'SUBSTATION_GROUP', region_id: regionId,
+    scope_filter: filter('FILTER', [132]),
+  });
+  const r = await run(s);
+  assert.strictEqual(r.generated, 1);
+  const task = generatedFor(s)[0];
+  assert.strictEqual(task.substation_id, sub1);
+  assert.strictEqual(task.line_id, null);
+  assert.strictEqual(task.asset_id, null);
+  assert.strictEqual(task.region_id, regionId);
+  assert.match(task.title, /Sub One/);
+});
+
+test('ASSET_GROUP filters by type, region, and parent voltage', async () => {
+  updateRow('substation', sub1, { voltage_levels: '["132kV","15kV"]' });
+  const xfr2 = insertRow('asset', {
+    asset_id: 'XFR-SS-2', asset_type: 'TRANSFORMER', substation_id: sub2,
+    name: 'Second transformer', condition_rating: 6, lifecycle_status: 'IN_SERVICE',
+  });
+  updateRow('substation', sub2, { voltage_levels: '["33kV"]' });
+
+  const s = makeSchedule({
+    scope_type: 'ASSET_GROUP', asset_type: 'TRANSFORMER', region_id: regionId,
+    scope_filter: filter('FILTER', [132]),
+  });
+  const r = await run(s);
+  assert.strictEqual(r.generated, 1);
+  assert.strictEqual(generatedFor(s)[0].asset_id, xfr);
+  assert.ok(!generatedFor(s).some((t) => t.asset_id === xfr2), 'lower-voltage transformer is excluded');
+});
+
+test('ASSET_GROUP specific picks are anchored and validated', async () => {
+  const ok = makeSchedule({
+    scope_type: 'ASSET_GROUP', asset_type: 'TRANSFORMER', region_id: regionId,
+    scope_filter: filter('SPECIFIC', [], [xfr]),
+  });
+  const r = await run(ok);
+  assert.strictEqual(r.generated, 1);
+  assert.strictEqual(generatedFor(ok)[0].asset_id, xfr);
+
+  const wrongType = await call('POST', '/api/schedules', {
+    schedule_name: 'Wrong type', schedule_code: `WT-${Date.now()}`,
+    scope_type: 'ASSET_GROUP', asset_type: 'TRANSFORMER', region_id: regionId,
+    scope_filter: { mode: 'SPECIFIC', voltages: [], ids: [jointBox] },
+    frequency: 'MONTHLY', frequency_config: '{}', next_due_date: PAST,
+  });
+  assert.strictEqual(wrongType.status, 400);
+  assert.match((await wrongType.json()).error, /asset type/i);
+});
+
+test('grouped scopes reject invalid filters and preview the match count', async () => {
+  const emptySpecific = await call('POST', '/api/schedules', {
+    schedule_name: 'Empty specific', schedule_code: `ES-${Date.now()}`,
+    scope_type: 'LINE_GROUP', region_id: regionId,
+    scope_filter: { mode: 'SPECIFIC', voltages: [], ids: [] },
+    frequency: 'MONTHLY', frequency_config: '{}', next_due_date: PAST,
+  });
+  assert.strictEqual(emptySpecific.status, 400);
+
+  const noType = await call('POST', '/api/schedules', {
+    schedule_name: 'No type', schedule_code: `NT-${Date.now()}`,
+    scope_type: 'ASSET_GROUP', region_id: regionId,
+    scope_filter: { mode: 'FILTER', voltages: [], ids: [] },
+    frequency: 'MONTHLY', frequency_config: '{}', next_due_date: PAST,
+  });
+  assert.strictEqual(noType.status, 400);
+  assert.match((await noType.json()).error, /asset type/i);
+
+  const preview = await call('GET', `/api/schedules/scope-preview?scope_type=LINE_GROUP&region_id=${regionId}&mode=FILTER&voltages=132`);
+  assert.strictEqual(preview.status, 200);
+  const body = await preview.json();
+  assert.strictEqual(body.count, 2, 'the original and the added 132 kV line');
+  assert.deepStrictEqual(body.scope_filter, { mode: 'FILTER', voltages: [132], ids: [] });
+  assert.match(body.scope_summary, /Lines/);
+});
+
+test('updating a grouped scope re-normalises its filter', async () => {
+  const s = makeSchedule({
+    scope_type: 'LINE_GROUP', region_id: regionId,
+    scope_filter: filter('FILTER', [132]),
+  });
+  const res = await call('PUT', `/api/schedules/${s}`, {
+    scope_filter: { mode: 'SPECIFIC', voltages: [400], ids: [line] },
+  });
+  assert.strictEqual(res.status, 200);
+  const row = await res.json();
+  assert.strictEqual(row.scope_type, 'LINE_GROUP');
+  assert.deepStrictEqual(row.scope_filter, { mode: 'SPECIFIC', voltages: [], ids: [line] });
+  assert.match(row.scope_summary, /1 specific/);
+
+  const bad = await call('PUT', `/api/schedules/${s}`, {
+    scope_filter: { mode: 'SPECIFIC', voltages: [], ids: [999999] },
+  });
+  assert.strictEqual(bad.status, 400);
+});
