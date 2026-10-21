@@ -37,6 +37,94 @@ function normalizeBatchSize(body) {
 const SCOPES = ['ASSET', 'ASSET_CLASS', 'SUBSTATION', 'LINE', 'LINE_TOWERS', 'TOWER', 'REGION', 'LINE_GROUP', 'SUBSTATION_GROUP', 'ASSET_GROUP'];
 const GROUP_TABLES = { LINE_GROUP: 'transmission_line', SUBSTATION_GROUP: 'substation', ASSET_GROUP: 'asset' };
 const SCOPE_FIELDS = ['asset_type', 'asset_id', 'substation_id', 'line_id', 'tower_id'];
+const PLANNING_FIELDS = [
+  'scope_type', 'scope_filter', 'region_id', ...SCOPE_FIELDS,
+  'frequency', 'frequency_config', 'next_due_date', 'lead_time_days',
+  'checklist_template_id', 'responsible_crew_id', 'priority', 'task_type',
+  'batch_size', 'expected_duration_hours', 'is_energized_work', 'permit_required',
+];
+const HOURS_PER_MEMBER_WEEK = 40;
+const WEEK_MS = 7 * 86400000;
+
+function isApproved(s) {
+  return (s.approval_status || 'APPROVED') === 'APPROVED';
+}
+
+// Hours a task is expected to consume: checklist estimate, then its scheduled
+// span, then a conservative 4-hour default.
+function taskEstimatedHours(t) {
+  const tpl = t.checklist_template_id ? get('checklist_template', t.checklist_template_id) : null;
+  if (tpl && Number(tpl.estimated_minutes) > 0) return Number(tpl.estimated_minutes) / 60;
+  if (t.scheduled_start && t.scheduled_end) {
+    const h = (new Date(t.scheduled_end) - new Date(t.scheduled_start)) / 3600000;
+    if (h > 0 && h < 200) return h;
+  }
+  return 4;
+}
+
+function scheduleTaskHours(s) {
+  if (s.checklist_template_id) {
+    const tpl = get('checklist_template', s.checklist_template_id);
+    if (tpl && Number(tpl.estimated_minutes) > 0) return Number(tpl.estimated_minutes) / 60;
+  }
+  return Number(s.expected_duration_hours) > 0 ? Number(s.expected_duration_hours) : 4;
+}
+
+// Monday 00:00 UTC of the week containing `iso`.
+function weekStartOf(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const diff = (d.getUTCDay() + 6) % 7;
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - diff)).toISOString();
+}
+
+function crewCapacityHours(crewId) {
+  const members = db.prepare('SELECT COUNT(*) c FROM crew_member WHERE crew_id = ? AND active = 1').get(Number(crewId)).c;
+  return Math.max(HOURS_PER_MEMBER_WEEK, members * HOURS_PER_MEMBER_WEEK);
+}
+
+function crewWeekLoadHours(crewId, weekStart) {
+  const end = new Date(new Date(weekStart).getTime() + WEEK_MS).toISOString();
+  const rows = db.prepare(
+    `SELECT * FROM task WHERE crew_id = ? AND status IN (${OPEN_STATUSES.map(() => '?').join(',')})
+       AND due_date >= ? AND due_date < ?`
+  ).all(Number(crewId), ...OPEN_STATUSES, weekStart, end);
+  return rows.reduce((sum, t) => sum + taskEstimatedHours(t), 0);
+}
+
+function capacityInfo(s, count) {
+  if (!s.responsible_crew_id || s.is_active === 0) return null;
+  const weekStart = s.next_due_date ? weekStartOf(s.next_due_date) : null;
+  if (!weekStart) return null;
+  const targets = count != null ? count : countRemaining(s);
+  const cap = Number(s.batch_size) > 0 ? Number(s.batch_size) : targets;
+  const runTargets = Math.min(targets, cap);
+  const perTask = scheduleTaskHours(s);
+  const capacity = crewCapacityHours(s.responsible_crew_id);
+  const load = crewWeekLoadHours(s.responsible_crew_id, weekStart);
+  const remaining = Math.max(0, capacity - load);
+  const crew = get('crew', s.responsible_crew_id);
+  return {
+    crew_id: s.responsible_crew_id,
+    crew_name: crew ? crew.name : null,
+    week_start: weekStart,
+    targets,
+    run_targets: runTargets,
+    per_task_hours: Math.round(perTask * 10) / 10,
+    projected_hours: Math.round(perTask * runTargets * 10) / 10,
+    capacity_hours: Math.round(capacity * 10) / 10,
+    existing_load_hours: Math.round(load * 10) / 10,
+    remaining_hours: Math.round(remaining * 10) / 10,
+    over: perTask * runTargets > remaining + 1e-9,
+  };
+}
+
+function capacityError(s, count) {
+  const info = capacityInfo(s, count);
+  if (!info || !info.over) return null;
+  const week = info.week_start.slice(0, 10);
+  return `Crew ${info.crew_name || info.crew_id} has ${info.remaining_hours}h left in the week of ${week}, but this run needs ${info.projected_hours}h. Reduce the scope, set a batch size of ${Math.max(1, Math.floor(info.remaining_hours / info.per_task_hours))} or less, or choose another crew.`;
+}
 
 function defaultScopeFilter() {
   return { mode: 'FILTER', voltages: [], ids: [] };
@@ -180,6 +268,8 @@ function scheduleDetail(s, { sample = true } = {}) {
   out.batch_size = s.batch_size != null ? Number(s.batch_size) : null;
   out.scope_filter = storedFilter(s);
   out.scope_summary = scopeSummary(s);
+  out.approval_status = s.approval_status || 'APPROVED';
+  out.approved = isApproved(s);
   // The expanded target list can be huge (a REGION scope covers every asset), so
   // lists use a COUNT and only the detail view materialises a capped sample.
   out.target_count = countTargets(s);
@@ -202,6 +292,8 @@ function scheduleDetail(s, { sample = true } = {}) {
     `SELECT COUNT(*) c FROM task WHERE schedule_id = ? AND status IN (${OPEN_STATUSES.map(() => '?').join(',')})`
   ).get(s.id, ...OPEN_STATUSES).c;
   out.open_generated_tasks = open;
+  // Capacity is only materialised for the detail view (one crew-week query).
+  out.capacity = sample ? capacityInfo(s) : null;
   return out;
 }
 
@@ -466,7 +558,9 @@ router.get('/schedules/upcoming', (req, res) => {
         due_date: cursor,
         lead_time_days: lead,
         generate_by: new Date(generateByMs).toISOString(),
-        generate_now: generateByMs <= nowMs,
+        generate_now: isApproved(s) && generateByMs <= nowMs,
+        approved: isApproved(s),
+        approval_status: s.approval_status || 'APPROVED',
         overdue: dueMs < nowMs,
         target_count: targetCount,
         crew_name: crew ? crew.name : null,
@@ -476,6 +570,16 @@ router.get('/schedules/upcoming', (req, res) => {
     }
   }
   occurrences.sort((a, b) => a.due_date.localeCompare(b.due_date));
+  const months = {};
+  for (const o of occurrences) {
+    const key = o.due_date.slice(0, 7);
+    if (!months[key]) months[key] = { month: key, count: 0, generate_now: 0, overdue: 0, awaiting_approval: 0 };
+    const b = months[key];
+    b.count++;
+    if (o.generate_now) b.generate_now++;
+    if (o.overdue) b.overdue++;
+    if (!o.approved) b.awaiting_approval++;
+  }
   res.json({
     days,
     from: new Date(nowMs).toISOString(),
@@ -483,6 +587,8 @@ router.get('/schedules/upcoming', (req, res) => {
     count: occurrences.length,
     overdue_count: occurrences.filter((o) => o.overdue).length,
     generate_now_count: occurrences.filter((o) => o.generate_now).length,
+    awaiting_approval_count: occurrences.filter((o) => !o.approved).length,
+    months: Object.values(months),
     occurrences,
   });
 });
@@ -549,7 +655,8 @@ router.get('/schedules/adherence', (req, res) => {
   });
 });
 
-// Live count for the grouped-scope form before the schedule is saved.
+// Live preview for the schedule form: works for every scope type so the form
+// can resolve the target set before saving (and lock the picker meanwhile).
 router.get('/schedules/scope-preview', (req, res) => {
   if (!can(req, 'schedule:read')) return res.status(403).json({ error: 'Forbidden: requires schedule:read' });
   const list = (v) => {
@@ -558,17 +665,26 @@ router.get('/schedules/scope-preview', (req, res) => {
     try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : [parsed]; }
     catch { return String(v).split(',').map((x) => x.trim()).filter(Boolean); }
   };
+  const n = (v) => (v == null || v === '' ? null : Number(v));
   const body = {
     scope_type: String(req.query.scope_type || '').toUpperCase(),
-    region_id: req.query.region_id ? Number(req.query.region_id) : null,
+    region_id: n(req.query.region_id),
     asset_type: req.query.asset_type || null,
+    asset_id: n(req.query.asset_id),
+    substation_id: n(req.query.substation_id),
+    line_id: n(req.query.line_id),
+    tower_id: n(req.query.tower_id),
     scope_filter: {
       mode: req.query.mode || 'FILTER',
       voltages: list(req.query.voltages).map(Number),
       ids: list(req.query.ids).map(Number),
     },
   };
-  if (!GROUP_TABLES[body.scope_type]) return res.status(400).json({ error: 'scope_type must be a grouped scope' });
+  if (!SCOPES.includes(body.scope_type)) return res.status(400).json({ error: 'Invalid scope_type' });
+  if (!GROUP_TABLES[body.scope_type]) {
+    delete body.scope_filter;
+    if (body.scope_type !== 'ASSET_CLASS') body.asset_type = null;
+  }
   if (!body.region_id && !isGlobal(req.user) && req.user.region_id && !userHasFunctionalScope(req.user)) {
     body.region_id = req.user.region_id;
   }
@@ -579,6 +695,30 @@ router.get('/schedules/scope-preview', (req, res) => {
     sample: expandTargets(body).slice(0, 10).map((x) => x.name),
     scope_summary: scopeSummary(body),
     scope_filter: storedFilter(body),
+    region_id: body.region_id,
+  });
+});
+
+// Capacity check for the form: how much of the crew's week this run would use.
+router.post('/schedules/capacity-check', (req, res) => {
+  if (!can(req, 'schedule:read')) return res.status(403).json({ error: 'Forbidden: requires schedule:read' });
+  const id = req.body.schedule_id ? Number(req.body.schedule_id) : null;
+  const base = id ? get('maintenance_schedule', id) : {};
+  if (id && !base) return res.status(404).json({ error: 'Schedule not found' });
+  if (id) {
+    const scope = commandScope(req.user);
+    if (!scope.global && !scope.scheduleIds.has(base.id)) return res.status(404).json({ error: 'Schedule not found' });
+  }
+  const body = { ...base, ...req.body };
+  if (!body.scope_type) return res.status(400).json({ error: 'scope_type is required' });
+  if (!body.region_id && !isGlobal(req.user)) body.region_id = req.user.region_id;
+  const norm = normalizeScheduleScope(body, req.user);
+  if (norm.error) return res.status(400).json({ error: norm.error });
+  const remaining = id ? countRemaining(base) : countTargets(body);
+  res.json({
+    target_count: countTargets(body),
+    remaining,
+    capacity: capacityInfo({ ...base, ...body }, remaining),
   });
 });
 
@@ -615,6 +755,12 @@ router.post('/schedules', (req, res) => {
   if (body.responsible_crew_id !== null && body.responsible_crew_id !== undefined && !canAssignCrew(req.user, body.responsible_crew_id)) {
     return res.status(403).json({ error: 'Forbidden: crew is outside your authority' });
   }
+  // Planning approval is set through the approval endpoint only; new plans
+  // always start as DRAFT.
+  delete body.approval_status; delete body.approved_by; delete body.approved_at;
+  body.approval_status = 'DRAFT';
+  const capErr = capacityError(body, countTargets(body));
+  if (capErr) return res.status(409).json({ error: capErr });
   try {
     const id = insertRow('maintenance_schedule', body);
     audit(req.user, 'CREATE', 'schedule', id, req.body);
@@ -654,7 +800,14 @@ router.put('/schedules/:id', (req, res) => {
     if (!canonical.region_id) canonical.region_id = targetRegion(canonical, null) ?? null;
   }
   const patch = { ...req.body };
+  delete patch.approval_status; delete patch.approved_by; delete patch.approved_at;
   if (canonical) delete patch.scope_filter;
+  const touchesPlanning = PLANNING_FIELDS.some((k) => req.body[k] !== undefined);
+  const effective = canonical || { ...s, ...req.body };
+  if (touchesPlanning) {
+    const capErr = capacityError(effective);
+    if (capErr) return res.status(409).json({ error: capErr });
+  }
   updateRow('maintenance_schedule', Number(req.params.id), patch, [], 'revision');
   if (canonical) {
     // updateRow skips nulls, so write the canonical target set explicitly to clear
@@ -665,8 +818,29 @@ router.put('/schedules/:id', (req, res) => {
         WHERE id = ?`
     ).run(canonical.scope_type, canonical.asset_type, canonical.asset_id, canonical.substation_id, canonical.line_id, canonical.tower_id, canonical.region_id, canonical.scope_filter, s.id);
   }
+  // Any planning edit invalidates the approval and must be re-verified.
+  if (touchesPlanning && s.approval_status !== 'DRAFT') {
+    db.prepare('UPDATE maintenance_schedule SET approval_status = ?, approved_by = NULL, approved_at = NULL WHERE id = ?')
+      .run('DRAFT', s.id);
+  }
   audit(req.user, 'UPDATE', 'schedule', Number(req.params.id), req.body);
   res.json(scheduleDetail(get('maintenance_schedule', Number(req.params.id))));
+});
+
+// Approve (or reopen) a plan. Only management roles hold schedule:approve;
+// planners and dispatchers author/run work but cannot self-approve it.
+router.post('/schedules/:id/approval', (req, res) => {
+  if (!can(req, 'schedule:approve')) return res.status(403).json({ error: 'Forbidden: requires schedule:approve' });
+  const s = get('maintenance_schedule', Number(req.params.id));
+  if (!s) return res.status(404).json({ error: 'Schedule not found' });
+  const scope = commandScope(req.user);
+  if (!scope.global && !scope.scheduleIds.has(s.id)) return res.status(404).json({ error: 'Schedule not found' });
+  const approved = req.body.approved !== false;
+  const now = new Date().toISOString();
+  db.prepare('UPDATE maintenance_schedule SET approval_status = ?, approved_by = ?, approved_at = ? WHERE id = ?')
+    .run(approved ? 'APPROVED' : 'DRAFT', approved ? (req.user.person_id || null) : null, approved ? now : null, s.id);
+  audit(req.user, approved ? 'APPROVE' : 'REOPEN', 'schedule', s.id, { approved });
+  res.json(scheduleDetail(get('maintenance_schedule', s.id)));
 });
 
 // Dry-run preview of next generation
@@ -696,7 +870,7 @@ router.post('/schedules/run', (req, res) => {
   if (!can(req, 'schedule:run')) return res.status(403).json({ error: 'Forbidden: requires schedule:run' });
   const onlyId = req.body.schedule_id ? Number(req.body.schedule_id) : null;
   const scope = commandScope(req.user);
-  const results = { generated: 0, skipped_duplicate: 0, not_due: 0, no_targets: 0, tasks: [], errors: [] };
+  const results = { generated: 0, skipped_duplicate: 0, not_due: 0, not_approved: 0, no_targets: 0, deferred_capacity: 0, capacity_notes: [], tasks: [], errors: [] };
   let schedules = list('maintenance_schedule').filter((s) => s.is_active === 1);
   if (!scope.global) schedules = schedules.filter((s) => scope.scheduleIds.has(s.id));
   if (onlyId) {
@@ -715,9 +889,17 @@ router.post('/schedules/run', (req, res) => {
   }
   const now = new Date().toISOString();
   const nowMs = Date.now();
+  // Weekly load already reserved by this run, keyed crew:week. Counts newly
+  // inserted tasks so a sweep cannot overbook the same crew.
+  const loadCache = new Map();
 
   for (const s of schedules) {
     try {
+      if (!isApproved(s)) {
+        results.not_approved++;
+        if (onlyId) results.errors.push({ schedule_id: s.id, error: 'schedule is not approved' });
+        continue;
+      }
       // Lead-time generation: a schedule can materialise its next task batch up
       // to `lead_time_days` before the due date so crews get advance notice.
       const dueMs = s.next_due_date ? new Date(s.next_due_date).getTime() : NaN;
@@ -750,6 +932,9 @@ router.post('/schedules/run', (req, res) => {
       }
       const cap = Number(s.batch_size) > 0 ? Number(s.batch_size) : Infinity;
       const batch = remaining.slice(0, cap);
+      const weekStart = weekStartOf(s.next_due_date);
+      const perTask = scheduleTaskHours(s);
+      let deferredForSchedule = 0;
       for (const target of batch) {
         try {
           // The schedule/asset intends a crew; keep it when it is eligible and
@@ -760,6 +945,32 @@ router.post('/schedules/run', (req, res) => {
           if (crewId && !canAssignCrew(req.user, crewId)) {
             results.errors.push({ schedule_id: s.id, error: 'crew is outside your authority' });
             continue;
+          }
+          // Weekly crew capacity: keep the plan feasible by deferring targets the
+          // crew cannot absorb, rather than overbooking from one sweep.
+          let loadKey = null;
+          if (crewId && weekStart) {
+            loadKey = `${crewId}:${weekStart}`;
+            if (!loadCache.has(loadKey)) loadCache.set(loadKey, crewWeekLoadHours(crewId, weekStart));
+            const capacity = crewCapacityHours(crewId);
+            const used = loadCache.get(loadKey);
+            if (used + perTask > capacity + 1e-9) {
+              deferredForSchedule++;
+              results.deferred_capacity++;
+              const crew = get('crew', crewId);
+              if (!results.capacity_notes.some((n) => n.schedule_id === s.id && n.crew_id === crewId && n.week_start === weekStart)) {
+                results.capacity_notes.push({
+                  schedule_id: s.id,
+                  crew_id: crewId,
+                  crew_name: crew ? crew.name : null,
+                  week_start: weekStart,
+                  capacity_hours: Math.round(capacity * 10) / 10,
+                  used_hours: Math.round(used * 10) / 10,
+                  pending_hours: Math.round(perTask * deferredForSchedule * 10) / 10,
+                });
+              }
+              continue;
+            }
           }
           const taskNumber = robustTaskNumber();
           // A target anchors to exactly one row: a register asset, a tower, a
@@ -807,6 +1018,7 @@ router.post('/schedules/run', (req, res) => {
           }
           results.generated++;
           results.tasks.push(get('task', tid));
+          if (loadKey) loadCache.set(loadKey, loadCache.get(loadKey) + perTask);
         } catch (e) {
           // One bad target must not abort the rest of the sweep.
           results.errors.push({ schedule_id: s.id, error: e.message });
@@ -816,6 +1028,9 @@ router.post('/schedules/run', (req, res) => {
       // Re-read coverage rather than trusting batch length: a target can be
       // skipped mid-loop (crew outside authority), leaving the sweep incomplete.
       if (remainingTargets(s).remaining.length === 0) advanceSweep(s, now);
+      else if (deferredForSchedule && onlyId) {
+        results.errors.push({ schedule_id: s.id, error: `crew weekly capacity reached; ${deferredForSchedule} target(s) deferred` });
+      }
     } catch (e) {
       results.errors.push({ schedule_id: s.id, error: e.message });
     }

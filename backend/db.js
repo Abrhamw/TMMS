@@ -321,6 +321,9 @@ function initSchema() {
     expected_duration_hours REAL,
     instructions TEXT,
     scope_filter TEXT,
+    approval_status TEXT NOT NULL DEFAULT 'APPROVED',
+    approved_by INTEGER REFERENCES person(id),
+    approved_at TEXT,
     revision INTEGER NOT NULL DEFAULT 1
   );
 
@@ -1306,6 +1309,11 @@ function initSchema() {
   migrate('maintenance_schedule', 'batch_size', 'ALTER TABLE maintenance_schedule ADD COLUMN batch_size INTEGER');
   // JSON criteria for grouped scopes (line/substation/asset sets).
   migrate('maintenance_schedule', 'scope_filter', 'ALTER TABLE maintenance_schedule ADD COLUMN scope_filter TEXT');
+  // Planning approval: new plans start as DRAFT and must be approved before
+  // generation. Existing rows default to APPROVED so behaviour is preserved.
+  migrate('maintenance_schedule', 'approval_status', "ALTER TABLE maintenance_schedule ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'APPROVED'");
+  migrate('maintenance_schedule', 'approved_by', 'ALTER TABLE maintenance_schedule ADD COLUMN approved_by INTEGER REFERENCES person(id)');
+  migrate('maintenance_schedule', 'approved_at', 'ALTER TABLE maintenance_schedule ADD COLUMN approved_at TEXT');
   migrate('task', 'schedule_occurrence', 'ALTER TABLE task ADD COLUMN schedule_occurrence INTEGER');
   // Cancellation record: the required comment, who cancelled and when, and the
   // status to restore if an administrator later retrieves the task.

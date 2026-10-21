@@ -428,3 +428,84 @@ test('updating a grouped scope re-normalises its filter', async () => {
   });
   assert.strictEqual(bad.status, 400);
 });
+
+test('new plans start as drafts, are skipped by runs, and need approval', async () => {
+  const res = await call('POST', '/api/schedules', {
+    schedule_name: 'Draft plan', schedule_code: `DRF-${Date.now()}`,
+    scope_type: 'ASSET', asset_id: xfr, frequency: 'MONTHLY', frequency_config: '{}',
+    next_due_date: PAST, region_id: regionId,
+  });
+  assert.strictEqual(res.status, 201);
+  const row = await res.json();
+  assert.strictEqual(row.approval_status, 'DRAFT');
+  assert.strictEqual(row.approved, false);
+
+  const blocked = await run(row.id);
+  assert.strictEqual(blocked.generated, 0);
+  assert.strictEqual(blocked.not_approved, 1);
+  assert.match(blocked.errors[0].error, /not approved/);
+
+  const approved = await call('POST', `/api/schedules/${row.id}/approval`, { approved: true });
+  assert.strictEqual(approved.status, 200);
+  const ok = await approved.json();
+  assert.strictEqual(ok.approval_status, 'APPROVED');
+  assert.ok(ok.approved_at);
+
+  const generated = await run(row.id);
+  assert.strictEqual(generated.generated, 1);
+
+  const edited = await call('PUT', `/api/schedules/${row.id}`, { priority: 'HIGH' });
+  assert.strictEqual(edited.status, 200);
+  const reopened = await edited.json();
+  assert.strictEqual(reopened.approval_status, 'DRAFT');
+  assert.strictEqual(reopened.approved_by, null);
+  assert.strictEqual(reopened.approved_at, null);
+});
+
+test('planners cannot approve their own plans', async () => {
+  const plannerPerson = insertRow('person', { first_name: 'Plan', last_name: 'Ner', role: 'STAFF', active: 1 });
+  const plannerUser = insertRow('user', { username: `planner-${Date.now()}`, password_hash: hashPassword('x'), role: 'PLANNER', person_id: plannerPerson, active: 1, created_at: NOW });
+  const token = createSession(plannerUser);
+  const s = makeSchedule({ scope_type: 'ASSET', asset_id: xfr });
+  const res = await fetch(`${base}/api/schedules/${s}/approval`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ approved: true }),
+  });
+  assert.strictEqual(res.status, 403);
+});
+
+const capCrew = insertRow('crew', { name: 'Capacity Crew', crew_code: `CR-CAP-${Date.now()}`, crew_type: 'MAINTENANCE', region_id: regionId, status: 'AVAILABLE' });
+insertRow('crew_member', { crew_id: capCrew, person_id: personId, role: 'LINEMAN', active: 1 });
+
+test('saving a plan that would overbook the crew week is blocked', async () => {
+  const res = await call('POST', '/api/schedules', {
+    schedule_name: 'Overbooked', schedule_code: `OVR-${Date.now()}`,
+    scope_type: 'ASSET', asset_id: xfr, frequency: 'MONTHLY', frequency_config: '{}',
+    next_due_date: PAST, region_id: regionId, responsible_crew_id: capCrew,
+    expected_duration_hours: 50,
+  });
+  assert.strictEqual(res.status, 409);
+  assert.match((await res.json()).error, /capacity|needs/i);
+
+  const check = await call('POST', '/api/schedules/capacity-check', {
+    scope_type: 'ASSET', asset_id: xfr, region_id: regionId,
+    responsible_crew_id: capCrew, next_due_date: PAST, expected_duration_hours: 50,
+  });
+  assert.strictEqual(check.status, 200);
+  const body = await check.json();
+  assert.strictEqual(body.capacity.over, true);
+  assert.strictEqual(body.capacity.capacity_hours, 40);
+});
+
+test('run defers targets beyond the crew weekly capacity', async () => {
+  const s = makeSchedule({
+    scope_type: 'LINE', line_id: line, task_type: 'INSPECTION',
+    responsible_crew_id: capCrew, expected_duration_hours: 30,
+  });
+  const r = await run(s);
+  assert.strictEqual(r.generated, 1);
+  assert.strictEqual(r.deferred_capacity, 2);
+  assert.ok(r.capacity_notes.length >= 1);
+  assert.strictEqual(generatedFor(s).length, 1);
+});

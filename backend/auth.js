@@ -138,7 +138,7 @@ const TASK_WORKFLOW = ['task:create', 'task:assign', 'task:verify', 'task:manage
 // Management roles plan + run the operational lifecycle: task creation,
 // scheduling (incl. generation), crew assignment, verification, comment back
 // (reopen) and reporting. Master-data writes stay ADMIN-only.
-const OPERATIONS_WORKFLOW = [...TASK_WORKFLOW, 'schedule:write', 'schedule:run', 'report:write', 'asset:evaluate', 'task:bulk', 'geofence:write', 'gps:review'];
+const OPERATIONS_WORKFLOW = [...TASK_WORKFLOW, 'schedule:write', 'schedule:run', 'schedule:approve', 'report:write', 'asset:evaluate', 'task:bulk', 'geofence:write', 'gps:review'];
 
 // Base reads a field person needs to view their assignments and targets.
 const FIELD_READS = [

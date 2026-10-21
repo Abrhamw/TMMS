@@ -112,6 +112,7 @@ function canonicalScope(form) {
 export default function Schedules() {
   const canWrite = can(getStoredUser(), 'schedule:write');
   const canRun = can(getStoredUser(), 'schedule:run');
+  const canApprove = can(getStoredUser(), 'schedule:approve');
   const [rows, setRows] = useState(null);
   const [checklists, setChecklists] = useState([]);
   const [crews, setCrews] = useState([]);
@@ -126,11 +127,14 @@ export default function Schedules() {
   const [detail, setDetail] = useState(null);
   const [runMsg, setRunMsg] = useState(null);
   const [tab, setTab] = useState('schedules');
-  const [upDays, setUpDays] = useState(60);
+  const [upDays, setUpDays] = useState(90);
   const [upcoming, setUpcoming] = useState(null);
   const [adhDays, setAdhDays] = useState(90);
   const [adherence, setAdherence] = useState(null);
   const [scopePreview, setScopePreview] = useState(null);
+  const [scopeLoading, setScopeLoading] = useState(false);
+  const [capacity, setCapacity] = useState(null);
+  const [capLoading, setCapLoading] = useState(false);
   const { query, setQuery, results } = useSearchFilter(rows);
 
   const load = () => api.get('/schedules').then(setRows).catch((e) => setError(e.message));
@@ -197,29 +201,89 @@ export default function Schedules() {
     return [];
   }, [form, formLines, formSubs, formAssets]);
 
+  // Every scope is resolved through the same preview call. The query is a single
+  // string so typing a name or instructions never re-triggers the lookup, and a
+  // null query means "not enough chosen yet" (nothing to count).
+  const filterKey = form ? JSON.stringify(formFilter(form)) : '';
+  const scopeQuery = useMemo(() => {
+    if (!form) return null;
+    const c = canonicalScope(form);
+    const f = c.scope_filter;
+    let ready = false;
+    if (c.scope_type === 'ASSET') ready = !!c.asset_id;
+    else if (c.scope_type === 'ASSET_CLASS') ready = !!c.asset_type;
+    else if (c.scope_type === 'SUBSTATION') ready = !!c.substation_id;
+    else if (c.scope_type === 'LINE' || c.scope_type === 'LINE_TOWERS') ready = !!c.line_id;
+    else if (c.scope_type === 'TOWER') ready = !!c.tower_id;
+    else if (c.scope_type === 'REGION') ready = !!form.region_id;
+    else if (c.scope_type === 'ASSET_GROUP') ready = !!c.asset_type && !!f && (f.mode === 'FILTER' || f.ids.length > 0);
+    else ready = !!f && (f.mode === 'FILTER' || f.ids.length > 0);
+    if (!ready) return null;
+    const p = new URLSearchParams({ scope_type: c.scope_type, mode: (f && f.mode) || 'FILTER' });
+    if (form.region_id) p.set('region_id', form.region_id);
+    if (c.asset_type) p.set('asset_type', c.asset_type);
+    if (c.asset_id) p.set('asset_id', c.asset_id);
+    if (c.substation_id) p.set('substation_id', c.substation_id);
+    if (c.line_id) p.set('line_id', c.line_id);
+    if (c.tower_id) p.set('tower_id', c.tower_id);
+    if (f && f.mode === 'FILTER' && f.voltages.length) p.set('voltages', JSON.stringify(f.voltages));
+    if (f && f.mode === 'SPECIFIC') p.set('ids', JSON.stringify(f.ids));
+    return p.toString();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form?.scope_type, form?.asset_type, form?.asset_id, form?.substation_id, form?.line_id, form?.tower_id, form?.region_id, filterKey]);
+
   useEffect(() => {
-    if (!form || !GROUP_SCOPES.has(form.scope_type)) { setScopePreview(null); return; }
-    const f = formFilter(form);
-    if (form.scope_type === 'ASSET_GROUP' && !form.asset_type) { setScopePreview(null); return; }
-    if (f.mode === 'SPECIFIC' && !f.ids.length) { setScopePreview(null); return; }
-    const params = new URLSearchParams({ scope_type: form.scope_type, mode: f.mode });
-    if (form.region_id) params.set('region_id', form.region_id);
-    if (form.asset_type) params.set('asset_type', form.asset_type);
-    if (f.mode === 'FILTER' && f.voltages.length) params.set('voltages', JSON.stringify(f.voltages));
-    if (f.mode === 'SPECIFIC') params.set('ids', JSON.stringify(f.ids));
+    if (!scopeQuery) { setScopePreview(null); setScopeLoading(false); return undefined; }
+    setScopeLoading(true);
+    setScopePreview(null);
     let cancelled = false;
     const timer = setTimeout(() => {
-      api.get(`/schedules/scope-preview?${params.toString()}`)
+      api.get(`/schedules/scope-preview?${scopeQuery}`)
         .then((res) => { if (!cancelled) setScopePreview(res); })
-        .catch(() => { if (!cancelled) setScopePreview(null); });
+        .catch(() => { if (!cancelled) setScopePreview(null); })
+        .finally(() => { if (!cancelled) setScopeLoading(false); });
+    }, 250);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [scopeQuery]);
+
+  // Capacity follows the crew and the run shape, not every form keystroke.
+  useEffect(() => {
+    if (!form || !scopeQuery || !form.responsible_crew_id) { setCapacity(null); setCapLoading(false); return undefined; }
+    setCapLoading(true);
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      const c = canonicalScope(form);
+      api.post('/schedules/capacity-check', {
+        schedule_id: form.id || undefined,
+        ...c,
+        region_id: form.region_id || null,
+        responsible_crew_id: form.responsible_crew_id,
+        next_due_date: form.next_due_date ? new Date(form.next_due_date).toISOString() : null,
+        expected_duration_hours: form.expected_duration_hours === '' ? null : form.expected_duration_hours,
+        batch_size: form.batch_size === '' ? null : form.batch_size,
+        checklist_template_id: form.checklist_template_id || null,
+      })
+        .then((res) => { if (!cancelled) setCapacity(res.capacity); })
+        .catch(() => { if (!cancelled) setCapacity(null); })
+        .finally(() => { if (!cancelled) setCapLoading(false); });
     }, 300);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [form]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeQuery, form?.responsible_crew_id, form?.next_due_date, form?.expected_duration_hours, form?.batch_size, form?.checklist_template_id, form?.id]);
 
   async function toggleActive(s) {
     try {
       await api.put(`/schedules/${s.id}`, { is_active: s.is_active ? 0 : 1 });
       load();
+    } catch (e) { setError(e.message); }
+  }
+
+  async function approve(s, approved) {
+    try {
+      const row = await api.post(`/schedules/${s.id}/approval`, { approved });
+      setDetail((d) => (d && d.id === s.id ? { ...d, approval_status: row.approval_status, approved: row.approved, approved_at: row.approved_at, approved_by: row.approved_by } : d));
+      load();
+      if (tab === 'upcoming') loadUpcoming();
     } catch (e) { setError(e.message); }
   }
 
@@ -229,7 +293,7 @@ export default function Schedules() {
       const err = res.errors?.[0]?.error;
       setRunMsg(err
         ? `${s.schedule_name}: ${err}`
-        : `${s.schedule_name}: generated ${res.generated} · ${res.skipped_duplicate} skipped · ${res.not_due} not due${res.no_targets ? ` · ${res.no_targets} no targets` : ''}`);
+        : `${s.schedule_name}: generated ${res.generated} · ${res.skipped_duplicate} skipped · ${res.not_due} not due${res.deferred_capacity ? ` · ${res.deferred_capacity} deferred for capacity` : ''}${res.no_targets ? ` · ${res.no_targets} no targets` : ''}`);
       load();
       if (tab === 'upcoming') loadUpcoming();
     } catch (e) { setError(e.message); }
@@ -252,6 +316,8 @@ export default function Schedules() {
 
   async function save() {
     try {
+      if (scopeLoading || capLoading) return;
+      if (capacity?.over) throw new Error(t('schedCapacityOver'));
       if (GROUP_SCOPES.has(form.scope_type)) {
         if (form.scope_type === 'ASSET_GROUP' && !form.asset_type) throw new Error(t('schedAssetTypeRequired'));
         const f = formFilter(form);
@@ -275,7 +341,7 @@ export default function Schedules() {
   async function run() {
     try {
       const res = await api.post('/schedules/run', {});
-      setRunMsg(`Generated ${res.generated} tasks · ${res.skipped_duplicate} skipped (duplicates) · ${res.not_due} not due`);
+      setRunMsg(`Generated ${res.generated} tasks · ${res.skipped_duplicate} skipped (duplicates) · ${res.not_due} not due${res.not_approved ? ` · ${res.not_approved} awaiting approval` : ''}${res.deferred_capacity ? ` · ${res.deferred_capacity} deferred for capacity` : ''}`);
       load();
     } catch (e) { setError(e.message); }
   }
@@ -314,7 +380,7 @@ export default function Schedules() {
             <tbody>
               {results.map((s) => (
                 <tr key={s.id}>
-                  <td><b>{s.schedule_name}</b><br /><span className="mono muted">{s.schedule_code}</span></td>
+                  <td><b>{s.schedule_name}</b><br /><span className="mono muted">{s.schedule_code}</span><br /><Pill value={s.approval_status || 'APPROVED'} /></td>
                   <td>{s.scope_summary || `${s.scope_type}${s.asset_type ? ` · ${s.asset_type}` : ''}`}</td>
                   <td><Pill value={s.task_type} /></td>
                   <td>{s.recurrence_summary || s.frequency}</td>
@@ -328,7 +394,8 @@ export default function Schedules() {
                   <td><Pill value={s.is_active ? 'ACTIVE' : 'INACTIVE'} /></td>
                   <td className="nowrap">
                     <button className="btn btn-sm" onClick={() => preview(s)}>{t('schedPreview')}</button>{' '}
-                    {canRun && <button className="btn btn-sm" onClick={() => runOne(s)} title="Generate due tasks for this schedule">{t('schedRunOne')}</button>}{' '}
+                    {canRun && <button className="btn btn-sm" disabled={!s.approved} onClick={() => runOne(s)} title={s.approved ? 'Generate due tasks for this schedule' : t('schedAwaitApproval')}>{t('schedRunOne')}</button>}{' '}
+                    {canApprove && <button className="btn btn-sm" onClick={() => approve(s, !s.approved)}>{s.approved ? t('schedReopen') : t('schedApprove')}</button>}{' '}
                     {canWrite && <button className="btn btn-sm" onClick={() => toggleActive(s)}>{s.is_active ? t('schedPause') : t('schedResume')}</button>}{' '}
                     {canWrite && <button className="btn btn-sm" onClick={() => { setForm({ ...s, next_due_date: s.next_due_date ? String(s.next_due_date).slice(0, 10) : '' }); setRule(ruleToUi(s.recurrence)); }}>{t('schedEdit')}</button>}
                   </td>
@@ -355,6 +422,7 @@ export default function Schedules() {
         <Modal title={`${detail.schedule_name} — ${t('schedColNextDue')} ${fmtDate(detail.next_due_date)}`} onClose={() => setDetail(null)} wide>
           <div className="kv">
             <span className="k">{t('schedColScope')}</span><span>{detail.scope_summary || `${detail.scope_type} ${detail.asset_type || ''}`}</span>
+            <span className="k">{t('schedApproval')}</span><span><Pill value={detail.approval_status || 'APPROVED'} />{' '}{canApprove && <button className="btn btn-sm" onClick={() => approve(detail, !detail.approved)}>{detail.approved ? t('schedReopen') : t('schedApprove')}</button>}</span>
             <span className="k">{t('schedColTaskType')}</span><span><Pill value={detail.task_type} /></span>
             <span className="k">{t('schedRecurrence')}</span><span>{detail.recurrence_summary || detail.frequency}{detail.occurrences_generated ? ` · ${detail.occurrences_generated} ${t('schedColGenerated').toLowerCase()}` : ''}</span>
             <span className="k">{t('schedResponsibleCrew')}</span><span>{detail.responsible_crew?.name || '—'}</span>
@@ -392,18 +460,18 @@ export default function Schedules() {
         <Modal title={form.id ? `${t('schedEdit')} — ${form.schedule_name}` : t('schedAdd')} onClose={() => setForm(null)}
           footer={<>
             <button className="btn" onClick={() => setForm(null)}>{t('cancel')}</button>
-            <button className="btn btn-primary" onClick={save}>{t('save')}</button>
+            <button className="btn btn-primary" disabled={scopeLoading || capLoading || !!capacity?.over} onClick={save}>{t('save')}</button>
           </>}>
           <div className="form-grid">
             <div className="field full"><label>{t('schedName')}</label><input value={form.schedule_name || ''} onChange={(e) => setForm({ ...form, schedule_name: e.target.value })} /></div>
             <div className="field"><label>{t('schedCode')}</label><input value={form.schedule_code || ''} onChange={(e) => setForm({ ...form, schedule_code: e.target.value })} /></div>
             <div className="field"><label>{t('schedScopeType')}</label>
-              <SearchSelect value={form.scope_type} onChange={(e) => changeScope(e.target.value)}>
+              <SearchSelect value={form.scope_type} disabled={scopeLoading} onChange={(e) => changeScope(e.target.value)}>
                 {SCOPE.map((s) => <option key={s}>{s}</option>)}
               </SearchSelect></div>
             {(form.scope_type === 'ASSET_CLASS' || form.scope_type === 'ASSET_GROUP') && (
               <div className="field"><label>{t('schedAssetTypeHint')}</label>
-                <SearchSelect value={form.asset_type || ''} onChange={(e) => setForm({
+                <SearchSelect value={form.asset_type || ''} disabled={scopeLoading} onChange={(e) => setForm({
                   ...form,
                   asset_type: e.target.value,
                   scope_filter: form.scope_type === 'ASSET_GROUP'
@@ -415,7 +483,7 @@ export default function Schedules() {
                 </SearchSelect></div>
             )}
             <div className="field"><label>{form.scope_type === 'REGION' ? t('schedTargetRegion') : GROUP_SCOPES.has(form.scope_type) ? t('schedScopeRegion') : 'Region'}</label>
-              <SearchSelect value={form.region_id || ''} onChange={(e) => {
+              <SearchSelect value={form.region_id || ''} disabled={scopeLoading} onChange={(e) => {
                 const next = {
                   ...form,
                   region_id: e.target.value ? Number(e.target.value) : null,
@@ -434,7 +502,7 @@ export default function Schedules() {
               const toggleId = (id) => update({ ids: f.ids.includes(id) ? f.ids.filter((x) => x !== id) : [...f.ids, id] });
               return (<>
                 <div className="field"><label>{t('schedScopeMode')}</label>
-                  <SearchSelect value={f.mode} onChange={(e) => update({ mode: e.target.value, ids: [] })}>
+                  <SearchSelect value={f.mode} disabled={scopeLoading} onChange={(e) => update({ mode: e.target.value, ids: [] })}>
                     <option value="FILTER">{t('schedScopeModeFilter')}</option>
                     <option value="SPECIFIC">{t('schedScopeModeSpecific')}</option>
                   </SearchSelect></div>
@@ -443,7 +511,7 @@ export default function Schedules() {
                     <div className="chip-row">
                       {voltageOptions.length === 0 && <span className="muted">{t('schedScopeNoVoltages')}</span>}
                       {voltageOptions.map((v) => (
-                        <button type="button" key={v} className={`chip${f.voltages.includes(v) ? ' chip-on' : ''}`}
+                        <button type="button" key={v} className={`chip${f.voltages.includes(v) ? ' chip-on' : ''}`} disabled={scopeLoading}
                           onClick={() => toggleVoltage(v)}>{v} kV</button>
                       ))}
                     </div>
@@ -456,7 +524,7 @@ export default function Schedules() {
                       {pickOptions.length === 0 && <span className="muted">{t('schedScopeNoOptions')}</span>}
                       {pickOptions.map((o) => (
                         <label key={o.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '2px 4px' }}>
-                          <input type="checkbox" checked={f.ids.includes(o.id)} onChange={() => toggleId(o.id)} />
+                          <input type="checkbox" checked={f.ids.includes(o.id)} disabled={scopeLoading} onChange={() => toggleId(o.id)} />
                           <span>{o.name}</span>
                           {o.hint && <span className="muted" style={{ fontSize: 12 }}>{o.hint}</span>}
                         </label>
@@ -465,36 +533,38 @@ export default function Schedules() {
                   </div>
                 )}
                 <div className="field full"><span className="muted" style={{ fontSize: 12 }}>
-                  {scopePreview
-                    ? `${scopePreview.count} ${t('schedScopeMatches')} · ${scopePreview.scope_summary}`
-                    : t('schedScopePreviewWaiting')}
+                  {scopeLoading
+                    ? t('schedScopeChecking')
+                    : scopePreview
+                      ? `${scopePreview.count} ${t('schedScopeMatches')} · ${scopePreview.scope_summary}`
+                      : t('schedScopePreviewWaiting')}
                 </span></div>
               </>);
             })()}
             {form.scope_type === 'ASSET' && (
               <div className="field"><label>{t('schedTargetAsset')}</label>
-                <SearchSelect value={form.asset_id || ''} onChange={(e) => setForm({ ...form, asset_id: e.target.value ? Number(e.target.value) : null })}>
+                <SearchSelect value={form.asset_id || ''} disabled={scopeLoading} onChange={(e) => setForm({ ...form, asset_id: e.target.value ? Number(e.target.value) : null })}>
                   <option value="">{t('schedNoneOption')}</option>
                   {formAssets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </SearchSelect></div>
             )}
             {form.scope_type === 'SUBSTATION' && (
               <div className="field"><label>{t('schedTargetSubstation')}</label>
-                <SearchSelect value={form.substation_id || ''} onChange={(e) => setForm({ ...form, substation_id: e.target.value ? Number(e.target.value) : null })}>
+                <SearchSelect value={form.substation_id || ''} disabled={scopeLoading} onChange={(e) => setForm({ ...form, substation_id: e.target.value ? Number(e.target.value) : null })}>
                   <option value="">{t('schedNoneOption')}</option>
                   {formSubs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </SearchSelect></div>
             )}
             {(form.scope_type === 'LINE' || form.scope_type === 'LINE_TOWERS') && (
               <div className="field"><label>{t('schedTargetLine')}</label>
-                <SearchSelect value={form.line_id || ''} onChange={(e) => setForm({ ...form, line_id: e.target.value ? Number(e.target.value) : null, tower_id: null })}>
+                <SearchSelect value={form.line_id || ''} disabled={scopeLoading} onChange={(e) => setForm({ ...form, line_id: e.target.value ? Number(e.target.value) : null, tower_id: null })}>
                   <option value="">{t('schedNoneOption')}</option>
                   {formLines.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </SearchSelect></div>
             )}
             {form.scope_type === 'TOWER' && (
               <div className="field"><label>{t('schedTargetTower')}</label>
-                <SearchSelect value={form.tower_id || ''} onChange={(e) => {
+                <SearchSelect value={form.tower_id || ''} disabled={scopeLoading} onChange={(e) => {
                   const tid = e.target.value ? Number(e.target.value) : null;
                   const tw = towers.find((x) => x.id === tid);
                   setForm({ ...form, tower_id: tid, line_id: tw ? tw.line_id : form.line_id });
@@ -504,6 +574,15 @@ export default function Schedules() {
                     <option key={tw.id} value={tw.id}>{tw.tower_id}</option>
                   ))}
                 </SearchSelect></div>
+            )}
+            {!GROUP_SCOPES.has(form.scope_type) && (
+              <div className="field full"><span className="muted" style={{ fontSize: 12 }}>
+                {scopeLoading
+                  ? t('schedScopeChecking')
+                  : scopePreview
+                    ? `${scopePreview.count} ${t('schedScopeMatches')} · ${scopePreview.scope_summary}`
+                    : t('schedScopePreviewWaiting')}
+              </span></div>
             )}
             <div className="field"><label>{t('schedRecurrence')}</label>
               <SearchSelect value={rule.type} onChange={(e) => setRule({ ...rule, type: e.target.value })}>
@@ -562,6 +641,7 @@ export default function Schedules() {
             <div className="field"><label>{t('schedNextDueDate')}</label><input type="date" value={form.next_due_date} onChange={(e) => setForm({ ...form, next_due_date: e.target.value })} /></div>
             <div className="field"><label>{t('schedLeadTime')}</label><input type="number" value={form.lead_time_days} onChange={(e) => setForm({ ...form, lead_time_days: Number(e.target.value) })} /></div>
             <div className="field"><label>{t('schedBatchSize')}</label><input type="number" min="0" placeholder="50" value={form.batch_size ?? ''} onChange={(e) => setForm({ ...form, batch_size: e.target.value === '' ? '' : Number(e.target.value) })} /><span className="muted" style={{ fontSize: 12 }}>{t('schedBatchHint')}</span></div>
+            <div className="field"><label>{t('schedHoursPerTask')}</label><input type="number" min="0" step="0.5" placeholder="4" value={form.expected_duration_hours ?? ''} onChange={(e) => setForm({ ...form, expected_duration_hours: e.target.value === '' ? null : Number(e.target.value) })} /><span className="muted" style={{ fontSize: 12 }}>{t('schedHoursPerTaskHint')}</span></div>
             <div className="field"><label>{t('schedChecklistLabel')}</label>
               <SearchSelect value={form.checklist_template_id || ''} onChange={(e) => setForm({ ...form, checklist_template_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">{t('schedNoneOption')}</option>
@@ -576,6 +656,28 @@ export default function Schedules() {
                   </option>
                 ))}
               </SearchSelect></div>
+            {form.responsible_crew_id && (
+              <div className="field full">
+                <label>{t('schedCapacity')}</label>
+                {capLoading && <span className="muted" style={{ fontSize: 12 }}>{t('schedCapacityLoading')}</span>}
+                {!capLoading && capacity && (
+                  <>
+                    <div className="sched-summary">
+                      <div className="sched-kpi"><b>{capacity.remaining_hours}h</b><span>{t('schedCapacityRemaining')}</span></div>
+                      <div className={'sched-kpi' + (capacity.over ? ' warn' : '')}><b>{capacity.projected_hours}h</b><span>{t('schedCapacityProjected')}</span></div>
+                      <div className="sched-kpi"><b>{capacity.capacity_hours}h</b><span>{t('schedCapacityWeek')}</span></div>
+                      <div className="sched-kpi"><b>{capacity.existing_load_hours}h</b><span>{t('schedCapacityLoad')}</span></div>
+                    </div>
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      {capacity.crew_name} · {capacity.run_targets}/{capacity.targets} {t('schedTargets')} · {capacity.per_task_hours}h {t('schedHoursPerTaskShort')}
+                      {' · '}{t('schedCapacityWeekOf')} {String(capacity.week_start).slice(0, 10)}
+                    </span>
+                    {capacity.over && <div className="alert alert-error mt" style={{ fontSize: 12 }}>{t('schedCapacityOver')}</div>}
+                  </>
+                )}
+                {!capLoading && !capacity && <span className="muted" style={{ fontSize: 12 }}>—</span>}
+              </div>
+            )}
             <div className="field full"><label>{t('schedInstructions')}</label><textarea value={form.instructions || ''} onChange={(e) => setForm({ ...form, instructions: e.target.value })} /></div>
           </div>
         </Modal>
@@ -584,7 +686,7 @@ export default function Schedules() {
   );
 }
 
-const RANGES = [30, 60, 90];
+const RANGES = [30, 90, 180, 365];
 
 function RangeChips({ days, setDays }) {
   return (
@@ -610,6 +712,7 @@ function UpcomingView({ data, days, setDays }) {
     if (!group || group.label !== label) { group = { label, items: [] }; groups.push(group); }
     group.items.push(occ);
   }
+  const awaiting = data.occurrences.filter((o) => !o.approved).length;
   return (
     <>
       <div className="card-head">
@@ -620,6 +723,7 @@ function UpcomingView({ data, days, setDays }) {
         <div className="sched-kpi"><b>{data.count}</b><span>{t('schedOccurrences')}</span></div>
         <div className={'sched-kpi' + (data.overdue_count ? ' warn' : '')}><b>{data.overdue_count}</b><span>{t('schedOverdue')}</span></div>
         <div className="sched-kpi"><b>{data.generate_now_count}</b><span>{t('schedReadyGenerate')}</span></div>
+        <div className={'sched-kpi' + (awaiting ? ' warn' : '')}><b>{awaiting}</b><span>{t('schedAwaitApproval')}</span></div>
       </div>
       {!data.occurrences.length && <div className="empty">{t('schedNoOccurrences')} {days} {t('schedDays')}.</div>}
       {groups.map((group) => (
@@ -635,7 +739,7 @@ function UpcomingView({ data, days, setDays }) {
                   <div className="sched-body">
                     <div className="spread" style={{ gap: 8, flexWrap: 'wrap' }}>
                       <b>{occ.schedule_name}</b>
-                      <span className="mail-tags"><Pill value={occ.task_type} /><Pill value={occ.priority} /></span>
+                      <span className="mail-tags"><Pill value={occ.task_type} /><Pill value={occ.priority} />{!occ.approved && <Pill value={occ.approval_status || 'DRAFT'} />}</span>
                     </div>
                     <div className="muted sched-meta">
                       <span className="mono">{occ.schedule_code}</span>
@@ -644,11 +748,13 @@ function UpcomingView({ data, days, setDays }) {
                       <span>{occ.crew_name || t('schedUnassigned')}</span>
                     </div>
                     <div className="sched-when muted">
-                      {occ.overdue
-                        ? `${t('schedOverdueSince')} ${fmtDate(occ.due_date)} — ${t('schedWillGenerateNow')}`
-                        : occ.generate_now
-                          ? `${t('schedGenerateNow')} · ${t('schedDueLabel')} ${fmtDate(occ.due_date)}`
-                          : `${t('schedGenerates')} ${fmtDate(occ.generate_by)} · ${t('schedDueLabel')} ${fmtDate(occ.due_date)}`}
+                      {!occ.approved
+                        ? `${t('schedAwaitApproval')} · ${t('schedDueLabel')} ${fmtDate(occ.due_date)}`
+                        : occ.overdue
+                          ? `${t('schedOverdueSince')} ${fmtDate(occ.due_date)} — ${t('schedWillGenerateNow')}`
+                          : occ.generate_now
+                            ? `${t('schedGenerateNow')} · ${t('schedDueLabel')} ${fmtDate(occ.due_date)}`
+                            : `${t('schedGenerates')} ${fmtDate(occ.generate_by)} · ${t('schedDueLabel')} ${fmtDate(occ.due_date)}`}
                     </div>
                   </div>
                 </div>
