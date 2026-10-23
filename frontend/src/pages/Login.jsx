@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { login } from '../auth';
 import { t } from '../i18n';
+import { safeNextPath } from '../safeNextPath';
 
 const DEMO = [
   ['admin', 'Admin@123', 'ADMIN', 'other'],
@@ -39,6 +40,7 @@ export default function Login() {
   const [params] = useSearchParams();
   const persona = params.get('persona') || 'other';
   const add = params.get('add') === '1';
+  const next = safeNextPath(params.get('next'));
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -51,7 +53,7 @@ export default function Login() {
     setBusy(true);
     try {
       const user = await login(u, p);
-      nav(user?.role === 'EXECUTIVE' ? '/executive' : '/home', { replace: true });
+      nav(next || (user?.role === 'EXECUTIVE' ? '/executive' : '/home'), { replace: true });
     } catch (err) {
       setError(t('loginFailed'));
     } finally {

@@ -91,6 +91,7 @@ app.get('/api/metrics', requireAuth, (req, res) => {
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, max: 300, keyFn: (req) => req.ip, message: 'Too many authentication requests. Try again later.' }), require('./routes/auth'));
 
 app.use('/api', apiLimiterFromEnv());
+app.use('/api', require('./routes/searchPublic'));
 app.use('/api', requireAuth, auditMiddleware);
 app.use('/api', require('./routes/dashboard'));
 const mailboxRouter = require('./routes/mailbox');

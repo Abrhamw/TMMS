@@ -556,8 +556,15 @@ a.patch-chip:hover { border-color: var(--primary); color: var(--primary); }
 .org-chip-region { background: #dcfce7; color: #15803d; }
 .org-chip-crew { background: #eef2ff; color: #4338ca; }
 
-/* Landing (role picker) */
-.landing { min-height: 100vh; background: linear-gradient(165deg, #052e16 0%, #14532d 45%, #052e16 100%); display: flex; flex-direction: column; align-items: center; padding: 48px 24px 32px; }
+/* Landing (role picker + public search) */
+.landing {
+  min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  background: #020617;
+}
+.landing-main {
+  background: linear-gradient(165deg, #052e16 0%, #14532d 45%, #052e16 100%);
+  display: flex; flex-direction: column; align-items: center; padding: 48px 24px 32px;
+}
 .landing-hero { text-align: center; color: #fff; }
 .landing-logo { width: 64px; height: 64px; border-radius: 16px; background: #dc2626; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 34px; font-weight: 800; font-style: italic; margin: 0 auto 14px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
 .landing-hero h1 { font-size: 30px; margin: 0 0 4px; letter-spacing: .01em; }
@@ -572,6 +579,43 @@ a.patch-chip:hover { border-color: var(--primary); color: var(--primary); }
 .landing-desc { font-size: 12.5px; color: var(--muted); margin-top: 6px; flex: 1; }
 .landing-go { margin-top: 14px; font-size: 12.5px; font-weight: 600; color: #dc2626; }
 .landing-footer { margin-top: 36px; color: #7da08d; font-size: 12px; }
+.landing-search {
+  background: linear-gradient(180deg, #0b1224 0%, #020617 100%);
+  color: #e2e8f0; padding: 48px 28px 32px; display: flex; flex-direction: column; min-height: 100vh;
+  border-left: 1px solid rgba(148,163,184,.12);
+}
+.landing-search-head h2 { margin: 0 0 8px; font-size: 22px; letter-spacing: .01em; color: #f8fafc; }
+.landing-search-head p { margin: 0 0 22px; font-size: 13px; line-height: 1.5; color: #94a3b8; }
+.landing-search-field {
+  display: flex; align-items: center; gap: 10px; background: #111827; border: 1px solid #334155;
+  border-radius: 12px; padding: 0 14px; min-height: 48px; color: #94a3b8;
+}
+.landing-search-field:focus-within { border-color: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.18); }
+.landing-search-field input {
+  flex: 1; background: transparent; border: 0; outline: none; color: #f8fafc;
+  font: inherit; font-size: 16px; min-width: 0; padding: 12px 0;
+}
+.landing-search-body { margin-top: 18px; overflow-y: auto; flex: 1; min-height: 0; }
+.ls-note { padding: 12px 4px; font-size: 13px; color: #94a3b8; line-height: 1.5; }
+.ls-error { color: #fca5a5; }
+.ls-group { margin-bottom: 14px; }
+.ls-group-label {
+  display: flex; justify-content: space-between; gap: 8px; padding: 4px 2px 8px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; font-weight: 700;
+}
+.ls-item {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
+  border: 1px solid transparent; background: #0f172a; color: inherit; padding: 12px 12px;
+  border-radius: 10px; cursor: pointer; font-family: inherit; margin-bottom: 8px; min-height: 44px;
+}
+.ls-item:hover, .ls-item.active { background: #1e293b; border-color: #334155; }
+.ls-item-title { font-size: 14px; font-weight: 600; color: #f8fafc; }
+.ls-item-sub { font-size: 12px; color: #94a3b8; }
+.ls-item-go { font-size: 11px; font-weight: 600; color: #4ade80; margin-top: 4px; }
+@media (max-width: 960px) {
+  .landing { grid-template-columns: 1fr; }
+  .landing-search { min-height: auto; border-left: 0; border-top: 1px solid rgba(148,163,184,.12); padding-top: 32px; }
+}
 @media (max-width: 760px) { .landing-grid { grid-template-columns: 1fr; } }
 
 /* Login persona */
