@@ -35,7 +35,7 @@ export function CommandPalette({ open, onClose, commands = [], searchable = true
     if (term.length < 2) { setResults([]); return undefined; }
     const my = ++seq.current;
     const timer = setTimeout(() => {
-      api.get(`/search?q=${encodeURIComponent(term)}`)
+      api.get(`/search/public?q=${encodeURIComponent(term)}`)
         .then((r) => {
           if (my !== seq.current) return;
           setResults((r.groups || []).flatMap((g) => g.items.map((it) => ({ ...it, group: g.label }))).filter((it) => it.href).slice(0, 6));

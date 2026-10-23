@@ -316,7 +316,7 @@ function Shell() {
             <button type="button" className="mobile-menu-btn" onClick={() => setNavOpen(true)} aria-label={t('openNav')} title={t('openNav')}>
               <Menu {...ICON} />
             </button>
-            {!isExecutive && <GlobalSearch />}
+            <GlobalSearch />
             <Tooltip label="Search · Ctrl K">
               <button type="button" className="theme-toggle" onClick={() => setCmdOpen(true)} aria-label="Open command palette">
                 <SearchIcon size={17} strokeWidth={1.9} />
@@ -328,7 +328,7 @@ function Shell() {
             <UserMenu />
           </div>
           <div className="shell-page-header-slot" ref={setHeaderSlot} />
-          <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} commands={commands} searchable={!isExecutive} />
+          <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} commands={commands} searchable />
           <ErrorBoundary resetKey={location.pathname}>
             <Outlet />
           </ErrorBoundary>

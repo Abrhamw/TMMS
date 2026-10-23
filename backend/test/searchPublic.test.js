@@ -64,6 +64,12 @@ const regionUserId = insertRow('user', {
   region_id: regionId, person_id: regionPerson, active: 1, created_at: NOW,
 });
 const regionToken = createSession(regionUserId);
+const crewPerson = insertRow('person', { first_name: 'Search', last_name: 'Crew', role: 'CREW_MEMBER', active: 1 });
+const crewUserId = insertRow('user', {
+  username: 'search-crew', password_hash: hashPassword('x'), role: 'CREW_MEMBER',
+  region_id: regionId, person_id: crewPerson, active: 1, created_at: NOW,
+});
+const crewToken = createSession(crewUserId);
 
 const publicSearch = require('../routes/searchPublic');
 const authSearch = require('../routes/search');
@@ -86,30 +92,29 @@ async function get(path, token) {
   return { status: res.status, body: await res.json() };
 }
 
-test('public search does not require a token', async () => {
-  const { status, body } = await get('/api/search/public?q=sululta');
-  assert.strictEqual(status, 200);
-  assert.ok(body.total > 0);
+test('catalog search requires a token', async () => {
+  const { status } = await get('/api/search/public?q=sululta');
+  assert.strictEqual(status, 401);
 });
 
-test('public search returns an empty payload for a blank query', async () => {
-  const { status, body } = await get('/api/search/public?q=');
+test('catalog search returns an empty payload for a blank query', async () => {
+  const { status, body } = await get('/api/search/public?q=', adminToken);
   assert.strictEqual(status, 200);
   assert.deepStrictEqual(body, { query: '', total: 0, groups: [] });
 });
 
-test('public search AND-matches across fields and rejects a missing word', async () => {
-  const hit = await get('/api/search/public?q=sululta%20230');
+test('catalog search AND-matches across fields and rejects a missing word', async () => {
+  const hit = await get('/api/search/public?q=sululta%20230', adminToken);
   const lineGroup = (hit.body.groups || []).find((g) => g.type === 'line');
   assert.ok(lineGroup, JSON.stringify(hit.body));
   assert.ok(lineGroup.items.some((it) => it.title.includes('230')));
 
-  const miss = await get('/api/search/public?q=sululta%20999');
+  const miss = await get('/api/search/public?q=sululta%20999', adminToken);
   assert.strictEqual(miss.body.total, 0);
 });
 
-test('public search only returns the six allowed types', async () => {
-  const { body } = await get('/api/search/public?q=sululta');
+test('catalog search only returns the six allowed types', async () => {
+  const { body } = await get('/api/search/public?q=sululta', adminToken);
   const types = (body.groups || []).map((g) => g.type).sort();
   for (const type of types) {
     assert.ok(['region', 'substation', 'line', 'tower', 'asset', 'schedule'].includes(type), type);
@@ -119,31 +124,43 @@ test('public search only returns the six allowed types', async () => {
   assert.ok(!types.includes('crew'));
 });
 
-test('public search items expose only id, type, title, subtitle, and href', async () => {
-  const { body } = await get('/api/search/public?q=transformer');
+test('catalog search items include a description and never leak serials', async () => {
+  const { body } = await get('/api/search/public?q=transformer', adminToken);
   const raw = JSON.stringify(body);
   assert.ok(!raw.includes('SECRET-SERIAL'));
   assert.ok(!raw.includes('HiddenCo'));
   assert.ok(!raw.includes('condition_rating'));
   for (const g of body.groups || []) {
     for (const it of g.items) {
-      assert.deepStrictEqual(Object.keys(it).sort(), ['href', 'id', 'subtitle', 'title', 'type']);
+      assert.ok(typeof it.description === 'string' && it.description.length > 0);
+      assert.ok(typeof it.can_open === 'boolean');
     }
   }
 });
 
-test('public asset results link to the assets hub query', async () => {
-  const { body } = await get('/api/search/public?q=auto%20transformer');
+test('catalog asset results link to the assets hub when the role may open them', async () => {
+  const { body } = await get('/api/search/public?q=auto%20transformer', adminToken);
   const assets = (body.groups || []).find((g) => g.type === 'asset');
   assert.ok(assets);
+  assert.strictEqual(assets.items[0].can_open, true);
   assert.ok(assets.items[0].href.startsWith('/assets?asset='));
 });
 
-test('public search matches an asset by parent substation name plus type', async () => {
-  const { body } = await get('/api/search/public?q=sululta%20transformer');
+test('catalog search matches an asset by parent substation name plus type', async () => {
+  const { body } = await get('/api/search/public?q=sululta%20transformer', adminToken);
   const assets = (body.groups || []).find((g) => g.type === 'asset');
   assert.ok(assets, JSON.stringify(body));
   assert.ok(assets.items.some((it) => /transformer/i.test(it.title)));
+});
+
+test('a crew member sees schedule descriptions but cannot open them', async () => {
+  const { status, body } = await get('/api/search/public?q=sululta%20patrol', crewToken);
+  assert.strictEqual(status, 200);
+  const schedules = (body.groups || []).find((g) => g.type === 'schedule');
+  assert.ok(schedules, JSON.stringify(body));
+  assert.ok(schedules.items[0].description);
+  assert.strictEqual(schedules.items[0].can_open, false);
+  assert.strictEqual(schedules.items[0].href, undefined);
 });
 
 test('authenticated search rejects a missing token', async () => {

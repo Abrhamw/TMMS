@@ -19,6 +19,7 @@ export default function GlobalSearch() {
   const [results, setResults] = useState(null);
   const [active, setActive] = useState(-1);
   const [documents, setDocuments] = useState([]);
+  const [denied, setDenied] = useState(null);
 
   const flat = useMemo(
     () => (results?.groups || []).flatMap((g) => g.items.map((it) => ({ ...it, group: g.label }))),
@@ -30,9 +31,21 @@ export default function GlobalSearch() {
     const my = ++seqRef.current;
     if (!term) { setResults(null); setLoading(false); setErr(null); return; }
     setLoading(true);
+    setDenied(null);
     const handle = setTimeout(() => {
-      api.get(`/search?q=${encodeURIComponent(term)}`)
-        .then((r) => { if (my === seqRef.current) { setResults(r); setErr(null); } })
+      Promise.all([
+        api.get(`/search/public?q=${encodeURIComponent(term)}`),
+        api.get(`/search?q=${encodeURIComponent(term)}`).catch(() => ({ groups: [] })),
+      ])
+        .then(([catalog, scoped]) => {
+          if (my !== seqRef.current) return;
+          const catalogTypes = new Set(['region', 'substation', 'line', 'tower', 'asset', 'schedule']);
+          const extra = (scoped.groups || []).filter((g) => !catalogTypes.has(g.type));
+          const groups = [...(catalog.groups || []), ...extra];
+          const total = groups.reduce((n, g) => n + (g.total || 0), 0);
+          setResults({ query: catalog.query || term, total, groups });
+          setErr(null);
+        })
         .catch((e) => { if (my === seqRef.current) setErr(e.message); })
         .finally(() => { if (my === seqRef.current) setLoading(false); });
     }, 220);
@@ -57,6 +70,11 @@ export default function GlobalSearch() {
 
   function choose(item) {
     if (!item) return;
+    if (item.can_open === false) {
+      setDenied(item);
+      return;
+    }
+    setDenied(null);
     setOpen(false);
     setActive(-1);
     setQ('');
@@ -90,23 +108,34 @@ export default function GlobalSearch() {
         <div className="global-search-panel">
           {loading && <div className="gs-note">{t('search')}…</div>}
           {!loading && err && <div className="gs-note gs-error">{err}</div>}
-          {!loading && !err && results && results.total === 0 && <div className="gs-note">No matches.</div>}
+          {!loading && !err && results && results.total === 0 && <div className="gs-note">{t('searchEmpty')}</div>}
+          {denied && (
+            <div className="gs-denied" role="status">
+              <span className="gs-denied-mark" aria-hidden="true">!</span>
+              <div className="gs-denied-copy">
+                <b>{t('searchDeniedTitle')}</b>
+                <span>{t('searchDeniedBody')}</span>
+              </div>
+            </div>
+          )}
           {!loading && results && results.groups.map((g) => (
             <div className="gs-group" key={g.type}>
               <div className="gs-group-label">{g.label}<span className="muted">{g.total}</span></div>
               {g.items.map((it) => {
                 rowIndex += 1;
                 const i = rowIndex;
+                const locked = it.can_open === false;
                 return (
                   <button
                     key={`${it.type}-${it.id}`}
                     type="button"
-                    className={'gs-item' + (i === active ? ' active' : '')}
+                    className={'gs-item' + (i === active ? ' active' : '') + (locked ? ' locked' : '')}
                     onMouseEnter={() => setActive(i)}
                     onClick={() => choose(it)}
                   >
                     <span className="gs-item-title">{it.title}</span>
-                    {it.subtitle && <span className="gs-item-sub">{it.subtitle}</span>}
+                    {(it.description || it.subtitle) && <span className="gs-item-desc">{it.description || it.subtitle}</span>}
+                    {locked && <span className="gs-item-sub">{t('searchViewOnly')}</span>}
                   </button>
                 );
               })}
