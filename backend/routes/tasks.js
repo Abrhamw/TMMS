@@ -247,6 +247,20 @@ function taskDetail(t) {
   out.tower_from = t.tower_from_id ? get('tower', t.tower_from_id) : null;
   out.tower_to = t.tower_to_id ? get('tower', t.tower_to_id) : null;
   out.asset = t.asset_id ? get('asset', t.asset_id) : null;
+  // An asset-only task still needs its parent for the map/voltage chips. The
+  // raw asset row carries only FK ids, so attach the resolved line/substation.
+  if (out.asset) {
+    const asset = { ...out.asset };
+    let line = asset.line_id ? get('transmission_line', asset.line_id) : null;
+    const substation = asset.substation_id ? get('substation', asset.substation_id) : null;
+    if (!line && asset.tower_id) {
+      const tw = get('tower', asset.tower_id);
+      line = tw ? get('transmission_line', tw.line_id) : null;
+    }
+    if (line) asset.line = line;
+    if (substation) asset.substation = substation;
+    out.asset = asset;
+  }
   out.crew = t.crew_id ? get('crew', t.crew_id) : null;
   out.checklist_template = t.checklist_template_id ? get('checklist_template', t.checklist_template_id) : null;
   out.checklist_templates = taskTemplateIds(t.id)
@@ -443,7 +457,7 @@ function deriveWorkItems(source) {
   return items;
 }
 
-function scopedTasks(req) {
+function scopedTasks(req, { order = 'DESC' } = {}) {
   const { status, region_id, task_type, priority, overdue, q, crew_id, line_id, tower_id, asset_id, substation_id } = req.query;
   const where = [];
   const params = [];
@@ -464,7 +478,10 @@ function scopedTasks(req) {
   if (tower_id) { where.push('tower_id = ?'); params.push(Number(tower_id)); }
   if (asset_id) { where.push('asset_id = ?'); params.push(Number(asset_id)); }
   if (substation_id) { where.push('substation_id = ?'); params.push(Number(substation_id)); }
-  const sql = `SELECT * FROM task${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY id`;
+  // Newest first is the working view for dispatchers: the latest raised work
+  // stays at the top. Exports ask for ASC so a CSV reads chronologically.
+  const direction = order === 'ASC' ? 'ASC' : 'DESC';
+  const sql = `SELECT * FROM task${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY id ${direction}`;
   let rows = db.prepare(sql).all(...params).filter((t) => taskVisible(req.user, t));
   if (q) {
     const needle = String(q).toLowerCase();
@@ -514,7 +531,7 @@ function taskTarget(t) {
 
 router.get('/tasks/export.csv', (req, res) => {
   if (!can(req, 'task:read')) return res.status(403).json({ error: 'Forbidden: requires task:read' });
-  const rows = scopedTasks(req);
+  const rows = scopedTasks(req, { order: 'ASC' });
   const headers = ['task_number', 'title', 'task_type', 'priority', 'status', 'result', 'region', 'crew',
     'target_type', 'target_name', 'checklist_template', 'due_date', 'scheduled_start', 'actual_start',
     'actual_end', 'created_by', 'assigned_by', 'verified_by', 'progress_pct'];
@@ -825,6 +842,12 @@ router.post('/tasks', (req, res) => {
   }
   if (!validateTargets(req, res, fields)) return;
   normalizeSection(fields);
+  // A single-tower task knows its line through the tower; stamp it so maps and
+  // exports do not have to re-resolve the parent later.
+  if (fields.tower_id && !fields.line_id) {
+    const tw = get('tower', Number(fields.tower_id));
+    if (tw) fields.line_id = tw.line_id;
+  }
   try {
     const now = new Date().toISOString();
     const n = maxTaskSeq() + 1;
@@ -869,12 +892,26 @@ router.put('/tasks/:id', (req, res) => {
       return res.status(403).json({ error: 'Forbidden: crew is outside your authority' });
     }
   }
-  if (!validateTargets(req, res, { ...t, ...fields })) return;
+  const merged = { ...t, ...fields };
+  // Switching to a single tower implicitly replaces a section and adopts the
+  // tower's parent line. Resolve that before validating so the old section or
+  // line cannot reject an otherwise valid edit.
+  if (fields.tower_id) {
+    merged.tower_from_id = null;
+    merged.tower_to_id = null;
+    if (fields.line_id === undefined || fields.line_id === null) {
+      const tw = get('tower', Number(fields.tower_id));
+      if (tw) merged.line_id = tw.line_id;
+    }
+  }
+  if (!validateTargets(req, res, merged)) return;
   if (fields.tower_from_id !== undefined || fields.tower_to_id !== undefined) {
-    const merged = { ...t, ...fields };
     normalizeSection(merged);
     fields.tower_from_id = merged.tower_from_id;
     fields.tower_to_id = merged.tower_to_id;
+    fields.line_id = merged.line_id;
+  }
+  if (fields.tower_id && (fields.line_id === undefined || fields.line_id === null) && merged.line_id) {
     fields.line_id = merged.line_id;
   }
   updateRow('task', Number(req.params.id), { ...fields, updated_at: new Date().toISOString() }, [], 'revision');
@@ -1800,8 +1837,8 @@ router.post('/tasks/:id/checklist', (req, res) => {
         started_at: now,
         submitted_at: now,
         // Who executed the run is derived from the authenticated user, never
-        // trusted from the request body.
-        executed_by: req.user.person_id || t.crew_id || null,
+        // trusted from the request body. crew_id below stays the crew stamp.
+        executed_by: req.user.person_id || null,
         notes: req.body.notes || null,
         // Finishing-place GPS (where the maintenance work was actually completed),
         // captured by the crew on submission and compared against the installed
@@ -1832,6 +1869,7 @@ router.post('/tasks/:id/checklist', (req, res) => {
           }
           const r = validateGps(t, pos, {
             execId, itemId: item.id, notes: `Checklist item ${item.id} GPS confirmation`,
+            validatedBy: req.user.person_id || null,
           });
           if (r && r.created) gpsCreated += 1;
           if (r && (r.result === 'FAIL' || (r.violation && r.result !== 'MANUAL_REVIEW'))) {
@@ -1887,6 +1925,7 @@ router.post('/tasks/:id/checklist', (req, res) => {
       if (req.body.finish_gps && gpsCreated === 0) {
         const r = validateGps(t, req.body.finish_gps, {
           execId: null, itemId: null, notes: 'Finishing-place GPS vs installed device location',
+          validatedBy: req.user.person_id || null,
         });
         if (r && r.created) gpsCreated += 1;
         if (r && r.result === 'FAIL') gpsFailed = true;
@@ -1954,7 +1993,7 @@ function deviceTarget(t) {
 // and ALWAYS persist a gps_validation row so a violation can never be missed.
 // Returns {created, result, violation, distance, vid} or null if the measured
 // position was unusable.
-function validateGps(t, pos, { execId, itemId, notes } = {}) {
+function validateGps(t, pos, { execId, itemId, notes, validatedBy = null } = {}) {
   if (!pos || pos.lat === undefined || pos.lng === undefined) return null;
   const target = deviceTarget(t);
   const now = new Date().toISOString();
@@ -2014,7 +2053,7 @@ function validateGps(t, pos, { execId, itemId, notes } = {}) {
     geofence_id: ev?.geofenceId ?? null,
     review_status: violation || result !== 'PASS' ? 'OPEN' : 'NOT_REQUIRED',
     validation_method: 'APP_CAPTURE',
-    validated_by: t.crew_id,
+    validated_by: validatedBy,
     validated_at: now,
     linked_task_id: t.id,
     notes: notes || `GPS confirmation for task ${t.task_number}`,

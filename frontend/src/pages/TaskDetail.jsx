@@ -104,7 +104,7 @@ export default function TaskDetail() {
 
   useEffect(() => {
     if (!task) return;
-    setEditCrewId(task.crew_id || '');
+    setEditCrewId(task.crew_id ? String(task.crew_id) : '');
     setEditChecklistIds((task.checklist_templates || []).map((x) => x.id));
   }, [task?.crew_id, task?.checklist_templates, task]);
 
@@ -497,7 +497,7 @@ export default function TaskDetail() {
             <span className="k">Priority</span><span style={{ fontWeight: 700 }}>{t.priority}</span>
             <span className="k">Status</span><span><Pill value={t.status} /></span>
             <span className="k">Source</span><span>{t.source}</span>
-            <span className="k">Target</span><span>{t.tower ? `${t.tower.tower_id} (Tower)` : t.asset?.name || t.substation?.name || t.line?.name || '—'}</span>
+            <span className="k">Target</span><span>{t.asset?.name || (t.tower ? `${t.tower.tower_id} (Tower)` : t.substation?.name || t.line?.name || '—')}</span>
             <span className="k">Region</span><span>{t.region?.name}</span>
             <span className="k">Crew</span><span>{t.crew?.name || '—'}</span>
             <span className="k">Checklist</span><span>{(t.checklist_templates?.length ? t.checklist_templates : (t.checklist_template ? [t.checklist_template] : [])).map((x) => x.name).join(', ') || '—'}</span>

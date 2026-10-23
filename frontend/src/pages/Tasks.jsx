@@ -103,6 +103,7 @@ export default function Tasks() {
     return api.get(`/tasks${q.length ? '?' + q.join('&') : ''}`).then(setRows).catch((e) => setError(e.message));
   };
   const loadKpi = () => api.get('/tasks/kpi').then(setKpi).catch(() => {});
+  const reload = () => { load(); loadKpi(); };
   useEffect(() => {
     load();
     loadKpi();
@@ -145,7 +146,7 @@ export default function Tasks() {
       const created = await api.post('/tasks', { ...form, due_date: new Date(form.due_date).toISOString() });
       setForm(null);
       setDispatchNote(noteFor(created, created.dispatch));
-      load();
+      reload();
     } catch (e) { setError(e.message); }
   }
 
@@ -185,7 +186,7 @@ export default function Tasks() {
         await api.post('/tasks/bulk', { ids: checked, action: bulkMode, value: new Date(bulkVal).toISOString() });
       }
       setChecked([]); setBulkMode(false); setBulkVal('');
-      load();
+      reload();
     } catch (e) { setBulkErr(e.message); }
   }
 
@@ -193,7 +194,7 @@ export default function Tasks() {
     try {
       const res = await api.post(`/tasks/${id}/state`, { action, ...extra });
       if (action === 'assign') setDispatchNote(noteFor(res, res.dispatch));
-      load();
+      reload();
     } catch (e) { setError(e.message); }
   }
 
@@ -324,7 +325,7 @@ export default function Tasks() {
                     <td style={{ color: STATUS_COLORS[t.priority] || undefined, fontWeight: 600 }}>{t.priority}</td>
                     <td><Pill value={t.status} /></td>
                     <td><Progress pct={t.progress_pct} graded={t.progress_graded} passed={t.progress_passed} /></td>
-                    <td>{t.tower ? `${t.tower.tower_id} (Tower)` : t.asset ? t.asset.name : t.substation ? t.substation.name : t.line ? t.line.name : '—'}</td>
+                    <td>{t.asset ? t.asset.name : t.tower ? `${t.tower.tower_id} (Tower)` : t.substation ? t.substation.name : t.line ? t.line.name : '—'}</td>
                     <td className={overdue ? 'overdue' : undefined}>{fmtDate(t.due_date)}</td>
                     <td>{t.crew?.name || '—'}</td>
                     <td className="td-actions">{nextAction(t)}</td>
@@ -362,12 +363,20 @@ export default function Tasks() {
               </SearchSelect></div>
             <div className="field"><label>Due date</label><input type="datetime-local" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} /></div>
             <div className="field"><label>Target substation</label>
-              <SearchSelect value={form.substation_id || ''} onChange={(e) => setForm({ ...form, substation_id: e.target.value ? Number(e.target.value) : null })}>
+              <SearchSelect value={form.substation_id || ''} onChange={(e) => setForm({
+                ...form,
+                substation_id: e.target.value ? Number(e.target.value) : null,
+                line_id: null, tower_id: null, tower_from_id: null, tower_to_id: null, asset_id: null,
+              })}>
                 <option value="">— none —</option>
                 {formSubs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </SearchSelect></div>
             <div className="field"><label>Target line</label>
-              <SearchSelect value={form.line_id || ''} onChange={(e) => setForm({ ...form, line_id: e.target.value ? Number(e.target.value) : null, tower_id: null })}>
+              <SearchSelect value={form.line_id || ''} onChange={(e) => setForm({
+                ...form,
+                line_id: e.target.value ? Number(e.target.value) : null,
+                substation_id: null, tower_id: null, tower_from_id: null, tower_to_id: null, asset_id: null,
+              })}>
                 <option value="">— none —</option>
                 {formLines.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
               </SearchSelect></div>
@@ -375,7 +384,7 @@ export default function Tasks() {
               <SearchSelect value={form.tower_id || ''} onChange={(e) => {
                 const tid = e.target.value ? Number(e.target.value) : null;
                 const tw = towers.find((x) => x.id === tid);
-                setForm({ ...form, tower_id: tid, tower_from_id: null, tower_to_id: null, line_id: tw ? tw.line_id : form.line_id });
+                setForm({ ...form, tower_id: tid, tower_from_id: null, tower_to_id: null, substation_id: null, asset_id: null, line_id: tw ? tw.line_id : form.line_id });
               }}>
                 <option value="">— none —</option>
                 {(formTowers).map((tw) => (
@@ -386,7 +395,7 @@ export default function Tasks() {
               <SearchSelect value={form.tower_from_id || ''} onChange={(e) => {
                 const id = e.target.value ? Number(e.target.value) : null;
                 const tw = towers.find((x) => x.id === id);
-                setForm({ ...form, tower_from_id: id, tower_id: null, line_id: tw ? tw.line_id : form.line_id });
+                setForm({ ...form, tower_from_id: id, tower_id: null, substation_id: null, asset_id: null, line_id: tw ? tw.line_id : form.line_id });
               }}>
                 <option value="">— none —</option>
                 {(formLineTowers).map((tw) => (
@@ -397,7 +406,7 @@ export default function Tasks() {
               <SearchSelect value={form.tower_to_id || ''} onChange={(e) => {
                 const id = e.target.value ? Number(e.target.value) : null;
                 const tw = towers.find((x) => x.id === id);
-                setForm({ ...form, tower_to_id: id, tower_id: null, line_id: tw ? tw.line_id : form.line_id });
+                setForm({ ...form, tower_to_id: id, tower_id: null, substation_id: null, asset_id: null, line_id: tw ? tw.line_id : form.line_id });
               }}>
                 <option value="">— none —</option>
                 {(formLineTowers).map((tw) => (
@@ -412,6 +421,7 @@ export default function Tasks() {
                 setForm({
                   ...form,
                   asset_id: aid,
+                  substation_id: null, line_id: null, tower_id: null, tower_from_id: null, tower_to_id: null,
                   crew_id: asset?.default_crew_id ? asset.default_crew_id : form.crew_id,
                 });
               }}>
