@@ -15,7 +15,7 @@
 - Login required. Descriptions on every catalog/related row. `can_open` / deny banner unchanged except related tasks: `can(req, 'task:read') && taskVisible(req.user, task)`.
 - No `summary` string from the server. Client builds it. Missing `summary` key = empty.
 - Caps: 8 keyword hits expanded per entity type; 25 related per parent per named neighbor kind; keep 40 per tag group after sort; show 12.
-- Sort then cap: keyword (rank desc, id desc) then related (id desc).
+- Sort then cap: keyword (`rank` desc, then id desc; missing `rank` = 0) then related (id desc). Catalog keyword hits carry `rank` from `searchGroup`.
 - `list('task')` once per request. No per-row SQL.
 - Stage explicit paths. Commit style `type(scope): summary` + `Co-authored-by: monkeycode-ai <monkeycode-ai@chaitin.com>`.
 
@@ -54,13 +54,20 @@
 ### Task 1.3: Caps and sort
 
 - [ ] RED: 50 related rows same tag, ids 1..50 → after `finalizeGroups`, `total === 40`, `items.length === 12`, items are the 12 highest ids (related sort is id desc). A parent with 30 towers contributes 25.
-- [ ] GREEN: `PER_KIND = 25`, `GROUP_KEEP = 40`, `GROUP_SHOW = 12`. Finalize: sort keyword-first then id desc, slice 40, items slice 12.
+- [ ] RED: three keyword hits (rank 1 / id 2, rank 2 / id 1, rank 3 / id 3) plus a related row → order is rank 1, rank 2, rank 3, then related. Keyword sort is **rank desc, then id desc**, not id desc alone.
+- [ ] GREEN: `PER_KIND = 25`, `GROUP_KEEP = 40`, `GROUP_SHOW = 12`. Finalize: keyword (`rank` desc, id desc) then related (id desc), slice 40, items slice 12.
 
 ### Task 1.4: Neighbor walks (in-memory maps)
 
 - [ ] RED with fixture maps (no DB): substation hit expands yard transformer, endpoint line, that line’s tower, tower-mounted asset (`tower_id`), task with `substation_id`, LINE-scope schedule with `line_id`, TOWER-scope schedule (tower **and** line related from a schedule keyword hit).
+- [ ] RED: substation hit also includes a **task on a related line** and a **schedule on a related line**, both with `via = [line title]`.
+- [ ] RED: asset with both `substation_id = S` and `line_id = L` (L attached to S) is one row, `via = [substation title, line title]`.
 - [ ] RED: line keyword hit includes `asset.tower_id` on that line and `task.tower_id` on that line; does **not** include a transformer that only has `substation_id` of an endpoint.
 - [ ] RED: group-scope schedule (`ASSET_GROUP`) with stored `line_id = L` relates to line L.
+- [ ] RED: group-scope schedule with **both** `line_id` and `substation_id` stored, as a **schedule keyword hit**, produces two related rows (line and substation), `via = schedule title`, order tower → asset → line → substation → region (skip nulls).
+- [ ] RED: region keyword hit expands substations and lines in that region **and** a `scope_type = REGION` schedule with matching `region_id`. Does not pull yard transformers of those substations.
+- [ ] RED: asset keyword hit → parent substation (or line), tasks targeting it, schedules targeting it, `via = asset title`.
+- [ ] RED: tower keyword hit → parent line, tower-mounted assets, tasks/schedules targeting the tower (`via = tower title`), and a task on the tower’s **line** with `via = line title`.
 - [ ] GREEN: `expand({ hits, maps, canOpen })` walking types in order region → substation → line → tower → asset → schedule. Named kinds per spec §6.1. `via` rules per spec (line title for line-hopped rows; line title for line-targeted tasks from a tower hit).
 - [ ] `canOpen(entityType, row)` injected so tests can stub taskVisible.
 
@@ -84,7 +91,7 @@ Extend `backend/test/searchPublic.test.js` (existing fixtures: Sululta region/su
 - [ ] RED: payload never includes `SECRET-SERIAL`, `HiddenCo`, `condition_rating`.
 - [ ] RED: crew member related schedule `can_open: false`, no `href`.
 - [ ] RED: existing `g.type === 'asset'` lookups updated to `g.entity === 'asset'` or slug `transformer` (this will fail until route emits `entity`).
-- [ ] RED: related task outside region user’s command scope is present with `can_open: false` and no `href` (insert a task on Sululta visible to admin, assert region-director of **other** region if needed — or use crew vs a task in another region). Prefer: regionToken searching a catalog name that relates to `TK-SEARCH-2` (other region) must not open it.
+- [ ] RED: related task **outside** the region user’s command scope. Fixture: insert task `TK-OTHER-REL` with `region_id = otherRegion` **and** `substation_id` of a Sululta substation (or a line in Sululta) so catalog search `sululta` relates it, while `regionToken` (Sululta director) is not `taskVisible` on it. Assert the item is present, `can_open: false`, no `href`. Then `GET /api/tasks/{id}` with `regionToken` returns 404. Do not use `TK-SEARCH-2` unless it also has a Sululta FK; the existing other-region task has no Sululta target.
 - [ ] Existing AND / token / six-type tests still pass once `entity` is added (update six-type test: keyword **entity** types remain the six; related may add `task`).
 
 Run the file, confirm new asserts fail.
@@ -110,16 +117,17 @@ Run: `cd /workspace/backend && node --test test/searchPublic.test.js test/search
 ### Task 3.1: Merge helper tests
 
 - [ ] RED: `frontend/src/mergeSearchResults.test.js`
-  - related catalog task + scoped keyword task → one row, `match: 'keyword'`, no `via`.
+  - related catalog task + scoped keyword task → one row, `match: 'keyword'`, no `via`; **keeps catalog `tag` and `description`**; takes scoped `title` / `href` / `document_type`.
   - person-only scoped groups, empty catalog → counts/summary inputs non-empty.
   - scoped keyword asset not in catalog top 8 → appended as keyword.
+  - catalog keyword rows in rank order (id 2 rank 9, id 1 rank 3) + one unrelated scoped person → catalog order survives (id 2 then id 1), scoped row after them.
   - `buildSearchSummary(query, counts, t)` with unknown slug `capacitor_bank` → “capacitor bank” / “capacitor banks”; `total === 0` → `''`.
 - [ ] Run `cd /workspace/frontend && npx vitest run src/mergeSearchResults.test.js` — fail.
 
 ### Task 3.2: Implement merge + summary
 
-- [ ] GREEN: `mergeSearchResults(catalog, scoped)` per spec §4.1. Key by `item.type`+`id`. Walk **all** scoped groups. Cap 40 after sort, show 12. `buildSearchSummary` uses `t('searchTag.'+slug)` / plural keys; unknown slug = display tag lowercased + `s`.
-- [ ] Export `tagSlugFromItem` consistent with backend (asset_type title-case). For scoped items without `tag`, derive from `item.type` / `asset_type` if present, else entity type.
+- [ ] GREEN: `mergeSearchResults(catalog, scoped)` per spec §4.1. Key by `item.type`+`id`. Walk **all** scoped groups. On upgrade: keep catalog `tag` / `description` / `type` / `rank`; take scoped `title` / `subtitle` / `href` / `can_open` / `document_type`. Sort keyword by `rank` desc then `id` desc (missing `rank` = 0), then related by id desc. Cap 40 after that sort, show 12. `buildSearchSummary` maps slug → flat key (`region` → `searchTagRegion`, `circuit_breaker` → `searchTagCircuitBreaker`); unknown slug = display tag lowercased + `s`.
+- [ ] Export `tagSlugFromItem` consistent with backend (asset_type title-case). For scoped items without `tag`, derive from `item.type` / `asset_type` if present, else entity type. Preserve `document_type` so `GlobalSearch.choose` still opens ASSET_DETAIL / LINE_DETAIL / CREW_DETAIL.
 
 ### Task 3.3: i18n keys
 
@@ -139,8 +147,8 @@ Run: `cd /workspace/frontend && npx vitest run src/i18n.test.js src/mergeSearchR
 
 - [ ] `GlobalSearch.jsx` uses `mergeSearchResults` on the two responses. Summary from `buildSearchSummary(query, counts, t)` only when `total > 0`.
 - [ ] Each row: tag chip (`item.tag`), title, description; related: `{t('searchVia')} {via.join(', ')}`.
-- [ ] `choose` still respects `can_open === false` → deny banner.
-- [ ] Treat missing server `summary` as empty (do not render it).
+- [ ] `choose` still respects `can_open === false` → deny banner. `document_type` still opens the document modal before `href`.
+- [ ] Treat missing server `summary` as empty (do not render it). Never interpolate a missing field as `"undefined"`.
 
 ### Task 4.2: CSS
 
@@ -156,8 +164,8 @@ Run: `cd /workspace/frontend && npx vitest run src/i18n.test.js src/mergeSearchR
 
 - [ ] `cd /workspace/backend && npm test`
 - [ ] `cd /workspace/frontend && npm run build && npm test`
-- [ ] Restart backend `PORT=3001` if it was running; smoke `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3001/api/search/public?q=sululta` → 401.
-- [ ] Commit explicit paths only, then push `260928-feat-mailbox-reports-schedules`.
+- [ ] Restart backend `PORT=3001` if it was running. Unauthenticated `GET /api/search/public?q=sululta` → 401. Authenticated admin `GET /api/search/public?q=sululta` → 200, body has `counts` and `groups`, no `summary` key.
+- [ ] Commit explicit paths only, then push the current branch (`260928-feat-mailbox-reports-schedules`). Do not rename it.
 
 Suggested commit:
 

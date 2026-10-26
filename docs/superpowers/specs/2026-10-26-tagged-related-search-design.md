@@ -43,9 +43,9 @@ Inputs: `catalog` from `/search/public`, `scoped` from `/search`.
 2. Walk **all** `scoped.groups` items (person, crew, task, **and** asset/line/substation/tower/region/schedule).
 3. For each scoped item:
    - If no catalog row with that `type`+`id`: append as `match: "keyword"`, no `via`.
-   - If a catalog row exists with `match: "related"`: **upgrade** it to the scoped keyword item (`match: "keyword"`, drop `via`, keep scoped title/subtitle/href/`document_type`). Keyword always wins.
-   - If a catalog row exists with `match: "keyword"`: keep the catalog row.
-4. Re-group by display tag. Sort each group: keyword first (id desc; scoped items have no rank field, so id desc only), then related by id desc. Keep the first **40**, then slice `items` to 12. Group `total` is `min(mergedSize, 40)`.
+   - If a catalog row exists with `match: "related"`: **upgrade** — `match: "keyword"`, drop `via`; **keep catalog** `tag`, `description`, `type`, and `rank` if present; **take scoped** `title`, `subtitle`, `href`, `can_open`, `document_type`. Keyword always wins. `document_type` is how `GlobalSearch.choose` opens ASSET_DETAIL / LINE_DETAIL / CREW_DETAIL modals.
+   - If a catalog row exists with `match: "keyword"`: keep the catalog row (order/rank unchanged).
+4. Re-group by display tag. Sort each group: keyword first by `rank` desc then `id` desc (`rank` missing counts as 0, so scoped-only keyword rows sit after catalog keyword rows), then related by id desc. Keep the first **40**, then slice `items` to 12. Group `total` is `min(mergedSize, 40)`. Catalog keyword rank order therefore survives a merge that also appends scoped rows.
 5. Build `counts` from those capped group totals. Build `summary` in the client from `counts` + `query` (see §8.1). `total` is the sum of those group totals. If merged `total === 0`, do not render a summary (treat a missing `summary` key from the server the same as empty; never print `"undefined"`).
 
 A person/crew/task-only query therefore still gets a non-empty summary, even though `/search/public` returned empty groups. A keyword asset ranked 9th on `/search/public` but returned by `/search` still appears as a keyword row.
@@ -78,15 +78,17 @@ Walk keyword hits in this type order: region, substation, line, tower, asset, sc
 
 | Keyword hit | Related records (immediate parents in `via`) |
 | --- | --- |
-| Region | Substations with `region_id`; lines with `region_id`. `via` = region title. |
+| Region | Neighbor kinds (25 each): **substations** (`region_id`); **lines** (`region_id`); **schedules** with `scope_type = REGION` and `region_id`, or a group-scope row whose stored `region_id` equals the hit. `via` = region title. Region hits do **not** fan out to every substation’s assets. |
 | Substation | Neighbor kinds, each capped at 25 per parent (§7.2): **yard_assets** = assets with `substation_id`; **lines** = lines with `from_substation_id` or `to_substation_id`; **line_towers** = towers on those lines; **line_assets** = assets with `line_id` on those lines **or** `tower_id` in those lines’ towers (a second kind, not shared with yard_assets); **tasks**; **schedules**. Tasks/schedules that target the substation, those lines, those towers, **or** a group-scope row whose stored FK equals that substation/line/tower (§6.3). `via`: yard_assets, lines, and substation-targeted tasks/schedules use the **substation title**. line_towers, line_assets, and line/tower-targeted tasks/schedules use the **line title**. |
 | Line | Neighbor kinds (25 each): **towers**; **assets** (`asset.line_id` **or** `asset.tower_id` in that line’s towers); **substations** (from/to); **tasks**; **schedules**. Tasks/schedules that target the line, a tower on the line, or a group-scope row whose stored FK equals that line/tower. `via` = line title. |
 | Tower | Neighbor kinds (25 each): **line** (parent, at most one); **assets** (`tower_id`); **tasks**; **schedules**. Tasks/schedules that target that tower use `via` = tower title. Tasks/schedules that target the tower’s **line** (not the tower itself) use `via` = **line title**, so a later line-hit of the same task dedupes without a misleading tower parent. |
 | Asset | Neighbor kinds (25 each): **parent** (substation via `substation_id`, else line via `line_id` or the line of `tower_id`); **tasks**; **schedules** that target that asset. `via` = asset title. |
-| Schedule | Direct stored target(s) only (§6.3). Do not fan out from those targets. A `TOWER` scope keyword hit produces **two** related rows: the tower and its derived line, both with `via` = schedule title. Other scopes produce at most one related row from the matching stored FK. |
+| Schedule | Direct stored target(s) only (§6.3). Do not fan out from those targets. A `TOWER` scope keyword hit produces **two** related rows: the tower and its derived line, both with `via` = schedule title. Any other scope emits **one related row per stored FK that is set** (tower, asset, line, substation, region — that order, skip nulls), each with `via` = schedule title. A group-scope row with both `line_id` and `substation_id` therefore produces two related rows. |
 | Task | Not expanded on `/search/public`. Keyword-hit tasks arrive from `/search` via client merge and do not fan out. |
 
 Do not walk from a related record except where the substation row above already includes “those lines’ towers and assets” (approved one hop further for a substation hit). A **line keyword hit** does not pull transformers out of its endpoint substations.
+
+An asset that qualifies as both a substation `yard_assets` and `line_assets` is **one** deduped row. `via` lists both parents in first-seen order: substation title then line title (yard_assets is walked before line_assets).
 
 ### 6.2 Task targeting
 
@@ -219,6 +221,7 @@ Item fields:
 - `description` always present on catalog and related infra/task/schedule rows.
 - `can_open` from `OPEN_PERM` (region/substation/line/tower/asset/schedule) or, for tasks, `can(req, 'task:read') && taskVisible(req.user, task)` (§6.2). False → omit `href`.
 - `match` is `"keyword"` or `"related"`.
+- `rank` on keyword items from `/search/public` (the `searchGroup` score). Omitted on related rows. Client merge uses it; UI does not display it.
 - `via` only on related rows: array of parent titles.
 
 No serial numbers, manufacturer, model, condition, GPS, people, assignees, comments, or schedule instructions on catalog/related rows.
@@ -237,6 +240,8 @@ Required i18n keys (all four locales):
 - Common equipment: `searchTag.transformer` / `searchTag.transformers`, `searchTag.circuit_breaker` / `searchTag.circuit_breakers`, `searchTag.reactor` / `searchTag.reactors`, `searchTag.auto_transformer` / `searchTag.auto_transformers`
 
 Unknown asset slugs: use the display tag lowercased for singular and that string + `s` for plural (`circuit breaker` → `circuit breakers`). Count order matches §8.
+
+`t()` is a flat lookup. Repo keys are `searchTagRegion`, `searchTagRegions`, `searchTagCircuitBreaker`, … — slug `circuit_breaker` maps to `searchTagCircuitBreaker`. Logical names `searchTag.<slug>` in this spec mean those flat keys.
 
 Do not render a summary when merged `total === 0`.
 
