@@ -317,9 +317,12 @@ function Shell() {
               <Menu {...ICON} />
             </button>
             <GlobalSearch />
-            <Tooltip label="Search · Ctrl K">
-              <button type="button" className="theme-toggle" onClick={() => setCmdOpen(true)} aria-label="Open command palette">
-                <SearchIcon size={17} strokeWidth={1.9} />
+            <span className="shell-search-divider" aria-hidden="true" />
+            <Tooltip label={t('searchQuickJumpHint')}>
+              <button type="button" className="quick-jump-btn" onClick={() => setCmdOpen(true)} aria-label={t('searchQuickJump')}>
+                <SearchIcon size={16} strokeWidth={2} />
+                <span className="quick-jump-label">{t('searchQuickJump')}</span>
+                <kbd className="quick-jump-kbd">Ctrl K</kbd>
               </button>
             </Tooltip>
             <ThemeToggle />

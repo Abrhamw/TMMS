@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Search } from 'lucide-react';
 import { api } from '../api';
 import { Modal, ErrorNote } from '../components';
 import DocumentReport from './DocumentReport';
@@ -94,16 +95,19 @@ export default function GlobalSearch() {
   let rowIndex = -1;
   return (
     <div className="global-search" ref={rootRef}>
-      <input
-        className="global-search-input"
-        type="search"
-        value={q}
-        onChange={(e) => { setQ(e.target.value); setOpen(true); setActive(-1); }}
-        onFocus={() => setOpen(true)}
-        onKeyDown={onKey}
-        placeholder={t('searchPlaceholder')}
-        aria-label={t('search')}
-      />
+      <label className="global-search-field">
+        <Search size={15} strokeWidth={2} className="global-search-icon" aria-hidden="true" />
+        <input
+          className="global-search-input"
+          type="search"
+          value={q}
+          onChange={(e) => { setQ(e.target.value); setOpen(true); setActive(-1); }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={onKey}
+          placeholder={t('searchRecordsPlaceholder')}
+          aria-label={t('searchRecordsLabel')}
+        />
+      </label>
       {showPanel && (
         <div className="global-search-panel">
           {loading && <div className="gs-note">{t('search')}…</div>}
