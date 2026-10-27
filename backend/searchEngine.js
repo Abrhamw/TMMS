@@ -55,7 +55,7 @@ function searchGroup({ type, label, rows, tokens, limit, titleFields, extraField
     type,
     label,
     total: scored.length,
-    items: scored.slice(0, limit).map((x) => x.item),
+    items: scored.slice(0, limit).map((x) => ({ ...x.item, rank: x.score })),
   };
 }
 

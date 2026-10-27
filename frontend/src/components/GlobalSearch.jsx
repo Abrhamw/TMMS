@@ -4,6 +4,7 @@ import { api } from '../api';
 import { Modal, ErrorNote } from '../components';
 import DocumentReport from './DocumentReport';
 import { t } from '../i18n';
+import { mergeSearchResults, buildSearchSummary } from '../mergeSearchResults';
 
 // Global, always-available backend search. Results are grouped by entity and
 // scoped server-side; selecting a result navigates to its page, opens its
@@ -39,11 +40,7 @@ export default function GlobalSearch() {
       ])
         .then(([catalog, scoped]) => {
           if (my !== seqRef.current) return;
-          const catalogTypes = new Set(['region', 'substation', 'line', 'tower', 'asset', 'schedule']);
-          const extra = (scoped.groups || []).filter((g) => !catalogTypes.has(g.type));
-          const groups = [...(catalog.groups || []), ...extra];
-          const total = groups.reduce((n, g) => n + (g.total || 0), 0);
-          setResults({ query: catalog.query || term, total, groups });
+          setResults(mergeSearchResults(catalog, scoped));
           setErr(null);
         })
         .catch((e) => { if (my === seqRef.current) setErr(e.message); })
@@ -91,6 +88,9 @@ export default function GlobalSearch() {
   }
 
   const showPanel = open && !!q.trim();
+  const summary = results && results.total > 0
+    ? buildSearchSummary(results.query || q.trim(), results.counts, t)
+    : '';
   let rowIndex = -1;
   return (
     <div className="global-search" ref={rootRef}>
@@ -118,6 +118,7 @@ export default function GlobalSearch() {
               </div>
             </div>
           )}
+          {summary && <div className="gs-summary">{summary}</div>}
           {!loading && results && results.groups.map((g) => (
             <div className="gs-group" key={g.type}>
               <div className="gs-group-label">{g.label}<span className="muted">{g.total}</span></div>
@@ -133,8 +134,14 @@ export default function GlobalSearch() {
                     onMouseEnter={() => setActive(i)}
                     onClick={() => choose(it)}
                   >
-                    <span className="gs-item-title">{it.title}</span>
+                    <span className="gs-item-head">
+                      {it.tag && <span className="gs-tag">{it.tag}</span>}
+                      <span className="gs-item-title">{it.title}</span>
+                    </span>
                     {(it.description || it.subtitle) && <span className="gs-item-desc">{it.description || it.subtitle}</span>}
+                    {it.match === 'related' && it.via && it.via.length > 0 && (
+                      <span className="gs-item-via">{t('searchVia')} {it.via.join(', ')}</span>
+                    )}
                     {locked && <span className="gs-item-sub">{t('searchViewOnly')}</span>}
                   </button>
                 );
