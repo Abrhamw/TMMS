@@ -35,6 +35,7 @@ const Reports = lazy(() => import('./pages/Reports'));
 const Infrastructure = lazy(() => import('./pages/Infrastructure'));
 const Value = lazy(() => import('./pages/Value'));
 const Mailbox = lazy(() => import('./pages/Mailbox'));
+const SearchResults = lazy(() => import('./pages/SearchResults'));
 const ExecutiveSummary = lazy(() => import('./pages/ExecutiveSummary'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Organization = lazy(() => import('./pages/Organization'));
@@ -474,6 +475,7 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route element={<RequireAuth><Shell /></RequireAuth>}>
           <Route path="/home" element={<Home />} />
+          <Route path="/search" element={<Suspend><SearchResults /></Suspend>} />
           <Route path="/mailbox" element={<Suspend><Mailbox /></Suspend>} />
           <Route path="/executive" element={<RequireExecutive><Suspend><ExecutiveSummary /></Suspend></RequireExecutive>} />
           <Route path="/dashboard" element={<RequirePerm perm="dashboard:read"><Suspend><Dashboard /></Suspend></RequirePerm>} />
