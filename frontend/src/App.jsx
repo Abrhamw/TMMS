@@ -376,6 +376,7 @@ const ICON = { size: 17, strokeWidth: 1.9 };
 
 function navIcon(type) {
   if (type === 'mailbox') return <Mail {...ICON} />;
+  if (type === 'search') return <SearchIcon {...ICON} />;
   if (type === 'myDay') return <ClipboardList {...ICON} />;
   if (type === 'dashboard') return <LayoutDashboard {...ICON} />;
   if (type === 'assets') return <Boxes {...ICON} />;
@@ -391,6 +392,7 @@ function buildNav(isCrew, isExecutive, isAdmin) {
     return [
       { group: 'overviewGroup', items: [
         { to: '/home', key: 'home', icon: navIcon('home') },
+        { to: '/search', key: 'searchNav', icon: navIcon('search') },
         { to: '/mailbox', key: 'mailbox', icon: navIcon('mailbox') },
       ]},
       { group: 'workspaceGroup', items: [
@@ -405,6 +407,7 @@ function buildNav(isCrew, isExecutive, isAdmin) {
   const nav = [
     { group: 'overviewGroup', items: [
       { to: '/home', key: isCrew ? 'myDay' : 'home', icon: navIcon(isCrew ? 'myDay' : 'home') },
+      { to: '/search', key: 'searchNav', icon: navIcon('search') },
       { to: '/mailbox', key: 'mailbox', icon: navIcon('mailbox') },
     ]},
     { group: 'workspaceGroup', items: [

@@ -119,6 +119,7 @@ export default function SearchResults() {
             active={active}
             onActive={setActive}
             onChoose={choose}
+            showOpenAction
           />
         </div>
       </div>

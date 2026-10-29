@@ -90,7 +90,7 @@ export function DeniedNotice({ item }) {
   );
 }
 
-export function RecordResultGroups({ results, summary, active = -1, onActive, onChoose }) {
+export function RecordResultGroups({ results, summary, active = -1, onActive, onChoose, showOpenAction = false }) {
   if (!results) return null;
   let rowIndex = -1;
   return (
@@ -122,6 +122,12 @@ export function RecordResultGroups({ results, summary, active = -1, onActive, on
                   <span className="gs-item-via">{t('searchVia')} {it.via.join(', ')}</span>
                 )}
                 {locked && <span className="gs-item-sub">{t('searchViewOnly')}</span>}
+                {showOpenAction && (
+                  <span className="gs-open-hint">
+                    {locked ? t('searchViewOnlyShort') : t('searchViewRecord')}
+                    {!locked && ' →'}
+                  </span>
+                )}
               </button>
             );
           })}
