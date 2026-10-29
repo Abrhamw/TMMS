@@ -14,6 +14,7 @@ import {
 export default function GlobalSearch() {
   const nav = useNavigate();
   const rootRef = useRef(null);
+  const kbdRef = useRef(false);
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
@@ -55,9 +56,13 @@ export default function GlobalSearch() {
   }
 
   function onKey(e) {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setActive((a) => Math.min(a + 1, flat.length - 1)); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(a - 1, -1)); }
-    else if (e.key === 'Enter') { e.preventDefault(); if (active >= 0) choose(flat[active]); else viewAll(); }
+    if (e.key === 'ArrowDown') { e.preventDefault(); kbdRef.current = true; setOpen(true); setActive((a) => Math.min(a + 1, flat.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); kbdRef.current = true; setActive((a) => Math.max(a - 1, -1)); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (kbdRef.current && active >= 0) choose(flat[active]);
+      else viewAll();
+    }
     else if (e.key === 'Escape') { setOpen(false); setActive(-1); }
   }
 
@@ -73,8 +78,8 @@ export default function GlobalSearch() {
           className="global-search-input"
           type="search"
           value={q}
-          onChange={(e) => { setQ(e.target.value); setOpen(true); setActive(-1); }}
-          onFocus={() => setOpen(true)}
+          onChange={(e) => { kbdRef.current = false; setQ(e.target.value); setOpen(true); setActive(-1); }}
+          onFocus={() => { kbdRef.current = false; setOpen(true); }}
           onKeyDown={onKey}
           placeholder={t('searchRecordsPlaceholder')}
           aria-label={t('searchRecordsLabel')}
@@ -90,7 +95,7 @@ export default function GlobalSearch() {
             results={loading || err ? null : results}
             summary={summary}
             active={active}
-            onActive={setActive}
+            onActive={(i) => { kbdRef.current = false; setActive(i); }}
             onChoose={choose}
           />
           {!loading && !err && results && results.total > 0 && (

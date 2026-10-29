@@ -180,6 +180,7 @@ export default {
     searchViewAll: 'Ver todos los resultados',
     searchResultsTitle: 'Resultados de búsqueda',
     searchPrompt: 'Escriba un nombre para buscar registros y equipos relacionados.',
+    searchEnterHint: 'Use ↑ ↓ para seleccionar, Enter para abrir.',
     landingSearchTitle: 'Buscar en la red',
     landingSearchHint: 'Infraestructura, activos y programas públicos. Inicie sesión para abrir un resultado.',
     landingSearchPlaceholder: 'Pruebe sululta 230 transformer',

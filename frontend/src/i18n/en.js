@@ -190,6 +190,7 @@ export default {
     searchViewAll: 'View all results',
     searchResultsTitle: 'Search results',
     searchPrompt: 'Type a name to search records and related equipment.',
+    searchEnterHint: 'Use ↑ ↓ to select, Enter to open.',
     landingSearchTitle: 'Search the network',
     landingSearchHint: 'Public infrastructure, assets, and schedules. Sign in to open a result.',
     landingSearchPlaceholder: 'Try sululta 230 transformer',

@@ -107,7 +107,9 @@ export function RecordResultGroups({ results, summary, active = -1, onActive, on
               <button
                 key={`${it.type}-${it.id}`}
                 type="button"
+                data-idx={i}
                 className={'gs-item' + (i === active ? ' active' : '') + (locked ? ' locked' : '')}
+                aria-selected={i === active}
                 onMouseEnter={onActive ? () => onActive(i) : undefined}
                 onClick={() => onChoose(it)}
               >

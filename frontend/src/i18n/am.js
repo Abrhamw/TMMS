@@ -157,6 +157,7 @@ export default {
     searchViewAll: 'ሁሉንም ውጤቶች ይመልከቱ',
     searchResultsTitle: 'የፍለጋ ውጤቶች',
     searchPrompt: 'መዝገቦችንና ተያያዥ መሳሪያዎችን ለመፈለግ ስም ይጻፉ።',
+    searchEnterHint: 'ለመምረጥ ↑ ↓ ይጠቀሙ፣ ለመክፈት Enter።',
     landingSearchTitle: 'መረቡን ፈልግ',
     landingSearchHint: 'የህዝብ መሠረተ ልማት፣ ንብረት እና መርሐግብሮች። ውጤት ለመክፈት ይግቡ።',
     landingSearchPlaceholder: 'sululta 230 transformer ይሞክሩ',
