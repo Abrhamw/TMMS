@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardList, AlertTriangle, Clock, ChevronRight } from 'lucide-react';
+import { ClipboardList, AlertTriangle, Clock, ChevronRight, Search } from 'lucide-react';
 import { api, fmtDate, fmtDateTime } from '../api';
 import { Page, Pill, Loading, ErrorNote, SearchField, filterItems, useSearchFilter } from '../components';
 import { getStoredUser } from '../auth';
@@ -12,6 +12,30 @@ import { cn } from '../ui/cn';
 import { t } from '../i18n';
 
 const CRUMBS = 'TMMS / Home';
+
+function HomeSearchJump({ onGo }) {
+  const [q, setQ] = useState('');
+  function submit(e) {
+    e.preventDefault();
+    onGo(q.trim());
+  }
+  return (
+    <form className="home-search-jump" onSubmit={submit}>
+      <label className="global-search-field home-search-field">
+        <Search size={18} strokeWidth={2} className="global-search-icon" aria-hidden="true" />
+        <input
+          className="global-search-input"
+          type="search"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder={t('homeSearchPlaceholder')}
+          aria-label={t('searchRecordsLabel')}
+        />
+      </label>
+      <button type="submit" className="btn btn-primary">{t('searchNav')}</button>
+    </form>
+  );
+}
 
 export default function Home() {
   const nav = useNavigate();
@@ -118,6 +142,8 @@ export default function Home() {
             </div>
           </div>
 
+          <HomeSearchJump onGo={(q) => nav(q ? `/search?q=${encodeURIComponent(q)}` : '/search')} />
+
           {data.function && (
             <div className="card card-pad" style={{ marginBottom: 12 }}>
               <div className="spread" style={{ alignItems: 'center' }}>
@@ -192,6 +218,7 @@ const ACTION_LABEL = () => ({
 });
 
 function CrewMyDay({ data, me, onOpen }) {
+  const nav = useNavigate();
   const scope = data.scope.crew ? data.scope.crew.name : '';
   const actions = ACTION_LABEL();
   const { query, setQuery, results: inbox } = useSearchFilter(data.inbox);
@@ -211,6 +238,8 @@ function CrewMyDay({ data, me, onOpen }) {
         </div>
         <SyncStatus />
       </header>
+
+      <HomeSearchJump onGo={(q) => nav(q ? `/search?q=${encodeURIComponent(q)}` : '/search')} />
 
       <div className="grid grid-cols-3 gap-2">
         <StatChip icon={<ClipboardList size={15} />} label={t('openTasks')} value={openCount} />

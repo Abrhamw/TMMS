@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { tokenize, matches, rank, parseSearchQuery } = require('../searchEngine');
+const { tokenize, matches, rank, parseSearchQuery, rowMatchesIntent } = require('../searchEngine');
 
 test('tokenize lowercases, trims, and splits on whitespace', () => {
   assert.deepStrictEqual(tokenize('  Sululta   230  '), ['sululta', '230']);
@@ -12,16 +12,19 @@ test('tokenize returns an empty list for blank input', () => {
   assert.deepStrictEqual(tokenize(null), []);
 });
 
-test('tokenize caps the raw query at 80 characters before splitting', () => {
-  const raw = `${'alpha '.repeat(20)}omega`;
+test('tokenize caps the raw query at 200 characters before splitting', () => {
+  const raw = `${'alpha '.repeat(40)}omega`;
   const tokens = tokenize(raw);
-  assert.ok(tokens.length <= 8);
+  assert.ok(tokens.length <= 16);
   assert.ok(!tokens.includes('omega'));
 });
 
-test('tokenize keeps at most the first eight tokens', () => {
-  const tokens = tokenize('one two three four five six seven eight nine ten');
-  assert.deepStrictEqual(tokens, ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight']);
+test('tokenize keeps at most the first sixteen tokens', () => {
+  const tokens = tokenize('one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen');
+  assert.deepStrictEqual(tokens, [
+    'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight',
+    'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen',
+  ]);
 });
 
 test('matches requires every token to appear in at least one field', () => {
@@ -50,4 +53,54 @@ test('parseSearchQuery returns the capped raw string and its tokens', () => {
   const parsed = parseSearchQuery('  Sululta 230 Transformer  ');
   assert.strictEqual(parsed.raw, 'Sululta 230 Transformer');
   assert.deepStrictEqual(parsed.tokens, ['sululta', '230', 'transformer']);
+  assert.deepStrictEqual(parsed.intent.types, ['asset']);
+  assert.ok(parsed.intent.assetTypes.includes('TRANSFORMER'));
+});
+
+test('parseSearchQuery strips filler words from a statement', () => {
+  const parsed = parseSearchQuery('show me towers in Central 1');
+  assert.deepStrictEqual(parsed.tokens, ['towers', 'central', '1']);
+  assert.deepStrictEqual(parsed.intent.types, ['tower']);
+  assert.strictEqual(parsed.intent.mine, false);
+});
+
+test('parseSearchQuery treats tasks for me as personal work', () => {
+  const parsed = parseSearchQuery('tasks for me');
+  assert.deepStrictEqual(parsed.intent.types, ['task']);
+  assert.strictEqual(parsed.intent.mine, true);
+  assert.deepStrictEqual(parsed.tokens, ['tasks']);
+});
+
+test('parseSearchQuery treats my crews as personal', () => {
+  const parsed = parseSearchQuery('my crews');
+  assert.deepStrictEqual(parsed.intent.types, ['crew']);
+  assert.strictEqual(parsed.intent.mine, true);
+});
+
+test('parseSearchQuery reads overdue inspections with a relative date', () => {
+  const now = new Date('2026-11-06T12:00:00.000Z');
+  const parsed = parseSearchQuery('find failed inspections last week', now);
+  assert.deepStrictEqual(parsed.tokens, ['inspections']);
+  assert.ok(parsed.intent.types.includes('task'));
+  assert.deepStrictEqual(parsed.intent.taskTypes, ['INSPECTION']);
+  assert.deepStrictEqual(parsed.intent.statuses, ['FAILED']);
+  assert.ok(parsed.intent.dateFrom);
+  assert.ok(parsed.intent.dateTo);
+});
+
+test('parseSearchQuery treats overdue as open work past due', () => {
+  const parsed = parseSearchQuery('overdue tasks in sululta');
+  assert.deepStrictEqual(parsed.tokens, ['tasks', 'sululta']);
+  assert.deepStrictEqual(parsed.intent.types, ['task']);
+  assert.strictEqual(parsed.intent.overdue, true);
+});
+
+test('rowMatchesIntent filters overdue open tasks', () => {
+  const intent = parseSearchQuery('overdue').intent;
+  const openPast = { status: 'IN_PROGRESS', due_date: '2000-01-01T00:00:00.000Z' };
+  const donePast = { status: 'COMPLETED', due_date: '2000-01-01T00:00:00.000Z' };
+  const openFuture = { status: 'ASSIGNED', due_date: '2099-01-01T00:00:00.000Z' };
+  assert.strictEqual(rowMatchesIntent('task', openPast, intent), true);
+  assert.strictEqual(rowMatchesIntent('task', donePast, intent), false);
+  assert.strictEqual(rowMatchesIntent('task', openFuture, intent), false);
 });

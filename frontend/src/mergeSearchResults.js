@@ -23,7 +23,7 @@ const ENTITY_ORDER = {
 };
 
 const GROUP_KEEP = 40;
-const GROUP_SHOW = 12;
+const GROUP_SHOW = 25;
 
 function assetTag(assetType) {
   const words = String(assetType == null ? '' : assetType)

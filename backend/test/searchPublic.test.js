@@ -84,11 +84,26 @@ const regionUserId = insertRow('user', {
 });
 const regionToken = createSession(regionUserId);
 const crewPerson = insertRow('person', { first_name: 'Search', last_name: 'Crew', role: 'CREW_MEMBER', active: 1 });
+const crewId = insertRow('crew', {
+  name: 'Search Patrol Crew', crew_code: 'CR-SEARCH-1', crew_type: 'MAINTENANCE',
+  region_id: regionId, leader_person_id: crewPerson, status: 'AVAILABLE',
+});
+insertRow('crew_member', { crew_id: crewId, person_id: crewPerson, role: 'LINEMAN', skill_level: 'JUNIOR', active: 1 });
 const crewUserId = insertRow('user', {
   username: 'search-crew', password_hash: hashPassword('x'), role: 'CREW_MEMBER',
   region_id: regionId, person_id: crewPerson, active: 1, created_at: NOW,
 });
 const crewToken = createSession(crewUserId);
+const myTaskId = insertRow('task', {
+  task_number: 'TK-MINE-1', title: 'My assigned patrol', task_type: 'INSPECTION',
+  priority: 'MEDIUM', status: 'ASSIGNED', region_id: regionId, crew_id: crewId, due_date: NOW,
+  created_at: NOW, updated_at: NOW, source: 'MANUAL',
+});
+insertRow('task', {
+  task_number: 'TK-MINE-2', title: 'Someone else patrol', task_type: 'INSPECTION',
+  priority: 'MEDIUM', status: 'ASSIGNED', region_id: regionId, due_date: NOW,
+  created_at: NOW, updated_at: NOW, source: 'MANUAL',
+});
 
 const publicSearch = require('../routes/searchPublic');
 const authSearch = require('../routes/search');
@@ -196,6 +211,13 @@ test('catalog search matches an asset by parent substation name plus type', asyn
   assert.ok(assets.items.some((it) => /transformer/i.test(it.title)));
 });
 
+test('statement queries drop filler words and still match place names', async () => {
+  const { body } = await get('/api/search/public?q=show%20me%20towers%20in%20sululta', adminToken);
+  const towers = (body.groups || []).find((g) => g.type === 'tower' || g.entity === 'tower');
+  assert.ok(towers, JSON.stringify(body));
+  assert.ok(towers.items.some((it) => /TW-SUL/i.test(it.title) || /TW-SUL/i.test(it.subtitle || '')));
+});
+
 test('a crew member sees schedule descriptions but cannot open them', async () => {
   const { status, body } = await get('/api/search/public?q=sululta%20patrol', crewToken);
   assert.strictEqual(status, 200);
@@ -291,4 +313,18 @@ test('authenticated search AND-matches tasks the caller can see', async () => {
   assert.strictEqual(region.status, 200);
   const regionTasks = (region.body.groups || []).find((g) => g.type === 'task');
   assert.ok(!regionTasks);
+});
+
+test('tasks for me lists only work assigned to the signed-in account', async () => {
+  const mine = await get('/api/search?q=tasks%20for%20me', crewToken);
+  assert.strictEqual(mine.status, 200);
+  const tasks = (mine.body.groups || []).find((g) => g.type === 'task');
+  assert.ok(tasks, JSON.stringify(mine.body));
+  assert.ok(tasks.items.some((it) => it.id === myTaskId));
+  assert.ok(!tasks.items.some((it) => it.title.includes('Someone else')));
+  assert.ok(!tasks.items.some((it) => it.title.includes('Secret Sululta')));
+
+  const catalog = await get('/api/search/public?q=tasks%20for%20me', crewToken);
+  assert.strictEqual(catalog.status, 200);
+  assert.strictEqual(catalog.body.total, 0);
 });

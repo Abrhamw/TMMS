@@ -90,7 +90,7 @@ export function DeniedNotice({ item }) {
   );
 }
 
-export function RecordResultGroups({ results, summary, active = -1, onActive, onChoose, showOpenAction = false }) {
+export function RecordResultGroups({ results, summary, active = -1, onActive, onSelect, onChoose, showOpenAction = false }) {
   if (!results) return null;
   let rowIndex = -1;
   return (
@@ -111,7 +111,8 @@ export function RecordResultGroups({ results, summary, active = -1, onActive, on
                 className={'gs-item' + (i === active ? ' active' : '') + (locked ? ' locked' : '')}
                 aria-selected={i === active}
                 onMouseEnter={onActive ? () => onActive(i) : undefined}
-                onClick={() => onChoose(it)}
+                onClick={() => (onSelect ? onSelect(i, it) : onChoose(it))}
+                onDoubleClick={() => onChoose(it)}
               >
                 <span className="gs-item-head">
                   {it.tag && <span className="gs-tag">{it.tag}</span>}

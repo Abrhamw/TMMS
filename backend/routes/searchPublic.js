@@ -2,7 +2,7 @@ const express = require('express');
 const { list } = require('../util');
 const { can, requireAuth } = require('../auth');
 const { taskVisible } = require('../authority');
-const { parseSearchQuery, searchGroup } = require('../searchEngine');
+const { parseSearchQuery, searchGroup, hasSearchIntent, shouldSearchType } = require('../searchEngine');
 const {
   describe,
   createIndex,
@@ -35,8 +35,9 @@ function canOpenFor(req) {
 }
 
 router.get('/search/public', requireAuth, (req, res) => {
-  const { raw, tokens } = parseSearchQuery(req.query.q);
-  if (!tokens.length) return res.json({ query: '', counts: {}, total: 0, groups: [] });
+  const { raw, tokens, intent } = parseSearchQuery(req.query.q);
+  if (!tokens.length && !hasSearchIntent(intent)) return res.json({ query: '', counts: {}, total: 0, groups: [] });
+  if (intent.mine) return res.json({ query: raw, counts: {}, total: 0, groups: [] });
   const limit = Math.min(Math.max(Number(req.query.limit) || DEFAULT_LIMIT, 1), MAX_LIMIT);
 
   const regions = list('region');
@@ -87,6 +88,7 @@ router.get('/search/public', requireAuth, (req, res) => {
       rows,
       tokens,
       limit,
+      intent,
       titleFields,
       extraFields,
       toItem: (row) => {
@@ -109,35 +111,36 @@ router.get('/search/public', requireAuth, (req, res) => {
   }
 
   const keywordGroups = [
-    catalogGroup('region', 'Regions', regions, (r) => [r.name, r.code], () => []),
-    catalogGroup(
+    shouldSearchType('region', intent, tokens) && catalogGroup('region', 'Regions', regions, (r) => [r.name, r.code], () => []),
+    shouldSearchType('substation', intent, tokens) && catalogGroup(
       'substation', 'Substations', substations,
       (s) => [s.name, s.substation_id],
       (s) => [regionName(s.region_id)]
     ),
-    catalogGroup(
+    shouldSearchType('line', intent, tokens) && catalogGroup(
       'line', 'Transmission lines', lines,
       (l) => [l.name, l.line_id],
       (l) => [l.voltage_kv, regionName(l.region_id)]
     ),
-    catalogGroup(
+    shouldSearchType('tower', intent, tokens) && catalogGroup(
       'tower', 'Towers', towers,
       (t) => [t.tower_id, t.tower_number],
-      (t) => [t.tower_type]
+      (t) => [t.tower_type, t.line_id != null ? lineById.get(t.line_id)?.name : '', t.line_id != null ? regionName(lineById.get(t.line_id)?.region_id) : '']
     ),
-    catalogGroup(
+    shouldSearchType('schedule', intent, tokens) && catalogGroup(
       'schedule', 'Schedules', schedules,
       (s) => [s.schedule_name, s.schedule_code],
-      (s) => [s.frequency]
+      (s) => [s.frequency, regionName(s.region_id)]
     ),
-  ].filter((g) => g.total > 0);
+  ].filter((g) => g && g.total > 0);
 
-  const assetGroup = searchGroup({
+  const assetGroup = shouldSearchType('asset', intent, tokens) ? searchGroup({
     type: 'asset',
     label: 'Assets',
     rows: assets,
     tokens,
     limit,
+    intent,
     titleFields: (a) => [a.name, a.asset_id],
     extraFields: (a) => [a.asset_type, a.sub_type, describe('asset', a, maps).description],
     toItem: (row) => {
@@ -156,7 +159,7 @@ router.get('/search/public', requireAuth, (req, res) => {
       if (open && data.href) item.href = data.href;
       return item;
     },
-  });
+  }) : { items: [] };
 
   const assetGroups = [];
   const assetBySlug = new Map();
